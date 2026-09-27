@@ -1,0 +1,2 @@
+bleak>=1.0
+pillow

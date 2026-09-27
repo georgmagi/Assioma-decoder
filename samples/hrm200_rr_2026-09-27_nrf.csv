@@ -1,0 +1,250 @@
+Timestamp,Source,Level,Line
+01:18:17.222,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1049 A803."
+01:18:17.222,Connected Device,Application,""73 bpm, Sensor contact not supported
+Intervals: 914.06 ms" value received."
+01:18:18.213,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1049 8903."
+01:18:18.213,Connected Device,Application,""73 bpm, Sensor contact not supported
+Intervals: 883.79 ms" value received."
+01:18:19.292,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1048 B503."
+01:18:19.292,Connected Device,Application,""72 bpm, Sensor contact not supported
+Intervals: 926.76 ms" value received."
+01:18:20.284,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1046 7B03."
+01:18:20.284,Connected Device,Application,""70 bpm, Sensor contact not supported
+Intervals: 870.12 ms" value received."
+01:18:20.733,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1045 5103."
+01:18:20.733,Connected Device,Application,""69 bpm, Sensor contact not supported
+Intervals: 829.10 ms" value received."
+01:18:21.723,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1046 5803."
+01:18:21.724,Connected Device,Application,""70 bpm, Sensor contact not supported
+Intervals: 835.94 ms" value received."
+01:18:22.713,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1047 B103."
+01:18:22.713,Connected Device,Application,""71 bpm, Sensor contact not supported
+Intervals: 922.85 ms" value received."
+01:18:23.253,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1045 C403."
+01:18:23.253,Connected Device,Application,""69 bpm, Sensor contact not supported
+Intervals: 941.41 ms" value received."
+01:18:24.243,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1043 9E03."
+01:18:24.244,Connected Device,Application,""67 bpm, Sensor contact not supported
+Intervals: 904.30 ms" value received."
+01:18:25.233,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1043 8A03."
+01:18:25.233,Connected Device,Application,""67 bpm, Sensor contact not supported
+Intervals: 884.77 ms" value received."
+01:18:26.223,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1042 B103."
+01:18:26.223,Connected Device,Application,""66 bpm, Sensor contact not supported
+Intervals: 922.85 ms" value received."
+01:18:27.393,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1042 CF03."
+01:18:27.394,Connected Device,Application,""66 bpm, Sensor contact not supported
+Intervals: 952.15 ms" value received."
+01:18:28.474,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1041 BE03."
+01:18:28.474,Connected Device,Application,""65 bpm, Sensor contact not supported
+Intervals: 935.55 ms" value received."
+01:18:29.283,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1041 7903."
+01:18:29.283,Connected Device,Application,""65 bpm, Sensor contact not supported
+Intervals: 868.16 ms" value received."
+01:18:29.733,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1043 7203."
+01:18:29.733,Connected Device,Application,""67 bpm, Sensor contact not supported
+Intervals: 861.33 ms" value received."
+01:18:30.723,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1044 7D03."
+01:18:30.724,Connected Device,Application,""68 bpm, Sensor contact not supported
+Intervals: 872.07 ms" value received."
+01:18:31.713,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1044 8403."
+01:18:31.713,Connected Device,Application,""68 bpm, Sensor contact not supported
+Intervals: 878.91 ms" value received."
+01:18:32.793,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1045 7503."
+01:18:32.793,Connected Device,Application,""69 bpm, Sensor contact not supported
+Intervals: 864.26 ms" value received."
+01:18:33.243,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1045 5503."
+01:18:33.243,Connected Device,Application,""69 bpm, Sensor contact not supported
+Intervals: 833.01 ms" value received."
+01:18:34.233,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1045 7A03."
+01:18:34.233,Connected Device,Application,""69 bpm, Sensor contact not supported
+Intervals: 869.14 ms" value received."
+01:18:35.223,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1047 3D03."
+01:18:35.223,Connected Device,Application,""71 bpm, Sensor contact not supported
+Intervals: 809.57 ms" value received."
+01:18:35.763,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1048 3303."
+01:18:35.764,Connected Device,Application,""72 bpm, Sensor contact not supported
+Intervals: 799.80 ms" value received."
+01:18:36.754,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 104A 0503."
+01:18:36.754,Connected Device,Application,""74 bpm, Sensor contact not supported
+Intervals: 754.88 ms" value received."
+01:18:37.293,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 104C CB02."
+01:18:37.293,Connected Device,Application,""76 bpm, Sensor contact not supported
+Intervals: 698.24 ms" value received."
+01:18:37.744,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1051 AD02."
+01:18:37.744,Connected Device,Application,""81 bpm, Sensor contact not supported
+Intervals: 668.95 ms" value received."
+01:18:38.734,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1055 9F02."
+01:18:38.734,Connected Device,Application,""85 bpm, Sensor contact not supported
+Intervals: 655.27 ms" value received."
+01:18:39.273,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1058 8B02."
+01:18:39.274,Connected Device,Application,""88 bpm, Sensor contact not supported
+Intervals: 635.74 ms" value received."
+01:18:39.723,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 105A 9E02."
+01:18:39.723,Connected Device,Application,""90 bpm, Sensor contact not supported
+Intervals: 654.30 ms" value received."
+01:18:40.263,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 105A F802."
+01:18:40.264,Connected Device,Application,""90 bpm, Sensor contact not supported
+Intervals: 742.19 ms" value received."
+01:18:41.254,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1058 F002."
+01:18:41.254,Connected Device,Application,""88 bpm, Sensor contact not supported
+Intervals: 734.38 ms" value received."
+01:18:41.793,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1054 DB02."
+01:18:41.794,Connected Device,Application,""84 bpm, Sensor contact not supported
+Intervals: 713.87 ms" value received."
+01:18:42.784,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1054 BA02."
+01:18:42.784,Connected Device,Application,""84 bpm, Sensor contact not supported
+Intervals: 681.64 ms" value received."
+01:18:43.323,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1056 AE02."
+01:18:43.323,Connected Device,Application,""86 bpm, Sensor contact not supported
+Intervals: 669.92 ms" value received."
+01:18:44.224,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1058 A502."
+01:18:44.224,Connected Device,Application,""88 bpm, Sensor contact not supported
+Intervals: 661.13 ms" value received."
+01:18:44.764,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1059 9902."
+01:18:44.764,Connected Device,Application,""89 bpm, Sensor contact not supported
+Intervals: 649.41 ms" value received."
+01:18:45.213,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 105A C402."
+01:18:45.213,Connected Device,Application,""90 bpm, Sensor contact not supported
+Intervals: 691.41 ms" value received."
+01:18:45.754,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 105A 4703."
+01:18:45.754,Connected Device,Application,""90 bpm, Sensor contact not supported
+Intervals: 819.34 ms" value received."
+01:18:46.744,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 105A 3903."
+01:18:46.744,Connected Device,Application,""90 bpm, Sensor contact not supported
+Intervals: 805.66 ms" value received."
+01:18:47.734,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1059 2703."
+01:18:47.734,Connected Device,Application,""89 bpm, Sensor contact not supported
+Intervals: 788.09 ms" value received."
+01:18:48.724,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1057 4E03."
+01:18:48.724,Connected Device,Application,""87 bpm, Sensor contact not supported
+Intervals: 826.17 ms" value received."
+01:18:49.353,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1056 9903."
+01:18:49.353,Connected Device,Application,""86 bpm, Sensor contact not supported
+Intervals: 899.41 ms" value received."
+01:18:50.253,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1054 3503."
+01:18:50.254,Connected Device,Application,""84 bpm, Sensor contact not supported
+Intervals: 801.76 ms" value received."
+01:18:51.243,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1050 3503."
+01:18:51.243,Connected Device,Application,""80 bpm, Sensor contact not supported
+Intervals: 801.76 ms" value received."
+01:18:51.784,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 104E EB02."
+01:18:51.784,Connected Device,Application,""78 bpm, Sensor contact not supported
+Intervals: 729.49 ms" value received."
+01:18:52.773,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 104E A103."
+01:18:52.773,Connected Device,Application,""78 bpm, Sensor contact not supported
+Intervals: 907.23 ms" value received."
+01:18:53.764,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 104E 9803."
+01:18:53.764,Connected Device,Application,""78 bpm, Sensor contact not supported
+Intervals: 898.44 ms" value received."
+01:18:54.213,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 104D 9303."
+01:18:54.214,Connected Device,Application,""77 bpm, Sensor contact not supported
+Intervals: 893.55 ms" value received."
+01:18:55.295,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1049 8F03."
+01:18:55.295,Connected Device,Application,""73 bpm, Sensor contact not supported
+Intervals: 889.65 ms" value received."
+01:18:56.283,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1046 C003."
+01:18:56.283,Connected Device,Application,""70 bpm, Sensor contact not supported
+Intervals: 937.50 ms" value received."
+01:18:57.274,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1044 1D04."
+01:18:57.274,Connected Device,Application,""68 bpm, Sensor contact not supported
+Intervals: 1028.32 ms" value received."
+01:18:58.264,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1041 DE03."
+01:18:58.264,Connected Device,Application,""65 bpm, Sensor contact not supported
+Intervals: 966.80 ms" value received."
+01:18:59.253,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1040 B703."
+01:18:59.254,Connected Device,Application,""64 bpm, Sensor contact not supported
+Intervals: 928.71 ms" value received."
+01:19:00.244,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 103F 1704."
+01:19:00.244,Connected Device,Application,""63 bpm, Sensor contact not supported
+Intervals: 1022.46 ms" value received."
+01:19:01.233,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 103D 6704."
+01:19:01.234,Connected Device,Application,""61 bpm, Sensor contact not supported
+Intervals: 1100.59 ms" value received."
+01:19:02.223,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 103B 2504."
+01:19:02.224,Connected Device,Application,""59 bpm, Sensor contact not supported
+Intervals: 1036.13 ms" value received."
+01:19:03.754,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 103B 6503."
+01:19:03.754,Connected Device,Application,""59 bpm, Sensor contact not supported
+Intervals: 848.63 ms" value received."
+01:19:04.384,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 103B DA03."
+01:19:04.384,Connected Device,Application,""59 bpm, Sensor contact not supported
+Intervals: 962.89 ms" value received."
+01:19:05.284,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 103B 7903."
+01:19:05.284,Connected Device,Application,""59 bpm, Sensor contact not supported
+Intervals: 868.16 ms" value received."
+01:19:06.274,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 103B C103."
+01:19:06.274,Connected Device,Application,""59 bpm, Sensor contact not supported
+Intervals: 938.48 ms" value received."
+01:19:07.264,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 103B 5103."
+01:19:07.264,Connected Device,Application,""59 bpm, Sensor contact not supported
+Intervals: 829.10 ms" value received."
+01:19:08.254,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 103B E502."
+01:19:08.254,Connected Device,Application,""59 bpm, Sensor contact not supported
+Intervals: 723.63 ms" value received."
+01:19:09.244,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 103B 5103."
+01:19:09.244,Connected Device,Application,""59 bpm, Sensor contact not supported
+Intervals: 829.10 ms" value received."
+01:19:10.234,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 103B 6D03."
+01:19:10.234,Connected Device,Application,""59 bpm, Sensor contact not supported
+Intervals: 856.45 ms" value received."
+01:19:11.223,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 103B 3803."
+01:19:11.224,Connected Device,Application,""59 bpm, Sensor contact not supported
+Intervals: 804.69 ms" value received."
+01:19:12.214,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 103B FD02."
+01:19:12.214,Connected Device,Application,""59 bpm, Sensor contact not supported
+Intervals: 747.07 ms" value received."
+01:19:12.755,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 103B B902."
+01:19:12.755,Connected Device,Application,""59 bpm, Sensor contact not supported
+Intervals: 680.66 ms" value received."
+01:19:13.744,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 103B EC02."
+01:19:13.744,Connected Device,Application,""59 bpm, Sensor contact not supported
+Intervals: 730.47 ms" value received."
+01:19:14.734,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 103B 6302."
+01:19:14.734,Connected Device,Application,""59 bpm, Sensor contact not supported
+Intervals: 596.68 ms" value received."
+01:19:15.724,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 103B 1503."
+01:19:15.724,Connected Device,Application,""59 bpm, Sensor contact not supported
+Intervals: 770.51 ms" value received."
+01:19:16.263,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 103B E902."
+01:19:16.263,Connected Device,Application,""59 bpm, Sensor contact not supported
+Intervals: 727.54 ms" value received."
+01:19:17.253,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 103C DF02."
+01:19:17.253,Connected Device,Application,""60 bpm, Sensor contact not supported
+Intervals: 717.77 ms" value received."
+01:19:17.793,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 103C 5102."
+01:19:17.793,Connected Device,Application,""60 bpm, Sensor contact not supported
+Intervals: 579.10 ms" value received."
+01:19:18.423,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 103C 8803."
+01:19:18.423,Connected Device,Application,""60 bpm, Sensor contact not supported
+Intervals: 882.81 ms" value received."
+01:19:19.413,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 103B F802."
+01:19:19.413,Connected Device,Application,""59 bpm, Sensor contact not supported
+Intervals: 742.19 ms" value received."
+01:19:19.773,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 103B 0003."
+01:19:19.773,Connected Device,Application,""59 bpm, Sensor contact not supported
+Intervals: 750.00 ms" value received."
+01:19:20.764,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 103B 6803."
+01:19:20.764,Connected Device,Application,""59 bpm, Sensor contact not supported
+Intervals: 851.56 ms" value received."
+01:19:21.753,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 103A 1103."
+01:19:21.753,Connected Device,Application,""58 bpm, Sensor contact not supported
+Intervals: 766.60 ms" value received."
+01:19:22.293,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 103B 3B02."
+01:19:22.293,Connected Device,Application,""59 bpm, Sensor contact not supported
+Intervals: 557.62 ms" value received."
+01:19:22.743,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 103B 6C03."
+01:19:22.743,Connected Device,Application,""59 bpm, Sensor contact not supported
+Intervals: 855.47 ms" value received."
+01:19:23.733,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 103A 4F03."
+01:19:23.733,Connected Device,Application,""58 bpm, Sensor contact not supported
+Intervals: 827.15 ms" value received."
+01:19:24.723,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 103A 6D03."
+01:19:24.723,Connected Device,Application,""58 bpm, Sensor contact not supported
+Intervals: 856.45 ms" value received."
+01:19:25.712,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1039 FF03."
+01:19:25.712,Connected Device,Application,""57 bpm, Sensor contact not supported
+Intervals: 999.02 ms" value received."
+01:19:26.794,Connected Device,Normal,"Updated Value of Characteristic 2A37 to 1039 E703."
+01:19:26.794,Connected Device,Application,""57 bpm, Sensor contact not supported
+Intervals: 975.59 ms" value received."

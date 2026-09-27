@@ -1,0 +1,193 @@
+[
+ {
+  "type": "10",
+  "wire_hex": "C0 10 07 7E 00 00 00 44 1B FF C0",
+  "frame_hex": "10 07 7E 00 00 00 44 1B FF",
+  "expected": {
+   "cadence_rpm": 0,
+   "power_w": 0,
+   "energy_counter": 6980
+  }
+ },
+ {
+  "type": "10",
+  "wire_hex": "C0 10 07 90 46 67 00 17 1D 2B C0",
+  "frame_hex": "10 07 90 46 67 00 17 1D 2B",
+  "expected": {
+   "cadence_rpm": 70,
+   "power_w": 103,
+   "energy_counter": 7447,
+   "balance_right_pct": 43
+  }
+ },
+ {
+  "type": "13",
+  "wire_hex": "C0 13 05 76 FF FF FF FF C0",
+  "frame_hex": "13 05 76 FF FF FF FF",
+  "expected": {}
+ },
+ {
+  "type": "13",
+  "wire_hex": "C0 13 05 8C 4E 38 18 10 C0",
+  "frame_hex": "13 05 8C 4E 38 18 10",
+  "expected": {
+   "te_left_pct": 39.0,
+   "te_right_pct": 28.0,
+   "ps_left_pct": 12.0,
+   "ps_right_pct": 8.0
+  }
+ },
+ {
+  "type": "13",
+  "wire_hex": "C0 13 05 DB DC 68 7E 22 26 C0",
+  "frame_hex": "13 05 C0 68 7E 22 26",
+  "expected": {
+   "te_left_pct": 52.0,
+   "te_right_pct": 63.0,
+   "ps_left_pct": 17.0,
+   "ps_right_pct": 19.0
+  }
+ },
+ {
+  "type": "52",
+  "wire_hex": "C0 52 07 0D 01 01 33 36 26 26 C0",
+  "frame_hex": "52 07 0D 01 01 33 36 26 26",
+  "expected": {
+   "status_flags": "0101",
+   "battery_left_pct": 51,
+   "battery_right_pct": 54,
+   "status_unknown": "2626"
+  }
+ },
+ {
+  "type": "E0",
+  "wire_hex": "C0 E0 07 65 DB DC DB DC DB DC DB DC 20 1C C0",
+  "frame_hex": "E0 07 65 C0 C0 C0 C0 20 1C",
+  "expected": {
+   "pp_tail": "201c"
+  }
+ },
+ {
+  "type": "E0",
+  "wire_hex": "C0 E0 07 7D F6 21 4F 83 20 1C C0",
+  "frame_hex": "E0 07 7D F6 21 4F 83 20 1C",
+  "expected": {
+   "pp_left_start_deg": 345.9,
+   "pp_left_peak_start_deg": 46.4,
+   "pp_left_peak_end_deg": 111.1,
+   "pp_left_end_deg": 184.2,
+   "pp_tail": "201c"
+  }
+ },
+ {
+  "type": "E0",
+  "wire_hex": "C0 E0 07 DB DC FC 35 62 8C 20 1C C0",
+  "frame_hex": "E0 07 C0 FC 35 62 8C 20 1C",
+  "expected": {
+   "pp_left_start_deg": 354.4,
+   "pp_left_peak_start_deg": 74.5,
+   "pp_left_peak_end_deg": 137.8,
+   "pp_left_end_deg": 196.9,
+   "pp_tail": "201c"
+  }
+ },
+ {
+  "type": "E1",
+  "wire_hex": "C0 E1 07 67 DB DC DB DC DB DC DB DC 20 1C C0",
+  "frame_hex": "E1 07 67 C0 C0 C0 C0 20 1C",
+  "expected": {
+   "pp_tail": "201c"
+  }
+ },
+ {
+  "type": "E1",
+  "wire_hex": "C0 E1 07 90 F8 2B 58 8B 20 1C C0",
+  "frame_hex": "E1 07 90 F8 2B 58 8B 20 1C",
+  "expected": {
+   "pp_right_start_deg": 348.8,
+   "pp_right_peak_start_deg": 60.5,
+   "pp_right_peak_end_deg": 123.8,
+   "pp_right_end_deg": 195.5,
+   "pp_tail": "201c"
+  }
+ },
+ {
+  "type": "E1",
+  "wire_hex": "C0 E1 07 DB DD F2 2F 5B 96 20 1C C0",
+  "frame_hex": "E1 07 DB F2 2F 5B 96 20 1C",
+  "expected": {
+   "pp_right_start_deg": 340.3,
+   "pp_right_peak_start_deg": 66.1,
+   "pp_right_peak_end_deg": 128.0,
+   "pp_right_end_deg": 210.9,
+   "pp_tail": "201c"
+  }
+ },
+ {
+  "type": "E2",
+  "wire_hex": "C0 E2 04 F0 80 80 00 C0",
+  "frame_hex": "E2 04 F0 80 80 00",
+  "expected": {
+   "rider_position": "seated"
+  }
+ },
+ {
+  "type": "E2",
+  "wire_hex": "C0 E2 04 06 80 06 00 C0",
+  "frame_hex": "E2 04 06 80 06 00",
+  "expected": {
+   "pco_right_mm": 6,
+   "rider_position": "seated"
+  }
+ },
+ {
+  "type": "E2",
+  "wire_hex": "C0 E2 04 DB DC 0B 04 00 C0",
+  "frame_hex": "E2 04 C0 0B 04 00",
+  "expected": {
+   "pco_left_mm": 11,
+   "pco_right_mm": 4,
+   "rider_position": "seated"
+  }
+ },
+ {
+  "type": "E2",
+  "wire_hex": "C0 E2 04 97 04 05 03 C0",
+  "frame_hex": "E2 04 97 04 05 03",
+  "expected": {
+   "pco_left_mm": 4,
+   "pco_right_mm": 5,
+   "rider_position": "to_standing"
+  }
+ },
+ {
+  "type": "E2",
+  "wire_hex": "C0 E2 04 A1 02 03 02 C0",
+  "frame_hex": "E2 04 A1 02 03 02",
+  "expected": {
+   "pco_left_mm": 2,
+   "pco_right_mm": 3,
+   "rider_position": "standing"
+  }
+ },
+ {
+  "type": "E2",
+  "wire_hex": "C0 E2 04 AD 08 05 01 C0",
+  "frame_hex": "E2 04 AD 08 05 01",
+  "expected": {
+   "pco_left_mm": 8,
+   "pco_right_mm": 5,
+   "rider_position": "to_seated"
+  }
+ },
+ {
+  "type": "E2",
+  "wire_hex": "C0 E2 04 E4 FF 04 00 C0",
+  "frame_hex": "E2 04 E4 FF 04 00",
+  "expected": {
+   "pco_left_mm": -1,
+   "pco_right_mm": 4,
+   "rider_position": "seated"
+  }
+ }
+]
