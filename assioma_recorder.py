@@ -502,9 +502,9 @@ class BleWorker(threading.Thread):
 class ReplayWorker(threading.Thread):
     """Plays back an nRF log as if it were live (for testing the window)."""
 
-    def __init__(self, q: queue.Queue, notes: list, speed: float) -> None:
+    def __init__(self, q: queue.Queue, notes: list, speed: float, skip_s: float = 0) -> None:
         super().__init__(daemon=True)
-        self.q, self.notes, self.speed = q, notes, speed
+        self.q, self.notes, self.speed, self.skip_s = q, notes, speed, skip_s
         self.status = {"pedal": "replaying log", "hr": ""}
         self.pedal_name = "Assioma (replay)"
         self._halt = threading.Event()
@@ -518,7 +518,8 @@ class ReplayWorker(threading.Thread):
     def run(self) -> None:
         if not self.notes:
             return
-        t0, w0 = self.notes[0].time, utcnow()
+        # the first skip_s seconds of the log are due at once (in the past): a replay with history
+        t0, w0 = self.notes[0].time, utcnow() - timedelta(seconds=self.skip_s / self.speed)
         for n in self.notes:
             due = w0 + (n.time - t0) / self.speed
             while not self._halt.is_set() and utcnow() < due:

@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Assioma Recorder</title>
+<link rel="stylesheet" href="vendor/uPlot.min.css">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="tiles">
+  <div class="tile pc" id="t-power">
+    <div class="col">
+      <div class="label"><span>Power <span class="mode" id="power-mode"></span></span> <span class="badge" id="zone"></span></div>
+      <div class="value"><span class="num" id="power">--</span><span class="unit">W</span></div>
+      <div class="sub" id="power-sub"></div>
+    </div>
+    <i class="vdiv"></i>
+    <div class="col cad">
+      <div class="label">Cadence</div>
+      <div class="value"><span class="num" id="cadence">--</span><span class="unit">rpm</span></div>
+      <div class="sub" id="cadence-sub"></div>
+    </div>
+  </div>
+  <div class="tile balance" id="t-balance">
+    <div class="label">Balance</div>
+    <div class="value split"><span class="num" id="bal-l">--</span><i class="divider"></i><span class="num" id="bal-r">--</span></div>
+    <div class="sub split"><span id="bal-l-sub"></span><i></i><span id="bal-r-sub"></span></div>
+  </div>
+  <div class="tile hr" id="t-hr">
+    <canvas id="beats"></canvas>
+    <div class="label">Heart rate</div>
+    <div class="value"><span class="num" id="hr">--</span><span class="unit">bpm</span></div>
+    <div class="sub" id="hr-sub"></div>
+  </div>
+  <div class="tile" id="t-a1">
+    <div class="label"><span>DFA <span class="greek">α</span>1</span></div>
+    <div class="value"><span class="num" id="a1">--</span></div>
+    <div class="sub" id="a1-sub"></div>
+  </div>
+  <div class="tile" id="t-time">
+    <div class="label">Ride time</div>
+    <div class="value"><span class="num" id="clock">0:00:00</span></div>
+    <div class="sub" id="clock-sub">not started</div>
+  </div>
+</header>
+
+<main>
+  <section class="panel dyn" id="dyn">
+    <div class="panel-head"><h2>Cycling dynamics</h2><span class="pos" id="pos" hidden></span></div>
+    <div class="dyn-body">
+      <h3 class="sect">Power phase</h3>
+      <div class="legs">
+        <div class="leg" data-side="left">
+          <svg class="ring" viewBox="-66 -62 132 124" aria-label="Left power phase"></svg>
+          <dl class="pair"><div><dt>Torque eff.</dt><dd class="te">--</dd></div><div><dt>Smoothness</dt><dd class="ps">--</dd></div></dl>
+        </div>
+        <div class="leg" data-side="right">
+          <svg class="ring" viewBox="-66 -62 132 124" aria-label="Right power phase"></svg>
+          <dl class="pair"><div><dt>Torque eff.</dt><dd class="te">--</dd></div><div><dt>Smoothness</dt><dd class="ps">--</dd></div></dl>
+        </div>
+      </div>
+      <h3 class="sect">Platform center offset</h3>
+      <div class="legs">
+        <div class="pco" data-side="left">
+          <svg class="pedal" viewBox="-0.85 -0.16 1.7 1.3" aria-label="Left pedal"></svg>
+          <div class="pco-v"><span class="num">--</span><span class="unit">mm</span></div>
+          <div class="sub"></div>
+        </div>
+        <div class="pco" data-side="right">
+          <svg class="pedal" viewBox="-0.85 -0.16 1.7 1.3" aria-label="Right pedal"></svg>
+          <div class="pco-v"><span class="num">--</span><span class="unit">mm</span></div>
+          <div class="sub"></div>
+        </div>
+      </div>
+      <div class="pco-key"><span><i class="now"></i>now</span><span><i class="range"></i>ride range, middle 80 %</span></div>
+    </div>
+  </section>
+  <section class="panel graph">
+    <div class="panel-head">
+      <h2>Power, heart rate &amp; HRV</h2>
+      <output class="readout" id="readout"></output>
+      <div class="seg" id="views" role="group" aria-label="Time range">
+        <button data-span="300">5 min</button>
+        <button data-span="1800">30 min</button>
+        <button data-span="0">Ride</button>
+      </div>
+    </div>
+    <div class="chart" id="chart">
+      <div class="plot" id="c-power">
+        <div class="cap"><span class="key"><i class="hr"></i>heart rate, bpm</span><span class="key"><i></i>power 10 s, W</span><span class="key" id="key-1s"><i class="faint"></i>1 s</span><span class="key z2" id="z2-key" hidden><i></i>Z2</span></div>
+      </div>
+      <div class="plot" id="c-beats">
+        <div class="cap"><span class="key"><i class="rr"></i>beat intervals, ms</span><span class="key"><i class="dot"></i>artifact</span><span class="key"><i class="a1"></i><span>DFA <span class="greek">α</span>1</span></span><span class="key"><i class="vt1"></i>0.75 ≈ VT1</span><span class="key"><i class="vt2"></i>0.5 ≈ VT2</span></div>
+      </div>
+      <p class="empty" id="chart-empty">Waiting for the pedals. Pedal once to wake them.</p>
+    </div>
+  </section>
+</main>
+
+<footer class="bar">
+  <div class="sensors" id="sensors"></div>
+  <div class="ride">
+    <span class="rec" id="rec"></span>
+    <button id="b-main" class="btn primary">Start<kbd>Space</kbd></button>
+    <button id="b-stop" class="btn danger-text">Stop</button>
+  </div>
+</footer>
+
+<div class="backdrop" id="dialog" hidden>
+  <div class="card" role="dialog" aria-modal="true" aria-labelledby="d-title">
+    <h3 id="d-title"></h3>
+    <p id="d-sub"></p>
+    <dl class="stats" id="d-stats"></dl>
+    <div class="buttons" id="d-buttons"></div>
+  </div>
+</div>
+<div class="offline" id="offline" hidden>The recorder isn't answering. Your ride keeps recording in the background.</div>
+
+<script src="vendor/uPlot.iife.min.js"></script>
+<script src="dynamics.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

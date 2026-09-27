@@ -31,6 +31,9 @@ This repo decodes that stream and includes a Windows recorder that shows the dat
 
 The window shows power, cadence, balance, heart rate and DFA α1 on top (every heartbeat drifts across the heart-rate tile, so a poor strap contact shows at once); Cycling Dynamics (power-phase rings, TE/PS, PCO on a pedal drawing, power-phase angles) on the left; on the right, scrolling graphs of the last 5 minutes (power + heart rate, beat-to-beat intervals + DFA α1 with 0.75 ≈ VT1 and 0.5 ≈ VT2 marked) and a whole-ride overview on your planned duration (`--plan 90`). `--ftp 250` shades your Z2 band; F11 is full screen. The per-second CSV also gets `dfa_a1`, `rmssd_ms` and `rr_artifact_pct` columns.
 
+### New app window (in progress)
+`start_app.bat` opens the recorder as a normal window with no console: the same recording, with the display as a web page (`web/`, charts by [uPlot](https://github.com/leeoniya/uPlot), MIT) in a native window ([pywebview](https://pywebview.flowrl.com/)). It has the top tiles, Cycling Dynamics, stacked power / heart-rate / DFA α1 graphs (last 5 min, 30 min or the whole ride) and Start / Pause / Stop with save and discard. Set `PLAN`, `FTP` and `HR` at the top of `start_app.bat`. `python recorder_app.py --replay rideside_..._raw.csv --skip 20` replays a recorded ride from minute 20; `--browser` opens it in the browser instead.
+
 Other modes:
 ```
 python assioma_recorder.py --from-nrf LOG.csv --date 2026-09-28    nRF log -> FIT
@@ -40,7 +43,7 @@ python assioma_recorder.py --replay LOG.csv --date 2026-09-26        test the wi
 
 ## Development
 ```
-pip install bleak pytest garmin-fit-sdk
+pip install bleak pywebview pytest garmin-fit-sdk
 python -m pytest tests
 ```
 
