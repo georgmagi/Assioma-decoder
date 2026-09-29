@@ -8,6 +8,34 @@
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
+<div class="screen home" id="scr-home" hidden>
+  <section class="panel start">
+    <div class="panel-head"><h2>Next ride</h2></div>
+    <div class="sensors-list" id="home-sensors"></div>
+    <form class="settings" id="home-settings" onsubmit="return false">
+      <label><span>FTP</span><input id="set-ftp" type="number" min="50" max="600" step="1" inputmode="numeric"><span class="u">W</span></label>
+      <label><span>Threshold heart rate</span><input id="set-lthr" type="number" min="100" max="220" step="1" inputmode="numeric"><span class="u">bpm</span></label>
+      <label><span>Planned ride</span><input id="set-plan" type="number" min="10" max="600" step="5" inputmode="numeric"><span class="u">min</span></label>
+      <label class="switch"><span>Heart-rate strap</span><input id="set-hr" type="checkbox"><i></i></label>
+    </form>
+    <div class="go">
+      <button class="btn primary big" id="b-start">Start ride</button>
+      <p class="hint" id="home-hint">or just start pedalling</p>
+    </div>
+  </section>
+  <section class="panel rides">
+    <div class="panel-head"><h2>Rides</h2><span class="count" id="rides-count"></span><button class="btn" id="b-progress">Progress</button></div>
+    <div class="table-wrap">
+      <table class="ride-table">
+        <thead><tr><th>Day</th><th>Start</th><th>Workout</th><th class="n">Time</th><th class="n">Avg W</th><th class="n">NP</th><th class="n">HR</th><th class="n"><span class="greek">α</span>1</th><th class="n">TSS</th><th></th></tr></thead>
+        <tbody id="ride-rows"></tbody>
+      </table>
+      <p class="empty-note" id="rides-empty" hidden>No rides yet. They'll show up here once you save one.</p>
+    </div>
+  </section>
+</div>
+
+<div class="screen ride" id="scr-ride" hidden>
 <header class="tiles">
   <div class="tile pc" id="t-power">
     <div class="col">
@@ -98,11 +126,106 @@
   </section>
 </main>
 
+</div>
+
+<div class="screen summary" id="scr-summary" hidden>
+  <div class="sum-head">
+    <button class="btn" id="sum-home">Home</button>
+    <h1 id="sum-title"></h1>
+    <button class="btn" id="sum-file">Show FIT file</button>
+    <button class="btn danger-text" id="sum-delete">Delete ride</button>
+  </div>
+  <dl class="panel sum-stats" id="sum-stats"></dl>
+  <section class="panel sum-graphs">
+    <div class="panel-head"><h2>Whole ride</h2><output class="readout" id="sum-readout"></output><span class="hint">drag to zoom, double-click to reset</span></div>
+    <div class="chart">
+      <div class="plot" id="sum-c-power">
+        <div class="cap"><span class="key"><i class="hr"></i>heart rate, bpm</span><span class="key"><i></i>power 30 s, W</span></div>
+      </div>
+      <div class="plot" id="sum-c-beats">
+        <div class="cap"><span class="key"><i class="rr"></i>beat intervals, ms</span><span class="key"><i class="dot"></i>artifact</span><span class="key"><i class="a1"></i><span>DFA <span class="greek">α</span>1</span></span></div>
+      </div>
+    </div>
+  </section>
+  <div class="sum-cards">
+    <section class="panel">
+      <div class="panel-head"><h2>Time in zones</h2></div>
+      <h3 class="sect">Power</h3>
+      <div class="zones" id="sum-zones"></div>
+      <h3 class="sect">Heart rate</h3>
+      <div class="zones" id="sum-hrzones"></div>
+      <h3 class="sect"><span>DFA <span class="greek">α</span>1</span></h3>
+      <div class="zones" id="sum-a1bands"></div>
+    </section>
+    <section class="panel">
+      <div class="panel-head"><h2>Best power</h2></div>
+      <div class="bests" id="sum-best"></div>
+    </section>
+    <section class="panel" id="card-legs">
+      <div class="panel-head"><h2>Pedalling</h2></div>
+      <table class="leg-table" id="sum-legs"></table>
+    </section>
+    <section class="panel" id="card-pc">
+      <div class="panel-head"><h2>Beat to beat</h2></div>
+      <div class="pc-wrap"><canvas id="poincare"></canvas></div>
+      <p class="pc" id="pc-stats"></p>
+    </section>
+  </div>
+</div>
+
+<div class="screen progress" id="scr-progress" hidden>
+  <div class="sum-head">
+    <button class="btn" id="prog-home">Home</button>
+    <h1>Progress</h1>
+    <dl class="totals" id="prog-totals"></dl>
+  </div>
+  <section class="panel pmc">
+    <div class="panel-head">
+      <h2>Fitness, fatigue &amp; form</h2>
+      <output class="readout" id="pmc-readout"></output>
+      <div class="seg" id="pmc-range" role="group" aria-label="Time range">
+        <button data-days="90">3 mo</button><button data-days="180">6 mo</button><button data-days="365">1 y</button><button data-days="0">All</button>
+      </div>
+    </div>
+    <div class="pmc-now" id="pmc-now"></div>
+    <div class="chart one">
+      <div class="plot" id="pmc-chart">
+        <div class="cap"><span class="key"><i class="ctl"></i>fitness (42 d)</span><span class="key"><i class="atl"></i>fatigue (7 d)</span><span class="key"><i class="tsb"></i>form</span></div>
+      </div>
+    </div>
+  </section>
+  <div class="prog-row">
+    <section class="panel cal">
+      <div class="panel-head">
+        <button class="nav" id="cal-prev" aria-label="Previous month">‹</button>
+        <h2 id="cal-title"></h2>
+        <button class="nav" id="cal-next" aria-label="Next month">›</button>
+        <button class="btn" id="cal-today">This month</button>
+      </div>
+      <div class="cal-grid" id="cal-grid"></div>
+    </section>
+    <section class="panel weekly">
+      <div class="panel-head">
+        <h2>Weekly</h2>
+        <output class="readout" id="wk-readout"></output>
+        <div class="seg" id="wk-metric" role="group" aria-label="Measure">
+          <button data-m="time_s">Time</button><button data-m="tss">TSS</button><button data-m="work_kj">kJ</button>
+        </div>
+      </div>
+      <div class="chart one"><div class="plot" id="wk-chart"></div></div>
+      <p class="wk-note" id="wk-note"></p>
+    </section>
+  </div>
+</div>
+
 <footer class="bar">
   <div class="sensors" id="sensors"></div>
-  <div class="ride">
+  <div class="ride-ctl">
+    <div class="seg themes" id="themes" role="group" aria-label="Theme">
+      <button data-theme="dark">Dark</button><button data-theme="lcd">LCD</button>
+    </div>
     <span class="rec" id="rec"></span>
-    <button id="b-main" class="btn primary">Start<kbd>Space</kbd></button>
+    <button id="b-main" class="btn primary">Start</button>
     <button id="b-stop" class="btn danger-text">Stop</button>
   </div>
 </footer>
@@ -120,5 +243,7 @@
 <script src="vendor/uPlot.iife.min.js"></script>
 <script src="dynamics.js"></script>
 <script src="app.js"></script>
+<script src="screens.js"></script>
+<script src="progress.js"></script>
 </body>
 </html>

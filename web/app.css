@@ -21,6 +21,9 @@
   --num: "Bahnschrift", "DIN Alternate", "Segoe UI", system-ui, sans-serif;
   --ui: "Segoe UI", system-ui, -apple-system, sans-serif;
   --r: 12px;
+  --gap: 14px;                                   /* between the tiles and between the panels */
+  /* the first column of the top strip and of the panels below: one definition, so edges align */
+  --col1: max(300px, calc((100% - var(--gap)) * 0.33));
 }
 
 * { box-sizing: border-box; }
@@ -30,7 +33,7 @@ body {
   color: var(--fg);
   font: 14px/1.35 var(--ui);
   display: grid;
-  grid-template-rows: minmax(118px, 20vh) minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr) auto;
   gap: 14px;
   padding: 20px 20px 14px;
   overflow: hidden;
@@ -39,6 +42,10 @@ body {
 }
 button { font: inherit; color: inherit; }
 [hidden] { display: none !important; }
+
+/* ---- screens: home, ride, summary (one shown at a time) */
+.screen { min-height: 0; }
+.screen.ride { display: grid; grid-template-rows: minmax(118px, 20vh) minmax(0, 1fr); gap: var(--gap); }
 
 /* ---- cards: a border lighter at the top than at the bottom, like light from above */
 .tile, .panel {
@@ -52,8 +59,9 @@ button { font: inherit; color: inherit; }
 /* ---- top strip */
 .tiles {
   display: grid;
-  grid-template-columns: 2.3fr 1.1fr 1.2fr 1.1fr 1.1fr;
-  gap: 12px;
+  /* the first column is the Cycling Dynamics panel's (--col1), so the edges line up */
+  grid-template-columns: var(--col1) minmax(0, 16.4fr) minmax(0, 17.8fr) minmax(0, 16.4fr) minmax(0, 16.4fr);
+  column-gap: var(--gap);
   min-height: 0;
 }
 .tile {
@@ -145,7 +153,7 @@ button { font: inherit; color: inherit; }
 .hr canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
 
 /* ---- graph panel */
-main { min-height: 0; display: grid; grid-template-columns: minmax(300px, 33fr) 67fr; gap: 14px; }
+main { min-height: 0; display: grid; grid-template-columns: var(--col1) minmax(0, 1fr); gap: var(--gap); }
 .panel { min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); padding: 14px 16px 10px; }
 .panel-head {
   display: flex;
@@ -267,7 +275,7 @@ main { min-height: 0; display: grid; grid-template-columns: minmax(300px, 33fr) 
 .sensor .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); }
 .sensor.ok .dot { background: var(--good); }
 .sensor.err { color: var(--bad); }
-.ride { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+.ride-ctl { margin-left: auto; display: flex; align-items: center; gap: 12px; }
 .rec {
   display: inline-flex;
   align-items: center;
@@ -311,7 +319,6 @@ main { min-height: 0; display: grid; grid-template-columns: minmax(300px, 33fr) 
 .btn.go { background: var(--btn-go); }
 .btn.danger { background: #c9383f; }
 .btn.danger-text { color: #ff8a8d; }
-.btn kbd { font: 11px var(--ui); opacity: 0.7; border: 1px solid rgba(255, 255, 255, 0.35); border-radius: 4px; padding: 0 5px; }
 
 /* ---- dialog */
 .backdrop {
@@ -351,3 +358,370 @@ main { min-height: 0; display: grid; grid-template-columns: minmax(300px, 33fr) 
   border-radius: 8px;
   z-index: 20;
 }
+
+/* =========================================================================================
+   Home: the next ride (sensor check, settings, Start) beside the list of rides
+   ========================================================================================= */
+.screen.home { display: grid; grid-template-columns: var(--col1) minmax(0, 1fr); gap: 14px; }
+.panel.start, .panel.rides { padding: 18px 20px; grid-template-rows: auto; align-content: start; gap: 18px; }
+.panel.start { display: flex; flex-direction: column; }
+.sensors-list { display: grid; gap: 10px; }
+.srow {
+  display: grid; grid-template-columns: auto auto 1fr auto; align-items: center; gap: 10px;
+  padding: 12px 14px; border-radius: 8px; background: var(--bg); border: 1px solid var(--grid);
+}
+.srow .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); }
+.srow.ok .dot { background: var(--good); }
+.srow b { font-weight: 600; }
+.srow .st { color: var(--dim); font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.srow .val { font: 20px var(--num); font-variant-numeric: tabular-nums; }
+.settings { display: grid; gap: 12px; }
+.settings label { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 10px; color: var(--dim); }
+.settings input[type="number"] {
+  width: 5.5em; padding: 7px 10px; border-radius: 6px; border: 1px solid var(--grid);
+  background: var(--bg); color: var(--fg); font: 17px var(--num); text-align: right;
+}
+/* no up/down spinner buttons in the number fields */
+.settings input[type="number"] { appearance: textfield; -moz-appearance: textfield; }
+.settings input[type="number"]::-webkit-inner-spin-button,
+.settings input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.settings input[type="number"]:focus { outline: 2px solid var(--power); outline-offset: 1px; }
+.settings .u { width: 2.4em; }
+.switch { cursor: pointer; }
+.switch input { position: absolute; opacity: 0; pointer-events: none; }
+.switch i {
+  grid-column: 2 / 4; justify-self: end; width: 42px; height: 24px; border-radius: 12px;
+  background: var(--grid); position: relative; transition: background 0.15s;
+}
+.switch i::after {
+  content: ""; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%;
+  background: var(--dim); transition: transform 0.15s, background 0.15s;
+}
+.switch input:checked + i { background: var(--btn-primary); }
+.switch input:checked + i::after { transform: translateX(18px); background: #fff; }
+.switch input:focus-visible + i { outline: 2px solid var(--power); outline-offset: 2px; }
+.go { margin-top: auto; display: grid; gap: 8px; justify-items: stretch; }
+.btn.big { justify-content: center; padding: 16px 20px; font-size: 17px; }
+.hint { margin: 0; text-align: center; color: var(--dim); font-size: 13px; }
+.panel.rides { display: grid; grid-template-rows: auto minmax(0, 1fr); min-height: 0; }
+.panel-head .count { color: var(--dim); font-size: 13px; }
+.table-wrap { min-height: 0; overflow: auto; }
+.ride-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.ride-table th {
+  position: sticky; top: 0; background: var(--panel); text-align: left; font-weight: 600; font-size: 12px;
+  color: var(--dim); padding: 6px 10px; border-bottom: 1px solid var(--grid);
+}
+.ride-table td { padding: 10px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+.ride-table .n { text-align: right; }
+.ride-table td.wk { max-width: 16em; overflow: hidden; text-overflow: ellipsis; }
+.ride-table .src { margin-left: 8px; font-size: 11.5px; color: var(--dim); }
+.ride-table td.wk > .src:first-child { margin-left: 0; }     /* no workout name: just the app */
+.sum-head h1 .sub-title { font-weight: 400; color: var(--dim); font-size: 15px; margin-left: 10px; }
+.ride-table td.n { font-family: var(--num); font-size: 15px; }
+.ride-table tbody tr { cursor: pointer; }
+.ride-table tbody tr:hover, .ride-table tbody tr:focus-visible { background: rgba(91, 157, 255, 0.08); outline: none; }
+.empty-note { color: var(--dim); margin: 18px 4px; }
+.ride-table td.del { width: 1%; padding-block: 0; text-align: right; }
+.row-del {
+  border: 0; background: none; color: #ff8a8d; font-size: 12.5px; padding: 4px 8px; border-radius: 6px;
+  cursor: pointer; opacity: 0;
+}
+.ride-table tr:hover .row-del, .ride-table tr:focus-within .row-del, .row-del:focus-visible { opacity: 1; }
+.row-del:hover { background: rgba(255, 92, 92, 0.12); }
+[data-theme="lcd"] .row-del { color: var(--fg); text-decoration: underline; }
+
+/* =========================================================================================
+   Summary: one ride, from the top: headline numbers, the whole ride, then the details
+   ========================================================================================= */
+.screen.summary {
+  overflow-y: auto;
+  display: flex;                    /* a scrolling column: every block keeps its natural height */
+  flex-direction: column;
+  gap: 14px;
+  padding-right: 4px;
+}
+.screen.summary > * { flex: none; }
+.sum-graphs { height: max(360px, 48vh); }
+.sum-head { display: flex; align-items: center; gap: 16px; }
+.sum-head h1 { margin: 0; font-size: 20px; font-weight: 600; flex: 1; text-wrap: balance; }
+.sum-stats {
+  margin: 0; padding: 18px 20px; grid-template-rows: none;
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 18px 16px;
+}
+.sum-stats .stat { display: grid; gap: 2px; align-content: start; }
+.sum-stats dt { font-size: 11.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--dim); }
+.sum-stats dd { margin: 0; display: flex; align-items: baseline; gap: 5px; }
+.sum-stats dd .num { font-size: 30px; }
+.sum-stats .unit { font-size: 13px; color: var(--dim); }
+.sum-stats .sub { margin: 0; font-size: 12.5px; color: var(--dim); white-space: normal; }
+.sum-graphs .panel-head .hint { font-size: 12px; }
+.sum-graphs .chart:has(#sum-c-beats[hidden]) { grid-template-rows: 1fr; }   /* no beats: power + HR only */
+.sum-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 14px; }
+.sum-cards .panel { padding: 16px 18px; grid-template-rows: none; display: flex; flex-direction: column; gap: 10px; }
+.zones { display: grid; gap: 7px; }
+.zbar { display: grid; grid-template-columns: 5.2em 1fr 4.2em 3em; align-items: center; gap: 10px; font-size: 13px; }
+.zbar .zl { color: var(--dim); }
+.zbar .track { height: 10px; border-radius: 3px; background: var(--grid); overflow: hidden; }
+.zbar .track i { display: block; height: 100%; border-radius: 3px; background: var(--fg); }
+.zbar .zt, .zbar .zp { text-align: right; font-family: var(--num); font-variant-numeric: tabular-nums; }
+.zbar .zp { color: var(--dim); }
+.bests { display: grid; gap: 10px; }
+.best { display: grid; grid-template-columns: 4.2em auto 1fr auto; align-items: baseline; gap: 6px; }
+.best .lab { color: var(--dim); font-size: 13px; }
+.best .num { font-size: 30px; }
+.best .unit { color: var(--dim); font-size: 13px; }
+.best .pct { justify-self: end; color: var(--dim); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.leg-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+.leg-table th { text-align: right; color: var(--dim); font-weight: 600; font-size: 12px; padding: 0 0 6px; }
+.leg-table td { padding: 6px 0; border-top: 1px solid var(--grid); color: var(--dim); }
+.leg-table td.n { text-align: right; color: var(--fg); font-family: var(--num); font-size: 15px; font-variant-numeric: tabular-nums; }
+.pc-wrap { display: grid; justify-items: center; }
+.pc { margin: 0; text-align: center; color: var(--dim); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.pc b { color: var(--fg); font-weight: 600; }
+
+/* =========================================================================================
+   Progress: fitness / fatigue / form, the month calendar and weekly totals
+   ========================================================================================= */
+.panel-head .btn { margin-left: auto; padding: 6px 14px; font-size: 13px; }
+.screen.progress { overflow-y: auto; display: flex; flex-direction: column; gap: 14px; padding-right: 4px; }
+.screen.progress > * { flex: none; }
+.totals { display: flex; gap: 26px; margin: 0; }
+.totals div { display: grid; }
+.totals dt { font-size: 11px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--dim); }
+.totals dd { margin: 0; font: 20px var(--num); font-variant-numeric: tabular-nums; }
+.panel.pmc { height: max(340px, 44vh); grid-template-rows: auto auto minmax(0, 1fr); }
+.chart.one { grid-template-rows: 1fr; }
+.pmc-now { display: flex; align-items: baseline; gap: 34px; padding: 2px 4px 6px; flex-wrap: wrap; }
+.pmc-now .now { display: flex; align-items: baseline; gap: 8px; }
+.pmc-now .lab { font-size: 12px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--dim); }
+.pmc-now .num { font-size: 30px; }
+.pmc-now .word { font-size: 13px; color: var(--dim); }
+.pmc-now .note { margin: 0; flex-basis: 100%; font-size: 12.5px; color: var(--dim); }
+.cap .key i.ctl { height: 2.75px; background: var(--power); }
+.cap .key i.atl { height: 1.75px; background: var(--hr); }
+.cap .key i.tsb { height: 9px; width: 9px; background: linear-gradient(90deg, #2a7a57 50%, #8a6a1c 50%); }
+.prog-row { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 14px; }
+.panel.cal, .panel.weekly { padding: 14px 16px 16px; grid-template-rows: auto minmax(0, 1fr); }
+.panel.weekly { grid-template-rows: auto minmax(220px, 1fr) auto; }
+.panel.cal .panel-head h2 { min-width: 11em; text-align: center; }
+.nav {
+  border: 0; background: var(--btn-neutral); color: var(--fg); width: 30px; height: 30px; border-radius: 8px;
+  font-size: 18px; line-height: 1; cursor: pointer;
+}
+.nav:hover { filter: brightness(1.2); }
+.cal-grid { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)) minmax(64px, 0.9fr); gap: 4px; }
+.cal-h { font-size: 11px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--dim); padding: 2px 6px; }
+.cal-d {
+  min-height: 64px; border-radius: 6px; padding: 5px 6px; display: flex; flex-direction: column; gap: 3px;
+  background: color-mix(in srgb, var(--power) calc(var(--load) * 26%), var(--bg));
+  border: 1px solid var(--grid);
+}
+.cal-d.out { opacity: 0.4; }
+.cal-d.today { border-color: var(--power); }
+.cal-d .dn { font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums; }
+.cal-d.today .dn { color: var(--fg); font-weight: 600; }
+.chip {
+  border: 0; border-radius: 4px; padding: 3px 5px; font: 12px var(--num); font-variant-numeric: tabular-nums;
+  background: color-mix(in srgb, var(--power) 30%, var(--panel)); color: var(--fg); cursor: pointer; text-align: left;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.chip:hover, .chip:focus-visible { background: var(--power); color: #fff; outline: none; }
+.cal-w { display: flex; flex-direction: column; justify-content: center; padding: 4px 8px; font-variant-numeric: tabular-nums; }
+.cal-w b { font: 15px var(--num); }
+.cal-w span { font-size: 11.5px; color: var(--dim); }
+.wk-note { margin: 4px 4px 0; color: var(--dim); font-size: 13px; }
+.wk-note b { color: var(--fg); font-family: var(--num); }
+
+.themes { margin-right: 14px; }
+
+/* =========================================================================================
+   LCD theme: a rowing-machine monitor. A black plastic bezel, the data on grey-green reflective
+   LCD windows in one ink (with the faint shadow LCD pixels cast on the backlight), the top strip
+   one window split into cells by ink rules, and grey rubber pill buttons.
+   ========================================================================================= */
+[data-theme="lcd"] {
+  --bg: #383b3e;
+  --panel: #a9b49f;
+  --grid: rgba(27, 30, 25, 0.16);
+  --fg: #1b1e19;
+  --dim: #3f463a;
+  --faint: #76806e;
+  --power: #1b1e19;
+  --hr: #1b1e19;
+  --z2: #9ca991;
+  --good: #1b1e19;
+  --warn: #1b1e19;
+  --bad: #1b1e19;
+  --lcd: linear-gradient(170deg, #b3bea9 0%, #a8b39e 55%, #9fab96 100%);
+  --ink-shadow: 1.5px 1.5px 0 rgba(27, 30, 25, 0.13);
+  --num: "Bahnschrift", "Segoe UI", system-ui, sans-serif;
+  --gap: 0px;                                    /* one window: ink rules instead of gaps */
+}
+[data-theme="lcd"] body {
+  background: radial-gradient(120% 90% at 50% 0%, #43464a 0%, #36393c 70%);   /* graphite plastic, not black */
+}
+
+/* one LCD window for the tiles, dynamics and graphs, split by ink rules (no bezel between them) */
+[data-theme="lcd"] .tiles,
+[data-theme="lcd"] .screen.ride main {
+  background: var(--lcd);
+  border: 2px solid #232527;
+}
+[data-theme="lcd"] .tiles {
+  border-bottom: 2px solid var(--fg);
+  border-radius: 4px 4px 0 0;
+  box-shadow: inset 0 2px 7px rgba(0, 0, 0, 0.28);
+}
+[data-theme="lcd"] main {
+  border-top: 0;
+  border-radius: 0 0 4px 4px;
+  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.08), 0 1px 0 #4a4d51;
+}
+[data-theme="lcd"] .screen.ride .panel { background: none; border: 0; border-radius: 0; box-shadow: none; }
+[data-theme="lcd"] .screen.ride .panel + .panel { border-left: 2px solid var(--fg); }   /* same side as the tile rules */
+[data-theme="lcd"] .screen:not(.ride) .panel {
+  background: var(--lcd);
+  border: 2px solid #232527;
+  border-radius: 4px;
+  box-shadow: inset 0 2px 7px rgba(0, 0, 0, 0.28), 0 1px 0 #4a4d51;
+}
+[data-theme="lcd"] .tile {
+  background: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+[data-theme="lcd"] .tile + .tile { border-left: 2px solid var(--fg); }   /* the cell rules */
+
+/* ink: heavy condensed numbers, small lowercase units and labels, pixel shadow */
+[data-theme="lcd"] .num {
+  font-weight: 700;
+  font-stretch: 87.5%;
+  color: var(--fg) !important;
+  text-shadow: var(--ink-shadow);
+}
+[data-theme="lcd"] .num.dim { color: var(--faint) !important; }
+[data-theme="lcd"] .label,
+[data-theme="lcd"] .sect,
+[data-theme="lcd"] .panel-head h2,
+[data-theme="lcd"] .pair dt {
+  text-transform: none;
+  letter-spacing: 0.02em;
+  font-weight: 600;
+  color: var(--fg);
+  text-shadow: var(--ink-shadow);
+}
+[data-theme="lcd"] .label { font-size: clamp(11px, 9.5cqh, 14px); }
+[data-theme="lcd"] .panel-head h2 { font-size: 14px; }
+[data-theme="lcd"] .unit,
+[data-theme="lcd"] .sub,
+[data-theme="lcd"] .readout,
+[data-theme="lcd"] .cap,
+[data-theme="lcd"] .pco-key { color: var(--dim); text-shadow: var(--ink-shadow); }
+[data-theme="lcd"] .sub.warn { color: var(--fg); font-weight: 600; }
+[data-theme="lcd"] .readout b { color: var(--fg); }
+[data-theme="lcd"] .pair dd, [data-theme="lcd"] .pco-v .num { text-shadow: var(--ink-shadow); }
+[data-theme="lcd"] .balance .divider,
+[data-theme="lcd"] .pc .vdiv { background: var(--fg); }
+[data-theme="lcd"] .sect::before, [data-theme="lcd"] .sect::after { background: var(--fg); height: 1.5px; }
+
+/* inverse video for badges: the zone, seated/standing */
+[data-theme="lcd"] .badge { background: var(--fg) !important; color: #b0bba6 !important; border-radius: 2px; }
+[data-theme="lcd"] .pos { background: var(--fg); color: #b0bba6 !important; border: 0; border-radius: 2px; }
+
+/* the charts and dials cast the same pixel shadow */
+[data-theme="lcd"] .chart canvas,
+[data-theme="lcd"] .ring,
+[data-theme="lcd"] .pedal { filter: drop-shadow(1.5px 1.5px 0 rgba(27, 30, 25, 0.13)); }
+[data-theme="lcd"] .cap .key i { background: var(--fg) !important; border-color: var(--fg) !important; }
+[data-theme="lcd"] .cap .key i.faint { opacity: 0.45; }
+[data-theme="lcd"] .cap .key i.rr { height: 1px; }
+[data-theme="lcd"] .cap .key i.a1 { height: 3px; }
+[data-theme="lcd"] .cap .key i.dot { background: none !important; border: 1.25px solid var(--fg); }
+[data-theme="lcd"] .cap .key i.vt1, [data-theme="lcd"] .cap .key i.vt2 { background: none !important; }
+[data-theme="lcd"] .cap .key.z2 i { background: var(--z2) !important; outline: 1px solid rgba(27, 30, 25, 0.35); }
+[data-theme="lcd"] .empty { color: var(--dim); }
+
+/* dials: faint unlit track, ink phase, segmented peak ring */
+[data-theme="lcd"] .ring .track { stroke: rgba(27, 30, 25, 0.1); }
+[data-theme="lcd"] .ring .phase { stroke: var(--fg); }
+[data-theme="lcd"] .ring .peak { stroke: var(--fg); stroke-dasharray: 2.4 1.3; }
+[data-theme="lcd"] .ring .tick { stroke: rgba(27, 30, 25, 0.35); }
+[data-theme="lcd"] .ring .tick.mid { stroke: rgba(27, 30, 25, 0.55); }
+[data-theme="lcd"] .ring .tick.main { stroke: var(--fg); }
+[data-theme="lcd"] .ring .w { font-weight: 700; font-stretch: 87.5%; }
+[data-theme="lcd"] .ring .wu, [data-theme="lcd"] .ring .side { fill: var(--dim); }
+[data-theme="lcd"] .ring .pk { fill: var(--fg); font-weight: 600; }
+[data-theme="lcd"] .ring .pk-line { stroke: var(--fg); }
+[data-theme="lcd"] .pedal .sil { fill: rgba(27, 30, 25, 0.2); }
+[data-theme="lcd"] .pedal .hole { fill: #a9b49f; }
+[data-theme="lcd"] .pedal .range { stroke: var(--fg); stroke-width: 1.5px; stroke-dasharray: 3 2; }
+[data-theme="lcd"] .pedal .now { stroke: var(--fg); stroke-width: 3px; }
+[data-theme="lcd"] .pedal .centre { stroke: var(--fg); }
+[data-theme="lcd"] .pco-key .now { background: var(--fg); height: 3px; }
+[data-theme="lcd"] .pco-key .range { background: repeating-linear-gradient(90deg, var(--fg) 0 3px, transparent 3px 5px); }
+
+/* the view switch on the LCD: inverse video for the chosen one */
+[data-theme="lcd"] .panel .seg { background: none; border: 1.5px solid var(--fg); border-radius: 3px; }
+[data-theme="lcd"] .panel .seg button { color: var(--fg); border-radius: 1px; }
+[data-theme="lcd"] .panel .seg button.on { background: var(--fg); color: #b0bba6; }
+
+/* the bezel below the windows: light print, grey rubber pill buttons */
+[data-theme="lcd"] .bar .sensors { color: #a3a7ac; }
+[data-theme="lcd"] .bar .sensor b { color: #e2e4e6; }
+[data-theme="lcd"] .bar .sensor .dot { background: #8c9096; }
+[data-theme="lcd"] .bar .sensor.ok .dot { background: #e2e4e6; }
+[data-theme="lcd"] .rec, [data-theme="lcd"] .rec.ready { color: #c9ccd0; }
+[data-theme="lcd"] .rec .tag, [data-theme="lcd"] .rec.recording .tag,
+[data-theme="lcd"] .rec.paused .tag, [data-theme="lcd"] .rec.finished .tag { color: #e2e4e6; }
+[data-theme="lcd"] .rec.recording::before { background: #e2e4e6; }
+[data-theme="lcd"] .btn,
+[data-theme="lcd"] .btn.primary,
+[data-theme="lcd"] .btn.go,
+[data-theme="lcd"] .btn.danger {
+  background: linear-gradient(#a2a8ae, #7f858b);
+  color: #fff;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.35);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 2px 3px rgba(0, 0, 0, 0.6);
+}
+[data-theme="lcd"] .btn.danger-text { color: #fff; }
+[data-theme="lcd"] .bar .seg { background: #2a2c2f; border-color: #232527; }
+[data-theme="lcd"] .bar .seg button { color: #a3a7ac; }
+[data-theme="lcd"] .bar .seg button.on { background: linear-gradient(#a2a8ae, #7f858b); color: #fff; }
+
+/* the summary's title sits on the bezel: light print */
+[data-theme="lcd"] .sum-head h1 { color: #e2e4e6; }
+[data-theme="lcd"] .sum-head h1 .sub-title { color: #a3a7ac; }
+[data-theme="lcd"] .ride-table th { background: #aab59f; }
+[data-theme="lcd"] .ride-table tbody tr:hover, [data-theme="lcd"] .ride-table tbody tr:focus-visible { background: rgba(27, 30, 25, 0.08); }
+[data-theme="lcd"] .srow, [data-theme="lcd"] .settings input[type="number"] { background: rgba(27, 30, 25, 0.06); border-color: rgba(27, 30, 25, 0.35); }
+[data-theme="lcd"] .srow .dot { background: transparent; border: 1.5px solid var(--fg); }
+[data-theme="lcd"] .srow.ok .dot { background: var(--fg); }
+[data-theme="lcd"] .srow .val { font-weight: 700; text-shadow: var(--ink-shadow); }
+[data-theme="lcd"] .switch i { background: rgba(27, 30, 25, 0.2); }
+[data-theme="lcd"] .switch input:checked + i { background: var(--fg); }
+[data-theme="lcd"] .switch input:checked + i::after { background: #b0bba6; }
+[data-theme="lcd"] .zbar .track { background: rgba(27, 30, 25, 0.12); }
+[data-theme="lcd"] .best .num, [data-theme="lcd"] .sum-stats .num { font-weight: 700; }
+
+/* progress in LCD: calendar cells are light ink shades, chips in inverse video */
+[data-theme="lcd"] .cal-d { background: rgba(27, 30, 25, calc(0.03 + var(--load) * 0.22)); border-color: rgba(27, 30, 25, 0.25); }
+[data-theme="lcd"] .cal-d.today { border: 2px solid var(--fg); }
+[data-theme="lcd"] .chip { background: var(--fg); color: #b0bba6; }
+[data-theme="lcd"] .chip:hover, [data-theme="lcd"] .chip:focus-visible { background: #000; color: #fff; }
+[data-theme="lcd"] .nav { background: linear-gradient(#a2a8ae, #7f858b); color: #fff; }
+[data-theme="lcd"] .cap .key i.tsb { background: var(--fg) !important; }
+[data-theme="lcd"] .cap .key i.atl { height: 0; border-top: 1.5px dashed var(--fg); background: none !important; }
+[data-theme="lcd"] .totals dd, [data-theme="lcd"] .pmc-now .num { font-weight: 700; }
+[data-theme="lcd"] .screen.progress .sum-head h1, [data-theme="lcd"] .totals dd { color: #e2e4e6; }
+[data-theme="lcd"] .totals dt { color: #a3a7ac; }
+
+/* dialogs are LCD windows too */
+[data-theme="lcd"] .card {
+  background: var(--lcd);
+  border: 2px solid #232527;
+  border-radius: 4px;
+  color: var(--fg);
+}
+[data-theme="lcd"] .card p, [data-theme="lcd"] .stats dt { color: var(--dim); }
+[data-theme="lcd"] .stats dd { font-weight: 700; text-shadow: var(--ink-shadow); }

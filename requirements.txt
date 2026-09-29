@@ -1,3 +1,4 @@
 bleak>=1.0
 pillow
 pywebview
+garmin-fit-sdk
