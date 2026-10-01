@@ -1,5 +1,7 @@
 """The desktop app's engine (home -> ride -> summary lifecycle) and its local HTTP API."""
 import json
+
+import pytest
 import os
 import threading
 import urllib.error
@@ -376,3 +378,83 @@ def test_leaving_a_ride_never_leaves_erg_on_and_no_ftp_no_workout(tmp_path):
     assert e2.player is None and "FTP" in e2.error
     e2._do("workout", "../../etc")                          # only known workouts
     assert e2.workout_id == "vo2-5x4" or e2.workout_id is None
+
+
+def test_rides_keep_the_room_and_the_workout_steps(tmp_path):
+    e = _engine(tmp_path)
+    e._do("settings", {"room_temp": 21.5, "room_rh": 48, "ftp": 200})
+    e._do("settings", {"room_temp": 99})                          # nonsense: kept as it was
+    assert e.settings["room_temp"] == 21.5
+    e._do("workout", "vt1-steps")
+    s = _ride(e, 0)
+    for i in range(601):
+        e._log_step()
+        s._second({"time": s.started + timedelta(seconds=i), "power_w": 100, "heart_rate_bpm": 120})
+    _stop_and_save(e)
+    ride = os.path.basename(s.base)
+    m = rs.load_meta(str(tmp_path), ride)
+    assert m["temp_c"] == 21.5 and m["rh_pct"] == 48 and m["workout"]["id"] == "vt1-steps"
+    assert [x[1] for x in m["workout"]["log"]] == [0, 1]                      # warm-up, then the 60 % step at 600 s
+    entry = next(r for r in rs.ride_list(str(tmp_path), 200) if r["id"] == ride)
+    assert entry["temp_c"] == 21.5 and entry["name"] == "Threshold steps"
+    # corrected afterwards from the summary
+    e._do("ride_meta", {"temp_c": 23})
+    assert rs.load_meta(str(tmp_path), ride)["temp_c"] == 23
+    e._do("nav", "stats"); e._do("delete", ride); e._do("delete_confirm")
+    assert not os.path.exists(rs.meta_path(str(tmp_path), ride))             # deleted with the ride
+
+
+def test_vt1_ceiling_trims_slowly_and_gives_back(tmp_path):
+    e = _engine(tmp_path, vt1_hr=150)
+    e.worker.trainer = _Trainer()
+    e._do("workout", "endurance-60")
+    s = _ride(e, 0)
+    s.t0 = app.utcnow()
+    _pedal(s, 3)
+    hr_now = lambda bpm: s.live_hr.__setitem__(slice(None), [((app.utcnow() - s.t0).total_seconds() - k, bpm) for k in range(30)])
+    hr_now(158)                                               # well above VT1
+    e._drive_trainer()
+    full = e.worker.trainer.want[1]
+    assert e.cap == 1.0                                       # off: never trimmed
+    e._do("wo_ceiling")
+    e._drive_trainer()
+    assert e.cap == 0.97 and e.worker.trainer.want[1] == pytest.approx(full * 0.97)
+    e._drive_trainer()
+    assert e.cap == 0.97                                      # waits for heart rate to answer
+    for _ in range(20):
+        e._cap_t -= 30
+        e._drive_trainer()
+    assert e.cap == e.CAP_MIN                                 # never below 70 %
+    hr_now(140)                                               # clearly under: given back, slowly
+    e._cap_t -= 31
+    e._drive_trainer()
+    assert e.cap == pytest.approx(0.72)
+    e._do("wo_ceiling")                                       # off again: the full target at once
+    e._drive_trainer()
+    assert e.cap == 1.0 and e.worker.trainer.want[1] == pytest.approx(full)
+
+
+def test_plan_puts_todays_workout_up_and_the_builder_saves_files(tmp_path, monkeypatch):
+    from datetime import date
+    monkeypatch.setattr(app, "WORKOUT_DIR", str(tmp_path / "workouts"))
+    e = app.Engine(str(tmp_path), {**app.SETTINGS_DEFAULTS, "ftp": 200}, FakeWorker, str(tmp_path / "settings.json"))
+    today = date.today()
+    e._do("nav", "plan")
+    e._do("plan_new", {"start": today.isoformat(), "weeks": 4})
+    monday = today.toordinal() - today.weekday()
+    assert e.plan["start"] == date.fromordinal(monday).isoformat()
+    e._do("plan_import", {"text": f"{today.isoformat()}: Sweet 3x15 | 10m 55%, 3x(15m 90%, 5m 55%), 10m 50%\nFri 1h"})
+    assert "Imported 1 day" in e.plan_msg and "line 2" in e.plan_msg
+    e._tick()
+    assert e.workout_id == f"plan:{today.isoformat()}" and e.workouts()[e.workout_id]["name"] == "Sweet 3x15"
+    e._do("workout", "endurance-60")                            # you can still change it today
+    e._tick()
+    assert e.workout_id == "endurance-60"
+    e._do("plan_set", {"date": today.isoformat(), "text": "12m 900%"})
+    assert "300" in e.plan_msg                                   # explained, the day unchanged
+    assert app.pl.load(str(tmp_path / "plan.json"))["days"][today.isoformat()]["name"] == "Sweet 3x15"
+    e._do("wo_save", {"name": "3x15 threshold", "text": "15m 50-70%, 3x(15m 92%, 5m 55%), 10m 50%"})
+    assert (tmp_path / "workouts" / "3x15-threshold.zwo").exists() and "zwo:3x15-threshold" in e.workouts()
+    e._do("wo_delete", "zwo:../settings")                       # only workout files
+    e._do("wo_delete", "zwo:3x15-threshold")
+    assert "zwo:3x15-threshold" not in e.workouts()

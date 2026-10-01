@@ -26,7 +26,8 @@ import random
 from statistics import median
 from typing import Optional
 
-A1_VT1 = 0.75
+A1_VT1 = 0.75                  # VT1 (HRVT1)
+A1_VT2 = 0.5                   # VT2 (HRVT2): close to the second lactate threshold, i.e. near FTP
 WINDOW_S = 120                 # alpha 1 is computed over 2 min of beats
 STEP_S = 5                     # a new alpha 1 every 5 s
 WARMUP_S = 600
@@ -78,7 +79,7 @@ def _pava_decreasing(y: list, w: list) -> list:
     return out
 
 
-def crossing(points: list[tuple], width: float) -> Optional[dict]:
+def crossing(points: list[tuple], width: float, level: float = A1_VT1) -> Optional[dict]:
     """points = [(x, alpha 1)]: the binned isotonic curve and where it crosses 0.75.
     {kind, x, curve: [(bin centre, fitted, median, n)]}; kind "cross" (x = the crossing),
     "between" (it crosses inside a gap with no data: x, x2 = the bins either side), "above" or
@@ -94,14 +95,14 @@ def crossing(points: list[tuple], width: float) -> Optional[dict]:
     n = [len(bins[k]) for k in keys]
     fit = _pava_decreasing(med, n)
     curve = list(zip(xs, fit, med, n))
-    if fit[0] <= A1_VT1:
+    if fit[0] <= level:
         return {"kind": "below", "x": xs[0], "curve": curve}
     for j in range(1, len(xs)):
-        if fit[j] <= A1_VT1:
+        if fit[j] <= level:
             if xs[j] - xs[j - 1] > 2.5 * width:          # no data where it crosses: a range only
                 return {"kind": "between", "x": xs[j - 1], "x2": xs[j], "curve": curve}
             f0, f1 = fit[j - 1], fit[j]
-            x = xs[j - 1] + (xs[j] - xs[j - 1]) * (f0 - A1_VT1) / (f0 - f1)
+            x = xs[j - 1] + (xs[j] - xs[j - 1]) * (f0 - level) / (f0 - f1)
             return {"kind": "cross", "x": x, "curve": curve}
     return {"kind": "above", "x": xs[-1], "curve": curve}
 
@@ -113,12 +114,13 @@ def _percentile(v: list, q: float) -> float:
     return v[lo] + (v[min(lo + 1, len(v) - 1)] - v[lo]) * (k - lo)
 
 
-def estimate(rows: list[dict], seed: int = 1) -> Optional[dict]:
+def estimate(rows: list[dict], seed: int = 1, level: float = A1_VT1, s: Optional[list] = None) -> Optional[dict]:
     """VT1 by power and by heart rate from one ride's per-second rows (with dfa_a1), or None when
     the ride has too little steady alpha 1. Each of "hr" (the main one: heart rate drifts smoothly,
     so its bins fill in) and "power": {kind, value, value2 (between), lo, hi (80 % bootstrap
-    interval, crossings only), p_cross (share of resampled rides that cross), curve}."""
-    s = samples(rows)
+    interval, crossings only), p_cross (share of resampled rides that cross), curve}.
+    level=A1_VT2 gives HRVT2 the same way; pass the samples to reuse them for both."""
+    s = samples(rows) if s is None else s
     if len(s) < MIN_SAMPLES:
         return None
     block = WINDOW_S // STEP_S
@@ -128,7 +130,7 @@ def estimate(rows: list[dict], seed: int = 1) -> Optional[dict]:
     out = {"samples": len(s), "minutes": round(len(s) * STEP_S / 60, 1),
            "beats_pct": round(sum(cov) / len(cov), 1) if cov else None}
     for key, width in BINS.items():
-        res = crossing([(x[key], x["a1"]) for x in s], width)
+        res = crossing([(x[key], x["a1"]) for x in s], width, level)
         if res is None:
             out[key] = None
             continue
@@ -139,7 +141,7 @@ def estimate(rows: list[dict], seed: int = 1) -> Optional[dict]:
             while len(pick) < len(s):
                 b = rnd.choice(starts)
                 pick += s[b: b + block]
-            r = crossing([(x[key], x["a1"]) for x in pick[: len(s)]], width)
+            r = crossing([(x[key], x["a1"]) for x in pick[: len(s)]], width, level)
             if r and r["kind"] == "cross":
                 crossed += 1
                 xs.append(r["x"])

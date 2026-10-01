@@ -11,6 +11,7 @@ const dayOf = (iso) => { const [y, m, d] = iso.split("-").map(Number); return ne
 const isoOf = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
 async function showStats(s) {
+  if (PROG.data && HOME.efFtp !== s.config.ftp) { HOME.efFtp = s.config.ftp; drawEftp(PROG.data, s); }   // FTP changed
   if (S.prevScreen !== "stats" || HOME.loadedFor !== s.rides_version) {     // the history
     HOME.loadedFor = s.rides_version;
     loadRides();
@@ -36,6 +37,10 @@ function renderProgress() {
   renderCalendar();
   makeWeekly(d.weeks);
   drawVt1Trend();
+  drawChecks();
+  drawEftp(d, S.snap);
+  HOME.efFtp = S.snap?.config.ftp;
+  drawEfficiency();
 }
 
 // ---- today's fitness, fatigue and form, and what the form means
@@ -206,84 +211,264 @@ for (const b of $("wk-metric").querySelectorAll("button")) {
   });
 }
 
-// ---- VT1 ride by ride (vt1.py): a dot with its 80 % interval where alpha 1 crossed 0.75, a
-// triangle where the ride only gave a bound (pointing the way VT1 lies), a bar for "somewhere in
-// this gap". Click a mark to open the ride. One widget, on Statistics and on Home; they share the
-// heart rate / power choice.
-const VT1T = { by: store.get("vt1By", "hr"), all: [] };
+// ---- charts over time with lanes: one date axis, a lane per measure (each with its own scale and
+// gridlines, stacked, never two scales on one plot), hover details and click-to-open on every mark
+function laneChart(cv, height, lanes, t0, t1) {
+  const dpr = devicePixelRatio || 1, wd = cv.parentElement.clientWidth;
+  if (!wd) return null;
+  cv.style.width = wd + "px"; cv.style.height = height + "px";
+  cv.width = Math.round(wd * dpr); cv.height = Math.round(height * dpr);
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, wd, height);
+  const ml = 46, mr = 14, mt = 8, mb = 22, gap = 30, W = wd - ml - mr;
+  const total = height - mt - mb - gap * (lanes.length - 1), wsum = lanes.reduce((a, l) => a + l.weight, 0);
+  const X = (t) => ml + ((t - t0) / (t1 + 86400e3 - t0)) * W;
+  ctx.font = "11px Bahnschrift, 'Segoe UI', sans-serif";
+  let top = mt;
+  for (const l of lanes) {
+    const h = (total * l.weight) / wsum, y0 = l.y0, y1 = l.y1, base = top + h;
+    l.Y = (v) => base - ((v - y0) / (y1 - y0)) * h;
+    l.top = top; l.h = h;
+    ctx.strokeStyle = C.grid; ctx.fillStyle = C.dim; ctx.lineWidth = 1; ctx.textAlign = "right";
+    for (let v = Math.ceil(y0 / l.step) * l.step; v <= y1 + 1e-9; v += l.step) {
+      ctx.beginPath(); ctx.moveTo(ml, l.Y(v)); ctx.lineTo(ml + W, l.Y(v)); ctx.stroke();
+      ctx.fillText(l.fmt(v), ml - 6, l.Y(v) + 4);
+    }
+    ctx.textAlign = "left"; ctx.fillStyle = C.dim;                   // the lane's name, top left
+    ctx.fillText(l.label, ml + 4, top + 11);
+    top = base + gap;
+  }
+  ctx.textAlign = "center"; ctx.fillStyle = C.dim;                  // a date label every week or so
+  const days = (t1 - t0) / 86400e3, every = days > 120 ? 28 : days > 50 ? 14 : 7;
+  for (let t = t1; t >= t0; t -= every * 86400e3) ctx.fillText(SHORT_DAY.format(new Date(t)), X(t + 43200e3), height - 5);
+  return { ctx, X, lanes, ml, W };
+}
+const niceRange = (vals, step, pad) => [Math.floor((Math.min(...vals) - pad) / step) * step, Math.ceil((Math.max(...vals) + pad) / step) * step];
+
+// hover details and click-to-open; marks = [{x, y, html, id}] kept on the chart's own object
+function chartTips(cv, getMarks) {
+  const wrap = cv.parentElement;
+  wrap.style.position = "relative";
+  const tip = document.createElement("div");
+  tip.className = "ctip"; tip.hidden = true;
+  wrap.append(tip);
+  const hit = (ev) => {
+    const r = cv.getBoundingClientRect(), mx = ev.clientX - r.left, my = ev.clientY - r.top;
+    let best = null, bd = 12;
+    for (const m of getMarks()) { const d = Math.hypot(m.x - mx, m.y - my); if (d < bd) { bd = d; best = m; } }
+    return best;
+  };
+  cv.addEventListener("mousemove", (ev) => {
+    const m = hit(ev);
+    cv.style.cursor = m && m.id ? "pointer" : "";
+    tip.hidden = !m;
+    if (!m) return;
+    tip.innerHTML = m.html;
+    const left = Math.min(Math.max(4, m.x + 12), wrap.clientWidth - tip.offsetWidth - 4);
+    tip.style.left = left + "px"; tip.style.top = Math.max(0, m.y - tip.offsetHeight - 8) + "px";
+  });
+  cv.addEventListener("mouseleave", () => { tip.hidden = true; });
+  cv.addEventListener("click", (ev) => { const m = hit(ev); if (m && m.id) act("open", m.id); });
+}
+
+// ---- thresholds over time (vt1.py): VT1 (alpha 1 = 0.75) and VT2 (0.5, near FTP) of every ride, a
+// heart-rate lane over a power lane. Dots / squares with 80 % intervals where a ride crossed; open
+// (VT1) or filled (VT2) triangles where it only gave a bound, pointing the way the threshold lies;
+// a dashed bar for "somewhere in this gap". On Statistics and on Home.
+const VT1T = { all: [] };
 function vt1Trend(ids, height) {
   const w = { ids, height, marks: [], data: null };
-  for (const b of $(ids.seg).querySelectorAll("button")) {
-    b.classList.toggle("on", b.dataset.by === VT1T.by);
-    b.addEventListener("click", () => {
-      VT1T.by = b.dataset.by; store.set("vt1By", VT1T.by);
-      for (const x of VT1T.all) {
-        for (const o of $(x.ids.seg).querySelectorAll("button")) o.classList.toggle("on", o.dataset.by === VT1T.by);
-        if (x.data) drawVt1Into(x);
-      }
-    });
-  }
-  const hitAt = (ev) => {
-    const r = ev.currentTarget.getBoundingClientRect(), mx = ev.clientX - r.left, my = ev.clientY - r.top;
-    return w.marks.find((m) => Math.abs(m.x - mx) < 9 && Math.abs(m.y - my) < 12);
-  };
-  $(ids.chart).addEventListener("click", (ev) => { const h = hitAt(ev); if (h && h.id) act("open", h.id); });
-  $(ids.chart).addEventListener("mousemove", (ev) => { ev.currentTarget.style.cursor = hitAt(ev) ? "pointer" : ""; });
+  chartTips($(ids.chart), () => w.marks);
   w.draw = (data) => { w.data = data; drawVt1Into(w); };
   VT1T.all.push(w);
   return w;
 }
+function thrText(e, unit) {
+  if (!e) return "--";
+  if (e.kind === "cross") return `${fmt(e.value)} ${unit}${e.lo != null ? ` (${fmt(e.lo)}–${fmt(e.hi)})` : ""}`;
+  if (e.kind === "between") return `between ${fmt(e.value)} and ${fmt(e.value2)} ${unit}`;
+  return `${e.kind} ${fmt(e.value)} ${unit}`;
+}
 function drawVt1Into(w) {
-  const d = w.data, cv = $(w.ids.chart), dpr = devicePixelRatio || 1, lcd = THEME === "lcd";
-  const by = VT1T.by, unit = by === "hr" ? "bpm" : "W";
-  const pts = (d.vt1 || []).filter((r) => r[by]);
-  const wd = cv.parentElement.clientWidth, ht = w.height;
-  if (!wd) return;
-  cv.style.width = wd + "px"; cv.style.height = ht + "px";
-  cv.width = Math.round(wd * dpr); cv.height = Math.round(ht * dpr);
-  const ctx = cv.getContext("2d");
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  ctx.clearRect(0, 0, wd, ht);
+  const d = w.data, lcd = THEME === "lcd", rows = d.vt1 || [];
+  const S2 = [{ name: "VT1", ink: lcd ? C.fg : C.a1, get: (r, by) => r[by] },
+              { name: "VT2", ink: lcd ? C.fg : C.hr, square: true, get: (r, by) => r.vt2 && r.vt2[by] }];
+  const latest = (sr, by, unit) => {                               // the newest ride's result
+    const got = rows.map((r) => sr.get(r, by)).filter(Boolean), e = got[got.length - 1];
+    if (!e) return "--";
+    return e.kind === "cross" ? `<b>${fmt(e.value)}</b> ${unit}` : e.kind === "between"
+      ? `<b>${fmt(e.value)}–${fmt(e.value2)}</b> ${unit}` : `${e.kind} <b>${fmt(e.value)}</b> ${unit}`;
+  };
+  $(w.ids.readout).innerHTML = rows.length ? S2.map((sr) =>
+    `<span class="tkey"><i class="${sr.square ? "sq" : "dot"}" style="background:${sr.ink}"></i>${sr.name} ${latest(sr, "hr", "bpm")} · ${latest(sr, "power", "W")}</span>`).join("") : "";
+  const nCross = rows.filter((r) => r.hr && r.hr.kind === "cross").length;
+  $(w.ids.note).textContent = !rows.length
+    ? "Each ride with a heart-rate strap and α1 adds a point. VT1 is where α1 crosses 0.75, VT2 where it reaches 0.5 (near FTP): a steady block hard enough shows them."
+    : `VT1 (α1 0.75) and VT2 (α1 0.5, close to FTP). ${nCross} of ${rows.length} rides crossed VT1; triangles are rides that stayed below, pointing to where the threshold lies. Hover for details, click to open the ride.`;
   w.marks = [];
-  const crosses = pts.filter((r) => r[by].kind === "cross");
-  const last = crosses[crosses.length - 1];
-  $(w.ids.readout).innerHTML = last ? `latest <b>${fmt(last[by].value)}</b> ${unit} (${SHORT_DAY.format(dayOf(last.day))})` : "";
-  $(w.ids.note).textContent = !pts.length
-    ? "Each ride with a heart-rate strap and α1 adds a point here. A crossing needs a steady block hard enough to take α1 under 0.75."
-    : `${crosses.length} of ${pts.length} rides crossed 0.75; the others only show which side of it they stayed.`;
-  if (!pts.length) return;
-  const vals = pts.flatMap((r) => [r[by].value, r[by].value2, r[by].lo, r[by].hi].filter((v) => v != null));
-  const step = by === "hr" ? 5 : 25;
-  const y0 = Math.floor((Math.min(...vals) - step) / step) * step, y1 = Math.ceil((Math.max(...vals) + step) / step) * step;
-  const t1 = dayOf(d.today).getTime(), t0 = Math.min(dayOf(pts[0].day).getTime(), t1 - 28 * 86400e3) - 2 * 86400e3;
-  const ml = 40, mr = 14, mt = 10, mb = 24, W = wd - ml - mr, H = ht - mt - mb;
-  const X = (t) => ml + ((t - t0) / (t1 + 86400e3 - t0)) * W, Y = (v) => mt + H - ((v - y0) / (y1 - y0)) * H;
-  ctx.font = "11px Bahnschrift, 'Segoe UI', sans-serif";
-  ctx.strokeStyle = C.grid; ctx.fillStyle = C.dim; ctx.lineWidth = 1; ctx.textAlign = "right";
-  const ystep = (y1 - y0) / step > 6 ? step * 2 : step;
-  for (let v = y0; v <= y1; v += ystep) {
-    ctx.beginPath(); ctx.moveTo(ml, Y(v)); ctx.lineTo(ml + W, Y(v)); ctx.stroke();
-    ctx.fillText(v, ml - 6, Y(v) + 4);
-  }
-  ctx.textAlign = "center";                                          // a date label every week or so
-  const days = (t1 - t0) / 86400e3, every = days > 120 ? 28 : days > 50 ? 14 : 7;
-  for (let t = dayOf(d.today).getTime(); t >= t0; t -= every * 86400e3) ctx.fillText(SHORT_DAY.format(new Date(t)), X(t + 43200e3), mt + H + 16);
-  const ink = lcd ? C.fg : C.a1;
-  for (const r of pts) {
-    const e = r[by], x = X(dayOf(r.day).getTime() + 43200e3);
-    ctx.strokeStyle = ctx.fillStyle = ink; ctx.lineWidth = 1.5;
-    if (e.kind === "cross") {
-      if (e.lo != null) { ctx.beginPath(); ctx.moveTo(x, Y(e.lo)); ctx.lineTo(x, Y(e.hi)); ctx.stroke(); }
-      ctx.beginPath(); ctx.arc(x, Y(e.value), 4.5, 0, 2 * Math.PI); ctx.fill();
-    } else if (e.kind === "between") {
-      ctx.setLineDash([2, 3]); ctx.beginPath(); ctx.moveTo(x, Y(e.value)); ctx.lineTo(x, Y(e.value2)); ctx.stroke(); ctx.setLineDash([]);
-      for (const v of [e.value, e.value2]) { ctx.beginPath(); ctx.moveTo(x - 4, Y(v)); ctx.lineTo(x + 4, Y(v)); ctx.stroke(); }
-    } else {
-      const up = e.kind === "above", y = Y(e.value), k = up ? -1 : 1;  // a bound: an open triangle pointing the way VT1 lies
-      ctx.beginPath(); ctx.moveTo(x, y + k * 6); ctx.lineTo(x - 5, y - k * 3); ctx.lineTo(x + 5, y - k * 3); ctx.closePath(); ctx.stroke();
-    }
-    w.marks.push({ x, y: Y(e.value), id: r.id });
+  if (!rows.length) { laneChart($(w.ids.chart), w.height, [], 0, 1); return; }
+  const lane = (by, step, pad, unit) => {
+    const v = rows.flatMap((r) => S2.map((sr) => sr.get(r, by)).filter(Boolean).flatMap((e) => [e.value, e.value2, e.lo, e.hi].filter((x) => x != null)));
+    const [y0, y1] = v.length ? niceRange(v, step, pad) : [0, step];
+    return { by, unit, label: by === "hr" ? "heart rate, bpm" : "power, W", weight: 1, y0, y1,
+             step: (y1 - y0) / step > 4 ? step * 2 : step, fmt: (x) => `${x}` };
+  };
+  const first = Math.min(...rows.map((r) => dayOf(r.day).getTime()));
+  const t1 = dayOf(d.today).getTime(), t0 = Math.min(first, t1 - 28 * 86400e3) - 2 * 86400e3;
+  const ch = laneChart($(w.ids.chart), w.height, [lane("hr", 5, 3, "bpm"), lane("power", 25, 10, "W")], t0, t1);
+  if (!ch) return;
+  const { ctx, X } = ch;
+  for (const l of ch.lanes) {
+    S2.forEach((sr, si) => {
+      for (const r of rows) {
+        const e = sr.get(r, l.by);
+        if (!e) continue;
+        const x = X(dayOf(r.day).getTime() + 43200e3) + (si ? 4 : -4), Y = l.Y;
+        ctx.strokeStyle = ctx.fillStyle = sr.ink; ctx.lineWidth = 1.5;
+        if (e.kind === "cross") {
+          if (e.lo != null) { ctx.beginPath(); ctx.moveTo(x, Y(e.lo)); ctx.lineTo(x, Y(e.hi)); ctx.stroke(); }
+          ctx.beginPath();
+          sr.square ? ctx.rect(x - 4, Y(e.value) - 4, 8, 8) : ctx.arc(x, Y(e.value), 4.5, 0, 2 * Math.PI);
+          ctx.fill();
+        } else if (e.kind === "between") {
+          ctx.setLineDash([2, 3]); ctx.beginPath(); ctx.moveTo(x, Y(e.value)); ctx.lineTo(x, Y(e.value2)); ctx.stroke(); ctx.setLineDash([]);
+          for (const v of [e.value, e.value2]) { ctx.beginPath(); ctx.moveTo(x - 4, Y(v)); ctx.lineTo(x + 4, Y(v)); ctx.stroke(); }
+        } else {
+          const y = Y(e.value), k = e.kind === "above" ? -1 : 1;
+          ctx.beginPath(); ctx.moveTo(x, y + k * 6); ctx.lineTo(x - 5, y - k * 3); ctx.lineTo(x + 5, y - k * 3); ctx.closePath();
+          sr.square ? ctx.fill() : ctx.stroke();
+        }
+        w.marks.push({ x, y: Y(e.value), id: r.id,
+          html: `<b>${sr.name}</b> · ${SHORT_DAY.format(dayOf(r.day))}<br>${thrText(sr.get(r, "hr"), "bpm")}<br>${thrText(sr.get(r, "power"), "W")}` +
+                (r.beats_pct != null && r.beats_pct < 95 ? `<br><span class="dim">${fmt(r.beats_pct)}% of beats: α1 reads high</span>` : "") });
+      }
+    });
   }
 }
-const VT1_STATS = vt1Trend({ chart: "vt1t-chart", readout: "vt1t-readout", note: "vt1t-note", seg: "vt1t-by" }, 240);
+const VT1_STATS = vt1Trend({ chart: "vt1t-chart", readout: "vt1t-readout", note: "vt1t-note" }, 300);
 function drawVt1Trend() { if (PROG.data) VT1_STATS.draw(PROG.data); }
+
+// ---- aerobic efficiency ride by ride (ride_summary._efficiency): a lane of power per heartbeat in
+// steady Z2 (with the mean of the last 5 rides as the trend) over a lane of Pw:HR decoupling bars
+// (durability; 5 % and 10 % marked). Hover a ride for its numbers, click to open it.
+const EFF = { marks: [] };
+chartTips($("eff-chart"), () => EFF.marks);
+function drawEfficiency() {
+  const d = PROG.data;
+  if (!d) return;
+  const lcd = THEME === "lcd", all = d.efficiency || [];
+  const pts = all.filter((r) => r.ef != null), decs = all.filter((r) => r.decoupling != null);
+  const last5 = pts.slice(-5), mean = last5.length ? last5.reduce((a, r) => a + r.ef, 0) / last5.length : null;
+  const d5 = decs.slice(-5), dmean = d5.length ? d5.reduce((a, r) => a + r.decoupling, 0) / d5.length : null;
+  $("eff-readout").innerHTML = (mean != null ? `last 5: <b>${mean.toFixed(2)}</b> W per bpm at ~${fmt(last5.reduce((a, r) => a + r.power, 0) / last5.length)} W` : "") +
+    (dmean != null ? ` · decoupling <b>${dmean > 0 ? "+" : ""}${dmean.toFixed(1)}</b>%` : "");
+  $("eff-note").textContent = "Top: watts per heartbeat in steady Z2 (56–75 % of FTP, after a 10-min warm-up); rising means your aerobic fitness is, while heat, fatigue and dehydration pull a ride down. " +
+    "Bottom: how much heart rate drifted against power from the first half of the ride to the second; under 5 % is durable, over 10 % went past your aerobic base. Hover a ride for its numbers.";
+  EFF.marks = [];
+  if (!all.length) { laneChart($("eff-chart"), 300, [], 0, 1); return; }
+  const efv = pts.map((r) => r.ef), dv = decs.map((r) => r.decoupling);
+  const [e0, e1] = efv.length ? niceRange(efv, 0.05, 0.03) : [0.9, 1.1];
+  const dmax = Math.max(12, ...dv.map((v) => Math.ceil(v / 2) * 2 + 2)), dmin = Math.min(0, ...dv.map((v) => Math.floor(v / 2) * 2));
+  const first = Math.min(...all.map((r) => dayOf(r.day).getTime()));
+  const t1 = dayOf(d.today).getTime(), t0 = Math.min(first, t1 - 28 * 86400e3) - 2 * 86400e3;
+  const ch = laneChart($("eff-chart"), 300, [
+    { label: "power per heartbeat, W/bpm", weight: 1.5, y0: e0, y1: e1, step: e1 - e0 > 0.3 ? 0.1 : 0.05, fmt: (v) => v.toFixed(2) },
+    { label: "decoupling, %", weight: 1, y0: dmin, y1: dmax, step: dmax - dmin > 16 ? 5 : 2, fmt: (v) => `${Math.round(v)}` },
+  ], t0, t1);
+  if (!ch) return;
+  const { ctx, X } = ch, [L1, L2] = ch.lanes;
+  const tip = (r) => {
+    const hr = r.ef && r.power ? r.power / r.ef : null;
+    return `<b>${SHORT_DAY.format(dayOf(r.day))}</b>` +
+      (r.ef != null ? `<br>${r.ef.toFixed(2)} W per bpm: ${fmt(r.power)} W at ${fmt(hr)} bpm<br>${fmt(r.minutes)} min of steady Z2` : "<br>no steady Z2 to compare") +
+      (r.decoupling != null ? `<br>decoupling ${r.decoupling > 0 ? "+" : ""}${r.decoupling.toFixed(1)}%` : "");
+  };
+  // lane 2: the 5 % and 10 % lines, then a bar per ride
+  ctx.setLineDash([4, 4]); ctx.lineWidth = 1;
+  for (const [v, c] of [[5, lcd ? C.fg : C.warn], [10, lcd ? C.fg : C.bad]]) {
+    ctx.strokeStyle = blend(c, C.panel, 0.3);
+    ctx.beginPath(); ctx.moveTo(ch.ml, L2.Y(v)); ctx.lineTo(ch.ml + ch.W, L2.Y(v)); ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  const bw = Math.max(4, Math.min(14, ch.W / ((t1 - t0) / 86400e3) * 0.6));
+  for (const r of decs) {
+    const x = X(dayOf(r.day).getTime() + 43200e3), v = r.decoupling, y = L2.Y(Math.max(0, v)), y0 = L2.Y(Math.min(0, v));
+    ctx.fillStyle = lcd ? C.fg : blend(C.fg, C.panel, v >= 10 ? 0.1 : v >= 5 ? 0.3 : 0.55);
+    ctx.fillRect(x - bw / 2, y, bw, Math.max(1, y0 - y));
+    EFF.marks.push({ x, y, id: r.id, html: tip(r) });
+  }
+  // lane 1: the trend, then a dot per ride
+  ctx.strokeStyle = lcd ? C.fg : blend(C.good, C.panel, 0.3); ctx.lineWidth = 2; ctx.beginPath();
+  pts.forEach((r, i) => {
+    const win = pts.slice(Math.max(0, i - 4), i + 1), m = win.reduce((a, x) => a + x.ef, 0) / win.length;
+    const x = X(dayOf(r.day).getTime() + 43200e3);
+    i ? ctx.lineTo(x, L1.Y(m)) : ctx.moveTo(x, L1.Y(m));
+  });
+  ctx.stroke();
+  for (const r of pts) {
+    const x = X(dayOf(r.day).getTime() + 43200e3), y = L1.Y(r.ef);
+    ctx.beginPath(); ctx.arc(x, y, 4.5, 0, 2 * Math.PI);
+    ctx.fillStyle = lcd ? C.fg : C.good; ctx.fill();
+    EFF.marks.push({ x, y, id: r.id, html: tip(r) });
+  }
+}
+
+// ---- the Fitness checks (training.fitness_checks): heart rate at the same watts (lower = fitter;
+// corrected to 20 C once the heat model has learned your bpm per degree), alpha 1 at the middle step
+// (higher = fresher, more aerobic) and heart-rate recovery in 60 s (more = fitter / fresher)
+const FC = { marks: [] };
+chartTips($("fc-chart"), () => FC.marks);
+function drawChecks() {
+  const d = PROG.data, f = d && d.fitness_checks;
+  if (!f) return;
+  const cs = f.checks, lcd = THEME === "lcd", heat = f.heat;
+  const last = cs[cs.length - 1], prev = cs[cs.length - 2];
+  const hrOf = (c) => (c.hr_ref_20c ?? c.hr_ref);
+  $("fc-readout").innerHTML = !last ? "" : `latest: <b>${fmt(hrOf(last))}</b> bpm at ${fmt(f.ref_w)} W${heat ? " (20 °C)" : ""}` +
+    (prev ? ` · ${Math.abs(hrOf(last) - hrOf(prev)) < 0.5 ? "same as" : `${hrOf(last) < hrOf(prev) ? "−" : "+"}${fmt(Math.abs(hrOf(last) - hrOf(prev)))} bpm since`} the one before` : "");
+  const n = cs.length, withT = cs.filter((c) => c.temp_c != null);
+  $("fc-note").textContent = !n
+    ? "Ride Threshold steps (Workouts page) once a week, rested, with the room temperature set: the same watts every time, so heart rate, α1 and recovery show your fitness and freshness, and the same ride gives VT1 and VT2."
+    : `Heart rate at ${fmt(f.ref_w)} W from each check's steps up to 80 % FTP (lower = fitter), α1 at the same watts (higher = fresher), recovery in the first minute after the 100 % step (more = fitter). ` +
+      (heat ? `Heat model: ${heat.bpm_per_c.toFixed(1)} bpm per °C from ${heat.n} checks (${heat.range_c[0]}–${heat.range_c[1]} °C); the line is corrected to 20 °C.`
+            : `Heat model: learning (${withT.length} of 5 checks with a temperature, needs a 3 °C spread).`);
+  FC.marks = [];
+  if (!n) { laneChart($("fc-chart"), 320, [], 0, 1); return; }
+  const hrs = cs.flatMap((c) => [c.hr_ref, c.hr_ref_20c].filter((v) => v != null));
+  const a1s = cs.map((c) => c.a1_ref).filter((v) => v != null), hrr = cs.map((c) => c.hrr60).filter((v) => v != null);
+  const [h0, h1] = niceRange(hrs, 5, 3);
+  const [a0, a1] = a1s.length ? niceRange(a1s, 0.25, 0.1) : [0.5, 1.5];
+  const [r0, r1] = hrr.length ? niceRange(hrr, 5, 3) : [0, 40];
+  const first = dayOf(cs[0].day).getTime(), t1 = dayOf(d.today).getTime(), t0 = Math.min(first, t1 - 28 * 86400e3) - 2 * 86400e3;
+  const ch = laneChart($("fc-chart"), 320, [
+    { label: `heart rate at ${fmt(f.ref_w)} W, bpm`, weight: 1.4, y0: h0, y1: h1, step: (h1 - h0) / 5 > 4 ? 10 : 5, fmt: (v) => `${v}` },
+    { label: `α1 at ${fmt(f.ref_w)} W`, weight: 1, y0: a0, y1: a1, step: 0.25, fmt: (v) => v.toFixed(2) },
+    { label: "recovery, bpm in 60 s", weight: 1, y0: r0, y1: r1, step: (r1 - r0) / 5 > 4 ? 10 : 5, fmt: (v) => `${v}` },
+  ], t0, t1);
+  if (!ch) return;
+  const { ctx, X } = ch, [L1, L2, L3] = ch.lanes, ink = lcd ? C.fg : C.hr;
+  const tip = (c) => `<b>${SHORT_DAY.format(dayOf(c.day))}</b>${c.temp_c != null ? ` · ${c.temp_c} °C${c.rh_pct != null ? `, ${c.rh_pct}%` : ""}` : ""}` +
+    `<br>${fmt(c.hr_ref)} bpm at ${fmt(f.ref_w)} W${c.hr_ref_20c != null ? ` (${fmt(c.hr_ref_20c)} at 20 °C)` : ""}` +
+    `<br>steps ${c.steps.map((s) => `${fmt(s.power)} W ${fmt(s.hr)} bpm`).join(" · ")}` +
+    `<br>α1 ${c.a1.map((v) => fmt(v, 2)).join(" / ")}${c.hrr60 != null ? ` · recovery ${fmt(c.hrr60)} bpm` : ""}`;
+  const line = (lane, vals, colour) => {
+    ctx.strokeStyle = colour; ctx.lineWidth = 2; ctx.beginPath();
+    let started = false;
+    cs.forEach((c, i) => { const v = vals(c); if (v == null) return;
+      const x = X(dayOf(c.day).getTime() + 43200e3); started ? ctx.lineTo(x, lane.Y(v)) : ctx.moveTo(x, lane.Y(v)); started = true; });
+    ctx.stroke();
+  };
+  if (heat) line(L1, (c) => c.hr_ref_20c, lcd ? C.fg : blend(C.hr, C.panel, 0.3));
+  for (const c of cs) {
+    const x = X(dayOf(c.day).getTime() + 43200e3);
+    const dots = [[L1, c.hr_ref, ink], [L2, c.a1_ref, lcd ? C.fg : C.a1], [L3, c.hrr60, lcd ? C.fg : C.good]];
+    for (const [lane, v, col] of dots) {
+      if (v == null) continue;
+      ctx.beginPath(); ctx.arc(x, lane.Y(v), 4.5, 0, 2 * Math.PI);
+      if (lane === L1 && heat) { ctx.strokeStyle = col; ctx.lineWidth = 1.5; ctx.stroke(); }   // raw, beside the corrected line
+      else { ctx.fillStyle = col; ctx.fill(); }
+      FC.marks.push({ x, y: lane.Y(v), id: c.id, html: tip(c) });
+    }
+  }
+}

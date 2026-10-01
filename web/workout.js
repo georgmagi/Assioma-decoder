@@ -60,23 +60,26 @@ const woMin = (secs) => `${Math.round(secs / 60)} min`;
 const est = (w) => w.estimate ? `${fmt(w.estimate.tss)} TSS · IF ${w.estimate.if.toFixed(2)}` : "set FTP for TSS";
 
 function renderWorkoutsPage(s) {
-  if (!WO.list || S.prevScreen !== "workouts") loadWorkouts(S.prevScreen !== "workouts");
+  const changed = WO.pv !== s.plan_version;                     // a workout saved / deleted, or the plan changed
+  WO.pv = s.plan_version;
+  if (!WO.list || S.prevScreen !== "workouts" || changed) loadWorkouts(S.prevScreen !== "workouts" || changed);
   if (!WO.list) return;
-  if (WO.sel == null || !WO.list.some((w) => w.id === WO.sel)) WO.sel = s.workout_id || WO.list[0]?.id;
+  const LIB = WO.list.filter((w) => !w.id.startsWith("plan:"));     // the plan's own days live on the Plan page
+  if (WO.sel == null || !LIB.some((w) => w.id === WO.sel)) WO.sel = LIB.some((w) => w.id === s.workout_id) ? s.workout_id : LIB[0]?.id;
   const key = JSON.stringify([WO.sel, s.workout_id, WO.loadedAt, THEME, s.config.ftp]);
   if (WO.drawn === key) return;
   WO.drawn = key;
-  $("wo-count").textContent = WO.list.length;
-  $("wo-rows").innerHTML = WO.list.map((w) =>
+  $("wo-count").textContent = LIB.length;
+  $("wo-rows").innerHTML = LIB.map((w) =>
     `<button class="wo-row${w.id === WO.sel ? " on" : ""}" data-id="${esc(w.id)}">` +
     `<span class="wr-name"><b>${esc(w.name)}</b>${w.id === s.workout_id ? `<em class="link ant">next ride</em>` : ""}</span>` +
     `<span class="wr-meta">${woMin(w.total)} · ${est(w)}${w.file ? " · file" : ""}</span><canvas></canvas></button>`).join("");
   $("wo-rows").querySelectorAll(".wo-row").forEach((b, i) => {
-    drawProfile(b.querySelector("canvas"), WO.list[i].steps);
+    drawProfile(b.querySelector("canvas"), LIB[i].steps);
     b.addEventListener("click", () => { WO.sel = b.dataset.id; WO.drawn = null; renderWorkoutsPage(S.snap); });
   });
   // the selected one in detail
-  const w = WO.list.find((x) => x.id === WO.sel), ftp = s.config.ftp;
+  const w = LIB.find((x) => x.id === WO.sel), ftp = s.config.ftp;
   $("wd-name").textContent = w.name;
   $("wd-desc").textContent = w.description || "";
   const e = w.estimate;
@@ -88,6 +91,7 @@ function renderWorkoutsPage(s) {
     `<tr><td>${i + 1}</td><td>${esc(label || (lo == null ? "free ride" : ""))}</td><td class="n">${minsec(dur)}</td>` +
     `<td class="n">${lo == null ? "free" : lo === hi ? `${pw(lo)} W` : `${pw(lo)}–${pw(hi)} W`}</td>` +
     `<td class="n">${lo == null ? "" : lo === hi ? `${Math.round(lo * 100)}%` : `${Math.round(lo * 100)}–${Math.round(hi * 100)}%`}</td></tr>`).join("");
+  $("wd-del").hidden = !w.id.startsWith("zwo:");
   const chosen = w.id === s.workout_id;
   $("wd-select").textContent = chosen ? "Next ride ✓" : "Use for next ride";
   $("wd-select").disabled = chosen;
@@ -121,15 +125,20 @@ function renderWorkout(s) {
   const erg = $("wo-erg");
   erg.textContent = w.erg ? "ERG on" : "ERG off";
   erg.classList.toggle("on", w.erg);
+  const ceil = $("wo-ceil");
+  ceil.classList.toggle("on", !!w.ceiling);
+  ceil.textContent = w.ceiling && w.cap < 1 ? `VT1 ceiling −${Math.round((1 - w.cap) * 100)}%` : "VT1 ceiling";
   const tr = w.trainer;
   $("wo-trainer").textContent = !s.settings.trainer ? "trainer not used"
-    : !tr ? "" : tr.error ? tr.error : tr.controlled ? (w.erg && tgt != null ? "trainer holding target" : "trainer riding flat") : "waiting for the trainer…";
+    : !tr ? "" : tr.error ? tr.error
+    : tr.controlled ? (w.erg && tgt != null ? (w.ceiling && w.cap < 1 ? `held under VT1: ${fmt(tgt * w.cap)} W` : "trainer holding target") : "trainer riding flat")
+    : "waiting for the trainer…";
   $("wo-trainer").classList.toggle("warn", !!(tr && tr.error) || (s.settings.trainer && tr && !tr.controlled));
   drawProfile($("wo-profile"), w.steps, { at: w.t, ftpLine: true });
 }
 
 for (const [id, name, arg] of [["wo-down5", "wo_nudge", -5], ["wo-down", "wo_nudge", -1], ["wo-up", "wo_nudge", 1],
-                               ["wo-up5", "wo_nudge", 5], ["wo-skip", "wo_skip"], ["wo-erg", "wo_erg"]]) {
+                               ["wo-up5", "wo_nudge", 5], ["wo-skip", "wo_skip"], ["wo-erg", "wo_erg"], ["wo-ceil", "wo_ceiling"]]) {
   $(id).addEventListener("click", (e) => { act(name, arg); e.currentTarget.blur(); });
 }
 // ending the workout takes a second click within 3 s (a stray click mid-interval shouldn't end it)
@@ -139,4 +148,49 @@ $("wo-end").addEventListener("click", (e) => {
   if (b.classList.contains("confirm")) { b.classList.remove("confirm"); b.textContent = "End workout"; act("wo_end"); return; }
   b.classList.add("confirm"); b.textContent = "Click again to end";
   setTimeout(() => { b.classList.remove("confirm"); b.textContent = "End workout"; }, 3000);
+});
+
+// ---- the builder: the shorthand (workout.parse_text) with a live preview, saved as a .zwo file
+const WB = { timer: null, open: false };
+function openBuilder(name, text) {
+  WB.open = true;
+  $("wo-detail").hidden = true; $("wo-build").hidden = false;
+  $("wb-name").value = name || ""; $("wb-text").value = text || "";
+  previewBuilder();
+  $(text ? "wb-name" : "wb-text").focus();
+}
+function closeBuilder() { WB.open = false; $("wo-build").hidden = true; $("wo-detail").hidden = false; }
+async function previewBuilder() {
+  const text = $("wb-text").value.trim();
+  if (!text) { $("wb-err").textContent = ""; $("wb-stats").innerHTML = ""; drawProfile($("wb-profile"), []); return; }
+  let r;
+  try { r = await (await fetch("/api/parse?text=" + encodeURIComponent(text))).json(); } catch { return; }
+  $("wb-err").textContent = r.error || "";
+  if (r.error) return;
+  const e = r.estimate, tot = r.split.easy + r.split.moderate + r.split.hard;
+  $("wb-stats").innerHTML = [ovStat("Time", hms(r.total)), ovStat("TSS", e ? fmt(e.tss) : "--"), ovStat("IF", e ? e.if.toFixed(2) : "--"),
+    ovStat("NP", e ? fmt(e.np_w) : "--", e ? "W" : ""), ovStat("Easy", `${Math.round((100 * r.split.easy) / tot)}`, "%"),
+    ovStat("Hard", `${Math.round((100 * r.split.hard) / tot)}`, "%")].join("");
+  drawProfile($("wb-profile"), r.steps, { ftpLine: true });
+}
+$("wb-text").addEventListener("input", () => { clearTimeout(WB.timer); WB.timer = setTimeout(previewBuilder, 250); });
+for (const id of ["wb-text", "wb-name"]) $(id).addEventListener("keydown", (e) => e.stopPropagation());
+$("wo-new").addEventListener("click", (e) => { e.currentTarget.blur(); openBuilder("", ""); });
+$("wb-cancel").addEventListener("click", closeBuilder);
+$("wb-save").addEventListener("click", async () => {
+  await act("wo_save", { name: $("wb-name").value, text: $("wb-text").value });
+  if ((S.snap?.plan_msg || "").startsWith("Saved")) { closeBuilder(); loadWorkouts(true); }
+  else $("wb-err").textContent = S.snap?.plan_msg || "";
+});
+$("wd-edit").addEventListener("click", async (e) => {
+  e.currentTarget.blur();
+  const r = await (await fetch("/api/workout_text?id=" + encodeURIComponent(WO.sel))).json();
+  if (!r.error) openBuilder(`${r.name} (copy)`, r.text);
+});
+$("wd-del").addEventListener("click", (e) => {                     // your own files only, and a second click to confirm
+  const b = e.currentTarget;
+  b.blur();
+  if (b.classList.contains("confirm")) { b.classList.remove("confirm"); b.textContent = "Delete"; act("wo_delete", WO.sel); WO.sel = null; loadWorkouts(true); return; }
+  b.classList.add("confirm"); b.textContent = "Click again to delete";
+  setTimeout(() => { b.classList.remove("confirm"); b.textContent = "Delete"; }, 3000);
 });

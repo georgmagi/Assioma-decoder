@@ -50,3 +50,30 @@ def test_trainer_is_driven_reconnects_and_is_released(tmp_path):
     # control taken twice (after the drop), the last target held, flat at the end, Reset on the way out,
     # the trainer's own power read from Indoor Bike Data, the worker gone
     assert out.stdout.split() == ["2", "260", "True", "1", "200", "1", "False"], out.stdout + out.stderr
+
+
+LIFECYCLE = r'''
+import queue, time, os
+import assioma_recorder as ar, bleak
+ar.PEDAL_FILE = os.environ["PEDAL_FILE"]
+q = queue.Queue(); w = ar.BleWorker(q, False, "", "nomatch"); w.ATTEMPT_S = 2.5; w.start()
+time.sleep(1.5); a = w.state["hr"]                                  # not wanted: off
+w.set_want("hr", True); b = w.state["hr"]                           # clicked: trying
+time.sleep(7); c = w.state["hr"]; hint = "strap" in w.note["hr"]   # nothing that matches: couldn't find it
+w.set_want("trainer", True)
+for _ in range(60):
+    if w.state["trainer"] == "connected": break
+    time.sleep(0.25)
+d = w.state["trainer"]
+w.set_want("trainer", False); time.sleep(1.5); e = w.state["trainer"]
+reset = bleak.STATE["trainer_writes"][-1:] == [bytes([0x01])]      # handed back with a Reset
+w.stop(); w.join(8)
+print(a, b, c, hint, d, e, reset)
+'''
+
+
+def test_sensor_lifecycle_connects_says_when_it_cannot_and_lets_go(tmp_path):
+    env = dict(os.environ, PEDAL_FILE=str(tmp_path / "pedal.txt"),
+               PYTHONPATH=os.pathsep.join([os.path.join(HERE, "fake_bleak"), ROOT]))
+    out = subprocess.run([sys.executable, "-c", LIFECYCLE], env=env, capture_output=True, text=True, timeout=90)
+    assert out.stdout.split() == ["off", "connecting", "failed", "True", "connected", "off", "True"], out.stdout + out.stderr

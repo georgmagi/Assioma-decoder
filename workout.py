@@ -12,7 +12,6 @@ from __future__ import annotations
 import glob
 import os
 import xml.etree.ElementTree as ET
-from typing import Optional
 
 
 def _step(dur, lo, hi=None, label=""):
@@ -26,14 +25,22 @@ def _repeat(n, on_dur, on, off_dur, off):
     return out
 
 
-# Built in. The VT1 steps give vt1.py what it needs for a tight power estimate: steady 5-min
-# blocks climbing through the top of Z2 (alpha 1 crosses 0.75 somewhere in there).
+# Built in. The threshold steps give vt1.py what it needs for both HRV thresholds in watts: steady
+# 5-min blocks climbing through the top of Z2 (alpha 1 crosses 0.75: VT1) to FTP (0.5: VT2, near
+# FTP), without going all-out. Best with the ANT+ strap (every beat).
 BUILT_IN = {
     "endurance-60": {"name": "Endurance 60", "description": "Steady Z2 for an hour.",
                      "steps": [_step(600, 0.50, 0.65, "warm up"), _step(2700, 0.68, label="Z2"), _step(300, 0.65, 0.45, "cool down")]},
-    "vt1-steps": {"name": "VT1 steps", "description": "5-min steps from 60 to 90 % FTP: pins down your VT1 in watts.",
-                  "steps": [_step(600, 0.45, 0.60, "warm up")] + [_step(300, p / 100, label=f"{p}%") for p in range(60, 91, 5)]
-                  + [_step(600, 0.55, 0.40, "cool down")]},
+    "vt1-steps": {"name": "Threshold steps", "description": "The weekly check: 5-min steps from 60 to 80 % FTP, 3-min steps on to 100 %, then 3 min easy. Heart rate, α1 and recovery at the same watts each week, plus VT1 and VT2 (near FTP) from α1, with no all-out effort. Set the room temperature first.",
+                  # 5 min up to 80 % (heart rate settles: the check), 3 min above (enough for alpha 1 to find VT2)
+                  "steps": [_step(600, 0.45, 0.60, "warm up")] + [_step(300 if p <= 80 else 180, p / 100, label=f"{p}%") for p in range(60, 101, 5)]
+                  + [_step(180, 0.40, label="recovery"), _step(420, 0.50, 0.40, "cool down")]},
+    # a ramp test: 1-min steps of +10 % FTP (about +20 W a minute at 200 W, like the usual protocol)
+    # until you can't hold one: stop pedalling and the trainer goes flat (recorder_app). eftp.py
+    # recognises it by its name and takes 75 % of the best minute.
+    "ramp-test": {"name": "Ramp test", "description": "1-min steps from 50 % FTP, +10 % each minute, until you can't hold it: then stop pedalling (the trainer goes flat) and spin easy. eFTP = 75 % of your best minute.",
+                  "steps": [_step(300, 0.40, 0.50, "warm up")] + [_step(60, p / 100, label=f"{p}%") for p in range(50, 181, 10)]
+                  + [_step(600, 0.40, label="cool down")]},
     "sweet-spot-3x12": {"name": "Sweet spot 3×12", "description": "3 × 12 min at 90 % with 4 min easy.",
                         "steps": [_step(600, 0.50, 0.70, "warm up")] + _repeat(3, 720, 0.90, 240, 0.55)[:-1]
                         + [_step(600, 0.60, 0.45, "cool down")]},
@@ -168,3 +175,137 @@ def estimate(w: dict, ftp: float) -> dict:
     np_frac = (sum(x ** 4 for x in roll) / len(roll)) ** 0.25
     return {"duration_s": n, "avg_w": ftp * sum(f) / n, "np_w": ftp * np_frac, "if": np_frac,
             "tss": n * np_frac ** 2 / 36, "kj": ftp * sum(f) / 1000}
+
+
+# --------------------------------------------------------------------------- the shorthand
+# A workout in one line, the way a coach (or Claude) writes it:
+#     10m 50-65%, 3x(12m 90%, 4m 55%), 10m 60-40%
+# Steps are separated by commas (or new lines); "N x (...)" repeats a group; a duration is 90s, 12m,
+# 1h or 1h30m (also 2m30s); a power is a share of FTP ("90%"), a ramp ("50-65%"), a zone ("Z2",
+# the zone's middle) or "free" (free ride). An optional label goes last in quotes: 5m 55% "easy".
+import re as _re
+
+ZONE_PCT = {"z1": 50, "z2": 65, "z3": 83, "z4": 98, "z5": 113, "z6": 130}
+_DUR = _re.compile(r"^(?:(\d+(?:\.\d+)?)h)?(?:(\d+(?:\.\d+)?)m)?(?:(\d+)s)?$")
+
+
+def _duration(tok: str) -> int:
+    m = _DUR.match(tok.lower())
+    if not m or not any(m.groups()):
+        raise ValueError(f'"{tok}" is not a duration (like 90s, 12m, 1h30m)')
+    h, mi, se = (float(x) if x else 0 for x in m.groups())
+    return round(h * 3600 + mi * 60 + se)
+
+
+def _power(tok: str):
+    t = tok.lower().rstrip("%")
+    if t in ("free", "freeride", "free-ride"):
+        return None, None
+    if t in ZONE_PCT:
+        return ZONE_PCT[t] / 100, ZONE_PCT[t] / 100
+    parts = t.split("-")
+    try:
+        vals = [float(p) for p in parts]
+    except ValueError:
+        raise ValueError(f'"{tok}" is not a power (like 90%, 50-65%, Z2 or free)')
+    if len(vals) not in (1, 2) or not all(20 <= v <= 300 for v in vals):
+        raise ValueError(f'"{tok}": powers are % of FTP, 20-300')
+    return vals[0] / 100, vals[-1] / 100
+
+
+def _split_top(text: str) -> list:
+    """Split on commas / new lines that aren't inside brackets."""
+    out, depth, cur = [], 0, ""
+    for ch in text:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth < 0:
+                raise ValueError("a ) without its (")
+        if ch in ",\n;" and depth == 0:
+            out.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    if depth:
+        raise ValueError("a ( without its )")
+    out.append(cur)
+    return [x.strip() for x in out if x.strip()]
+
+
+_REPEAT = _re.compile(r"^(\d+)\s*[x×]\s*\((.*)\)$", _re.S)
+
+
+def parse_text(text: str) -> list:
+    """The shorthand to steps ({dur, lo, hi, label}); ValueError says what's wrong."""
+    steps = []
+    for item in _split_top(text):
+        m = _REPEAT.match(item)
+        if m:
+            n = int(m.group(1))
+            if not 1 <= n <= 50:
+                raise ValueError(f"{n} repeats? 1-50")
+            inner = parse_text(m.group(2))
+            for k in range(n):
+                steps += [{**st, "label": st["label"] or f"{k + 1}/{n}"} for st in inner]
+            continue
+        label = ""
+        lm = _re.search(r'"([^"]*)"\s*$', item)
+        if lm:
+            label, item = lm.group(1), item[: lm.start()].strip()
+        toks = item.split()
+        if len(toks) != 2:
+            raise ValueError(f'"{item}": a step is a duration and a power, like "12m 90%"')
+        lo, hi = _power(toks[1])
+        steps.append({"dur": _duration(toks[0]), "lo": lo, "hi": hi, "label": label})
+    if not steps:
+        raise ValueError("no steps")
+    if sum(s["dur"] for s in steps) > 6 * 3600:
+        raise ValueError("over 6 hours")
+    return steps
+
+
+def _fmt_dur(s: int) -> str:
+    h, rest = divmod(s, 3600)
+    m, sec = divmod(rest, 60)
+    return (f"{h}h" if h else "") + (f"{m}m" if m else "") + (f"{sec}s" if sec else "") or "0s"
+
+
+def to_text(steps: list) -> str:
+    """Steps back to the shorthand (repeats folded where the steps repeat exactly)."""
+    def one(st):
+        p = "free" if st["lo"] is None else (f"{round(st['lo'] * 100)}%" if st["lo"] == st["hi"]
+                                             else f"{round(st['lo'] * 100)}-{round(st['hi'] * 100)}%")
+        auto = _re.match(r"^\d+/\d+$", st.get("label") or "")
+        return f"{_fmt_dur(st['dur'])} {p}" + (f' "{st["label"]}"' if st.get("label") and not auto else "")
+    parts, i = [], 0
+    while i < len(steps):
+        for size in (2, 3, 1):                               # an on/off pair, a triple, a single step
+            n = 1
+            key = lambda k: [(s["dur"], s["lo"], s["hi"]) for s in steps[k: k + size]]
+            while i + (n + 1) * size <= len(steps) and key(i + n * size) == key(i):
+                n += 1
+            if n > 1:
+                parts.append(f"{n}x({', '.join(one(s) for s in steps[i: i + size])})")
+                i += n * size
+                break
+        else:
+            parts.append(one(steps[i]))
+            i += 1
+    return ", ".join(parts)
+
+
+def to_zwo(name: str, description: str, steps: list) -> str:
+    """A Zwift workout file (readable by parse_zwo, Zwift and most apps)."""
+    from xml.sax.saxutils import escape, quoteattr
+    rows = []
+    for s in steps:
+        if s["lo"] is None:
+            rows.append(f'    <FreeRide Duration="{s["dur"]}" FlatRoad="1"/>')
+        elif s["lo"] == s["hi"]:
+            rows.append(f'    <SteadyState Duration="{s["dur"]}" Power="{s["lo"]:.3f}"/>')
+        else:
+            rows.append(f'    <Ramp Duration="{s["dur"]}" PowerLow="{s["lo"]:.3f}" PowerHigh="{s["hi"]:.3f}"/>')
+    return (f"<workout_file>\n  <name>{escape(name)}</name>\n  <description>{escape(description)}</description>\n"
+            f"  <sportType>bike</sportType>\n  <workout>\n" + "\n".join(rows) + "\n  </workout>\n</workout_file>\n")

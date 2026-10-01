@@ -18,9 +18,9 @@ import json
 import math
 import os
 from datetime import datetime, timedelta, timezone
-from statistics import median
 from typing import Optional
 
+import checks
 import eftp
 import hrv
 import vt1
@@ -31,7 +31,7 @@ ZONES = [(0.55, "Z1"), (0.75, "Z2"), (0.90, "Z3"), (1.05, "Z4"), (1.20, "Z5"), (
 # Z4 95-105 %, Z5 106 % and up
 HR_ZONES = [(0.685, "Z1"), (0.835, "Z2"), (0.945, "Z3"), (1.055, "Z4"), (float("inf"), "Z5")]
 TEXT = {"time", "rider_position", "rr_ms"}
-SUMMARY_VERSION = 6                     # bump when the cached short summary changes
+SUMMARY_VERSION = 8                     # bump when the cached short summary changes
 
 
 def load(path: str) -> list[dict]:
@@ -128,7 +128,31 @@ def _poincare(rr: list) -> dict:
             "mean": sum(rr) / len(rr)}
 
 
-def summarize(rows: list[dict], ftp: Optional[float] = None, lthr: Optional[float] = None) -> dict:
+def _workout_steps(rows: list, meta: dict) -> Optional[list]:
+    """A workout's steps as ridden: each step's target (from the workout, the FTP and intensity it was
+    ridden at) beside the pedals' average over the step, leaving out its first 20 s while the
+    trainer settles. Shows how true the trainer's ERG was, without anything chasing it."""
+    wo = (meta or {}).get("workout") or {}
+    steps, log = wo.get("steps") or [], wo.get("log") or []
+    if not steps or not log or not wo.get("ftp"):
+        return None
+    out = []
+    for k, entry in enumerate(log):
+        sec, idx = entry[0], entry[1]
+        intensity = entry[2] if len(entry) > 2 else 1.0
+        end = log[k + 1][0] if k + 1 < len(log) else min(len(rows), sec + steps[idx][0])
+        st = steps[idx]
+        p = [r.get("power_w") for r in rows[sec + 20: end] if r.get("power_w") is not None]
+        if st[1] is None or end - sec < 40 or not p:
+            continue
+        target = (st[1] + st[2]) / 2 * wo["ftp"] * intensity
+        out.append({"index": idx, "label": st[3] if len(st) > 3 else "", "seconds": end - sec,
+                    "target": target, "actual": sum(p) / len(p)})
+    return out or None
+
+
+def summarize(rows: list[dict], ftp: Optional[float] = None, lthr: Optional[float] = None,
+              meta: Optional[dict] = None) -> dict:
     if not rows:
         raise ValueError("no recorded seconds")
     t0 = rows[0]["time"]
@@ -196,26 +220,70 @@ def summarize(rows: list[dict], ftp: Optional[float] = None, lthr: Optional[floa
             "beats": len(beats), "artifact_pct": 100 * (len(beats) - len(clean)) / len(beats) if beats else None,
             "standing_pct": 100 * standing / len(positions) if positions else None,
             **_decoupling(power, hr),
+            **_efficiency(power, hr, ftp),
         },
         "best": {str(s): _best(power, s) for s in (5, 60, 300, 1200)},
         "mmp": eftp.mmp(power),
+        "env": {"temp_c": (meta or {}).get("temp_c"), "rh_pct": (meta or {}).get("rh_pct")},
+        "durability": checks.durability(rows),
+        "check": checks.fitness_check(rows, meta),
+        "workout_steps": _workout_steps(rows, meta),
         "zones": zone_s, "hr_zones": hr_zone_s, "a1_bands": a1_bands,
         "legs": legs,
         "series": {"t": ts, "power": power, "hr": hr, "cadence": cad, "a1": a1},
         "beats": {"t": beat_t, "rr": [round(b.rr, 1) for b in beats], "artifact": [bool(b.artifact) for b in beats]},
         "poincare": _poincare(clean),
-        "vt1": vt1.estimate(rows),
+        **_thresholds(rows),
     }
+
+
+def _efficiency(power: list, hr: list, ftp: Optional[float]) -> dict:
+    """Power per heartbeat in steady Z2 (56-75 % of FTP), the aerobic fitness trend: comparable
+    from ride to ride because the intensity is held alike. 2-min windows every 30 s after a 10-min
+    warm-up, steady (10-s powers within 20 % of the window's mean), with heart rate throughout;
+    needs 10 minutes of them. {ef_z2: W per bpm, ef_z2_power: W, ef_z2_min: minutes}."""
+    out = {"ef_z2": None, "ef_z2_power": None, "ef_z2_min": 0}
+    if not ftp:
+        return out
+    lo, hi = 0.56 * ftp, 0.75 * ftp
+    sp = sh = 0.0
+    n = 0
+    for end in range(600 + 120, len(power) + 1, 30):
+        p, h = power[end - 120: end], hr[end - 120: end]
+        if any(v is None for v in p) or any(not v for v in h):
+            continue
+        m = sum(p) / 120
+        tens = [sum(p[k: k + 10]) / 10 for k in range(0, 120, 10)]
+        if not lo <= m <= hi or max(abs(t - m) for t in tens) > 0.2 * m:
+            continue
+        sp += m
+        sh += sum(h) / 120
+        n += 1
+    minutes = n * 0.5                                   # windows every 30 s
+    if minutes >= 10:
+        out = {"ef_z2": sp / sh, "ef_z2_power": sp / n, "ef_z2_min": minutes}
+    return out
+
+
+def _thresholds(rows: list) -> dict:
+    """VT1 (alpha 1 = 0.75) and VT2 (0.5) from the same steady windows (vt1.py)."""
+    s = vt1.samples(rows)
+    return {"vt1": vt1.estimate(rows, s=s), "vt2": vt1.estimate(rows, level=vt1.A1_VT2, s=s)}
 
 
 def short(s: dict) -> dict:
     """The few numbers the ride list shows."""
-    st, v = s["stats"], s.get("vt1") or {}
+    st, v, v2 = s["stats"], s.get("vt1") or {}, s.get("vt2") or {}
     brief = lambda e: e and {k: e[k] for k in ("kind", "value", "value2", "lo", "hi") if k in e}
     return {"v": SUMMARY_VERSION, "start_utc": s["start_utc"], **{k: st[k] for k in
             ("ride_s", "elapsed_s", "avg_power", "np", "avg_hr", "avg_a1", "tss", "if", "ftp", "work_kj",
-             "decoupling_pct")}, "vt1_hr": brief(v.get("hr")), "vt1_power": brief(v.get("power")),
-            "vt1_beats_pct": v.get("beats_pct"), "zones": s["zones"], "mmp": s["mmp"]}
+             "decoupling_pct", "ef_z2", "ef_z2_power", "ef_z2_min")}, "vt1_hr": brief(v.get("hr")), "vt1_power": brief(v.get("power")),
+            "vt1_beats_pct": v.get("beats_pct"), "zones": s["zones"], "mmp": s["mmp"],
+            "vt2_hr": brief(v2.get("hr")), "vt2_power": brief(v2.get("power")),
+            "temp_c": s["env"]["temp_c"], "rh_pct": s["env"]["rh_pct"],
+            "durability": s["durability"] and {k: s["durability"][k] for k in ("drift_pct", "a1_drop", "onset_min", "score")},
+            "check": s["check"] and {"hr_a": s["check"]["hr_a"], "hr_b": s["check"]["hr_b"], "hrr60": s["check"]["hrr60"],
+                                     "steps": [{k: st[k] for k in ("power", "hr", "a1", "rmssd")} for st in s["check"]["steps"]]}}
 
 
 # --------------------------------------------------------------------------- #
@@ -299,10 +367,39 @@ def summarize_file(folder: str, ride_id: str, ftp=None, lthr=None) -> Optional[d
     rows = load_ride(path)
     if not rows:
         return None
-    s = summarize(rows, ftp, lthr)
+    meta = load_meta(folder, ride_id)
+    s = summarize(rows, ftp, lthr, meta)
     name, source = ride_name(ride_id)
     own_fit = os.path.join(folder, ride_id + ".fit")
-    return {"id": ride_id, "name": name, "source": source, "fit": os.path.exists(own_fit), "fit_path": own_fit, **s}
+    return {"id": ride_id, "name": meta.get("workout", {}).get("name") or name, "source": source,
+            "fit": os.path.exists(own_fit), "fit_path": own_fit, "meta": meta, **s}
+
+
+META = "_meta.json"      # beside a ride: room conditions and the workout ridden (written by the app)
+
+
+def meta_path(folder: str, ride_id: str) -> str:
+    return os.path.join(folder, ride_id + META)
+
+
+def load_meta(folder: str, ride_id: str) -> dict:
+    try:
+        with open(meta_path(folder, ride_id), encoding="utf-8") as fh:
+            m = json.load(fh)
+        return m if isinstance(m, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_meta(folder: str, ride_id: str, update: dict) -> dict:
+    """Merge into a ride's meta file (None removes a key) and return the result."""
+    m = {**load_meta(folder, ride_id), **update}
+    m = {k: v for k, v in m.items() if v is not None}
+    tmp = meta_path(folder, ride_id) + ".tmp"
+    with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
+        json.dump(m, fh)
+    os.replace(tmp, meta_path(folder, ride_id))
+    return m
 
 
 def cache_path(folder: str, ride_id: str) -> str:
@@ -334,11 +431,14 @@ def ride_list(folder: str, ftp: Optional[float] = None) -> list[dict]:
         if path is None:
             continue
         cache = cache_path(folder, ride_id)
+        meta = load_meta(folder, ride_id)
+        mp = meta_path(folder, ride_id)
         info = None
         try:
             with open(cache) as fh:
                 info = json.load(fh)
             if (info.get("v") != SUMMARY_VERSION or os.path.getmtime(cache) < os.path.getmtime(path)
+                    or (os.path.exists(mp) and os.path.getmtime(cache) < os.path.getmtime(mp))
                     or (info.get("ftp") is None and ftp)):         # an FTP set since: now it has TSS
                 info = None
         except (OSError, ValueError):
@@ -348,7 +448,7 @@ def ride_list(folder: str, ftp: Optional[float] = None) -> list[dict]:
                 rows = load_ride(path)
             except Exception:                                     # a file we can't read: not a ride
                 continue
-            info = short(summarize(rows, ftp)) if rows else {"v": SUMMARY_VERSION, "empty": True}
+            info = short(summarize(rows, ftp, None, meta)) if rows else {"v": SUMMARY_VERSION, "empty": True}
             try:
                 with open(cache, "w") as fh:
                     json.dump(info, fh)
@@ -357,7 +457,9 @@ def ride_list(folder: str, ftp: Optional[float] = None) -> list[dict]:
         if info.get("empty") or (path.endswith(".fit") and info.get("ride_s", 0) < MIN_FIT_S):
             continue
         name, source = ride_name(ride_id)
-        out.append({"id": ride_id, "name": name, "source": source, "fit": os.path.exists(base + ".fit"), **info})
+        name = (meta.get("workout") or {}).get("name") or name
+        out.append({"id": ride_id, "name": name, "source": source, "fit": os.path.exists(base + ".fit"),
+                    "workout_id": (meta.get("workout") or {}).get("id"), **info})
     own = [(_ts(r["start_utc"]), _ts(r["start_utc"]) + r.get("elapsed_s", r["ride_s"])) for r in out if r["source"] == "Assioma"]
     out = [r for r in out if r["source"] == "Assioma" or not _overlaps(r, own)]
     return sorted(out, key=lambda r: r["start_utc"], reverse=True)

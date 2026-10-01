@@ -9,3 +9,5 @@ settings.json
 # the built app (build_exe.py)
 *.exe
 build/
+plan.json
+workouts/

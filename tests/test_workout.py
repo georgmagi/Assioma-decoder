@@ -45,9 +45,32 @@ def test_player_targets_ramps_skip_and_intensity():
 
 
 def test_built_in_workouts_are_sane_and_the_folder_adds_files(tmp_path):
-    for w in wk.BUILT_IN.values():
-        assert all(s["dur"] > 0 and 0.3 <= s["lo"] <= 1.3 for s in w["steps"])
+    for k, w in wk.BUILT_IN.items():
+        top = 1.8 if k == "ramp-test" else 1.3                   # a ramp test climbs until you stop
+        assert all(s["dur"] > 0 and 0.3 <= s["lo"] <= top for s in w["steps"])
     (tmp_path / "mine.zwo").write_text(ZWO, encoding="utf-8")
     (tmp_path / "broken.zwo").write_text("<nope", encoding="utf-8")
     lib = wk.library(str(tmp_path))
     assert "zwo:mine" in lib and "zwo:broken" not in lib and "vt1-steps" in lib
+
+
+def test_shorthand_reads_like_a_coach_writes():
+    st = wk.parse_text('10m 50-65%, 3x(12m 90%, 4m 55%), 10m 60-40% "cool down"')
+    assert [s["dur"] for s in st] == [600] + [720, 240] * 3 + [600]
+    assert st[0]["lo"] == 0.5 and st[0]["hi"] == 0.65 and st[1]["label"] == "1/3" and st[-1]["label"] == "cool down"
+    assert wk.parse_text("1h30m Z2, 90s free")[0] == {"dur": 5400, "lo": 0.65, "hi": 0.65, "label": ""}
+    assert wk.parse_text("1h30m Z2, 90s free")[1]["lo"] is None
+
+
+@pytest.mark.parametrize("bad", ["", "12m", "12x 90%", "12m 900%", "3x(12m 90%", "2m30 90%", "8h 50%"])
+def test_shorthand_says_what_is_wrong(bad):
+    with pytest.raises(ValueError):
+        wk.parse_text(bad)
+
+
+def test_shorthand_and_zwift_round_trip():
+    text = '10m 50-65%, 3x(12m 90%, 4m 55%), 10m 60-40% "cool down"'
+    st = wk.parse_text(text)
+    assert wk.to_text(st) == text
+    back = wk.parse_zwo(wk.to_zwo("3x12", "test & <check>", st))
+    assert back["name"] == "3x12" and [(s["dur"], s["lo"], s["hi"]) for s in back["steps"]] == [(s["dur"], s["lo"], s["hi"]) for s in st]

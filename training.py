@@ -15,8 +15,10 @@ Both start at 0 on the day of the first ride, so fitness takes weeks to mean muc
 from __future__ import annotations
 
 from datetime import date, datetime, timedelta
+from statistics import median
 from typing import Optional
 
+import checks
 import eftp
 
 CTL_DAYS, ATL_DAYS = 42, 7
@@ -79,6 +81,28 @@ def weeks(rides: list[dict], today: Optional[date] = None, count: int = 12) -> l
     return out
 
 
+def fitness_checks(rides: list[dict]) -> dict:
+    """Every Fitness check (checks.py), oldest first, compared at the same watts: the reference is the
+    median of the checks' middle steps, so an FTP change doesn't move it. With the room temperature
+    of each, the heat model (bpm per degree) and heart rate corrected to 20 C."""
+    got = sorted((r for r in rides if r.get("check")), key=lambda r: r["start_utc"])
+    if not got:
+        return {"checks": [], "ref_w": None, "heat": None}
+    mids = sorted(median(s["power"] for s in r["check"]["steps"]) for r in got)
+    ref = round(mids[len(mids) // 2] / 5) * 5                     # the checks' typical middle step
+    heat = checks.heat_model([(r.get("temp_c"), checks.hr_at(r["check"], ref)) for r in got])
+    out = []
+    for r in got:
+        c, hr = r["check"], checks.hr_at(r["check"], ref)
+        corr = hr - heat["bpm_per_c"] * (r["temp_c"] - 20) if heat and r.get("temp_c") is not None else None
+        out.append({"id": r.get("id"), "day": local_day(r["start_utc"]).isoformat(), "temp_c": r.get("temp_c"),
+                    "rh_pct": r.get("rh_pct"), "hr_ref": hr, "hr_ref_20c": corr, "hrr60": c.get("hrr60"),
+                    "a1": [st.get("a1") for st in c["steps"]], "rmssd": [st.get("rmssd") for st in c["steps"]],
+                    "a1_ref": checks.a1_at(c, ref),
+                    "steps": c["steps"]})
+    return {"checks": out, "ref_w": ref, "heat": heat}
+
+
 def progress(rides: list[dict], today: Optional[date] = None) -> dict:
     """Everything the Progress screen shows: the rides by local day (for the calendar), the weeks,
     the fitness/fatigue/form series and all-time totals."""
@@ -89,13 +113,20 @@ def progress(rides: list[dict], today: Optional[date] = None) -> dict:
             {k: r.get(k) for k in ("id", "start_utc", "ride_s", "tss", "np", "avg_hr", "work_kj", "zones")})
     # VT1 ride by ride (vt1.py): crossings and bounds, oldest first
     vt1 = [{"id": r.get("id"), "day": local_day(r["start_utc"]).isoformat(), "hr": r.get("vt1_hr"),
-            "power": r.get("vt1_power"), "beats_pct": r.get("vt1_beats_pct")}
+            "power": r.get("vt1_power"), "beats_pct": r.get("vt1_beats_pct"),
+            "vt2": {"hr": r.get("vt2_hr"), "power": r.get("vt2_power")}}         # alpha 1 = 0.5
            for r in sorted(rides, key=lambda r: r["start_utc"]) if r.get("vt1_hr") or r.get("vt1_power")]
     return {
+        "fitness_checks": fitness_checks(rides),
         "today": today.isoformat(),
         "days": by_day,
         "vt1": vt1,
         "eftp": eftp.history(rides, today, lambda r: local_day(r["start_utc"])),
+        # aerobic efficiency ride by ride: power per heartbeat in steady Z2, and Pw:HR decoupling
+        "efficiency": [{"id": r.get("id"), "day": local_day(r["start_utc"]).isoformat(), "ef": r.get("ef_z2"),
+                        "power": r.get("ef_z2_power"), "minutes": r.get("ef_z2_min"),
+                        "decoupling": r.get("decoupling_pct")}
+                       for r in sorted(rides, key=lambda r: r["start_utc"]) if r.get("ef_z2") or r.get("decoupling_pct") is not None],
         "weeks": weeks(rides, today),
         "pmc": pmc(rides, today),
         "totals": {"rides": len(rides), "time_s": sum(r.get("ride_s") or 0 for r in rides),

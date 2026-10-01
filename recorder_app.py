@@ -24,16 +24,18 @@ import argparse
 import json
 import mimetypes
 import os
+import re
 import queue
 import sys
 import threading
 import time
-from datetime import timezone
+from datetime import date, timedelta, timezone
 from typing import Optional
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 import assioma_decoder as dec
+import plan as pl
 import ride_summary as rs
 import workout as wk
 import training
@@ -43,6 +45,7 @@ from assioma_recorder import (EVENT, HERE, BleWorker, ReplayWorker, Session, loc
 WEB = os.path.join(getattr(sys, "_MEIPASS", HERE), "web")     # the .exe unpacks the page to a temp folder
 SETTINGS_FILE = os.path.join(HERE, "settings.json")
 WORKOUT_DIR = os.path.join(HERE, "workouts")      # your own .zwo files (Zwift workout format)
+PLAN_FILE = os.path.join(HERE, "plan.json")        # the training block (plan.py)
 DYN_KEYS = ["rider_position"] + [f"{m}_{side}{unit}" for side in ("left", "right") for m, unit in
             [("power", "_w"), ("te", "_pct"), ("ps", "_pct"), ("pco", "_mm"), ("pp", "_start_deg"),
              ("pp", "_peak_start_deg"), ("pp", "_peak_end_deg"), ("pp", "_end_deg")]]
@@ -54,10 +57,11 @@ def hms(n: int) -> str:
     return f"{n // 3600}:{n // 60 % 60:02d}:{n % 60:02d}"
 
 
-PAGES = ("home", "workouts", "stats")   # the app's pages (top bar); plus "ride" and "summary"
+PAGES = ("home", "plan", "workouts", "stats")   # the app's pages (top bar); plus "ride" and "summary"
 # ftp, plan and strap are set on the home screen; theme, graph span and the power tile's 3 s mode are
 # remembered from the page (its own browser storage is lost: the port changes every run)
-SETTINGS_DEFAULTS = {"ftp": None, "lthr": None, "vt1_hr": None, "plan_min": 60, "hr": True, "trainer": False, "theme": "dark", "span": 300,
+SETTINGS_DEFAULTS = {"ftp": None, "lthr": None, "vt1_hr": None, "room_temp": None, "room_rh": None,
+                     "plan_min": 60, "hr": True, "trainer": False, "theme": "dark", "span": 300,
                      "power3s": False}
 PREFS = {"theme": ("dark", "lcd"), "span": (300, 1800, 0), "power3s": (True, False)}
 
@@ -107,6 +111,16 @@ class Engine(threading.Thread):
         self.player: Optional[wk.Player] = None
         self.erg = True                      # off: the trainer rides flat (simulation) whatever the workout says
         self.workout_done = False
+        # the training plan (plan.py): kept in plan.json (in memory only for a replay, a test)
+        self.plan_path = os.path.join(os.path.dirname(settings_path), "plan.json") if settings_path else None
+        self.plan = pl.load(self.plan_path) if self.plan_path else pl.empty()
+        self.plan_version, self.plan_msg = 0, ""
+        self._plan_day = None                # the day whose planned workout was last put up as the next ride
+        self.step_log: list = []             # [ride second, step, intensity] as the workout went
+        # the VT1 ceiling (a toggle on the ride screen): ERG targets trimmed while you're above VT1
+        self.ceiling = False
+        self.cap, self._cap_t = 1.0, 0.0     # the share of the target allowed, when it last changed
+        self._wo_meta: Optional[dict] = None
         self.error = ""
         self.pedal_since = None
         # auto-start (3 s of pedalling on the home screen) is armed at launch and again once the
@@ -159,10 +173,19 @@ class Engine(threading.Thread):
                 self._start_ride(now)
             elif name == "settings" and isinstance(arg, dict):
                 self._settings(arg)
-            elif name == "connect" and isinstance(arg, dict) and arg.get("device") in ("hr", "trainer"):
-                self._settings({arg["device"]: bool(arg.get("on"))})      # the Connections pane
+            elif name == "connect" and isinstance(arg, dict) and arg.get("device") in ("pedals", "hr", "trainer"):
+                self._connect(arg["device"], bool(arg.get("on")))
             elif name == "workout":
                 self.workout_id = arg if arg in self.workouts() else None
+            elif name.startswith("plan_"):
+                self._plan_action(name, arg)
+            elif name == "wo_save" and isinstance(arg, dict):
+                self._save_workout(arg)
+            elif name == "wo_delete" and isinstance(arg, str) and arg.startswith("zwo:") and "/" not in arg and "\\" not in arg:
+                path = os.path.join(WORKOUT_DIR, arg[4:] + ".zwo")
+                if os.path.isfile(path):
+                    os.remove(path)
+                    self.plan_version += 1
             elif name == "home":
                 self.screen = "home"
         elif self.screen == "summary":
@@ -170,6 +193,15 @@ class Engine(threading.Thread):
                 self.screen, self.summary_id, self.dialog = self.back_to, None, None
             elif name == "show_file":
                 self._show_file()
+            elif name == "ride_meta" and isinstance(arg, dict) and rs.find_ride(self.out_dir, self.summary_id):
+                upd = {}
+                for key, lo, hi in (("temp_c", 5, 40), ("rh_pct", 5, 100)):
+                    v = arg.get(key, "keep")
+                    if v is None or (isinstance(v, (int, float)) and not isinstance(v, bool) and lo <= v <= hi):
+                        upd[key] = v
+                if upd:
+                    rs.save_meta(self.out_dir, self.summary_id, upd)
+                    self.rides_version += 1
         elif self.screen == "ride" and s is not None:
             if name == "pause":
                 s.pause(now)
@@ -188,9 +220,15 @@ class Engine(threading.Thread):
             elif name == "discard_confirm":
                 self._drain()
                 s.discard()
+                try:
+                    os.remove(rs.meta_path(self.out_dir, os.path.basename(s.base)))
+                except OSError:
+                    pass
                 self._leave_ride("home")
             elif name == "save":
                 self._save()
+            elif name == "wo_ceiling" and self.player is not None:
+                self.ceiling, self.cap = not self.ceiling, 1.0
             elif name in ("wo_skip", "wo_nudge", "wo_erg", "wo_end") and self.player is not None:
                 if name == "wo_skip":
                     self.player.skip(len(s.seconds))
@@ -259,7 +297,79 @@ class Engine(threading.Thread):
 
     # ---- workouts on the trainer
     def workouts(self) -> dict:
-        return wk.library(WORKOUT_DIR)
+        return {**wk.library(WORKOUT_DIR), **pl.plan_workouts(self.plan)}
+
+    # ---- the plan
+    def _plan_changed(self, msg: str = "") -> None:
+        self.plan_version += 1
+        self.plan_msg = msg
+        self._plan_day = None                       # today's entry may have changed: put it up again
+        if self.plan_path:
+            try:
+                pl.save(self.plan_path, self.plan)
+            except OSError as e:
+                self.plan_msg = f"Couldn't save the plan: {e}"
+
+    def _plan_today(self) -> None:
+        """Once a day (and after the plan changes) today's planned workout becomes the next ride;
+        you can still pick another one after that."""
+        today = date.today()
+        if self._plan_day == today:
+            return
+        self._plan_day = today
+        e = self.plan.get("days", {}).get(today.isoformat())
+        if e is not None:
+            self.workout_id = pl.day_id(self.plan, today, self.workouts())
+
+    def _plan_action(self, name: str, arg) -> None:
+        lib = self.workouts()
+        if name == "plan_new" and isinstance(arg, dict):
+            try:
+                start = date.fromisoformat(arg.get("start", ""))
+            except (TypeError, ValueError):
+                return
+            weeks = arg.get("weeks", 4)
+            self.plan = pl.empty(start - timedelta(days=start.weekday()), weeks if weeks in (1, 2, 3, 4, 5, 6) else 4)
+            self._plan_changed()
+        elif name == "plan_set" and isinstance(arg, dict) and isinstance(arg.get("date"), str):
+            try:
+                date.fromisoformat(arg["date"])
+                text = str(arg.get("text") or "").strip()
+                if text:
+                    self.plan["days"][arg["date"]] = pl.parse_entry(text, lib)
+                else:
+                    self.plan["days"].pop(arg["date"], None)
+                self._plan_changed()
+            except ValueError as e:
+                self.plan_msg = str(e)
+                self.plan_version += 1
+        elif name == "plan_import" and isinstance(arg, dict):
+            days, problems = pl.parse_import(str(arg.get("text") or ""), date.fromisoformat(self.plan["start"]), lib)
+            self.plan["days"].update(days)
+            msg = f"Imported {len(days)} day{'s' if len(days) != 1 else ''}."
+            if problems:
+                msg += " Not understood: " + "; ".join(f"line {n}: {p}" for n, p in problems[:6])
+            self._plan_changed(msg)
+
+    def _save_workout(self, arg: dict) -> None:
+        """The builder: a workout from the shorthand, saved as a Zwift file in the workouts folder."""
+        name = str(arg.get("name") or "").strip()[:60]
+        try:
+            steps = wk.parse_text(str(arg.get("text") or ""))
+        except ValueError as e:
+            self.plan_msg = f"Workout not saved: {e}"
+            self.plan_version += 1
+            return
+        if not name:
+            self.plan_msg = "Workout not saved: it needs a name."
+            self.plan_version += 1
+            return
+        slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:50] or "workout"
+        os.makedirs(WORKOUT_DIR, exist_ok=True)
+        with open(os.path.join(WORKOUT_DIR, slug + ".zwo"), "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(wk.to_zwo(name, str(arg.get("description") or ""), steps))
+        self.plan_msg = f"Saved {name}."
+        self.plan_version += 1
 
     def _drive_trainer(self) -> None:
         """Tell the worker's trainer link what to hold: the workout's target in ERG; flat riding
@@ -278,7 +388,8 @@ class Engine(threading.Thread):
             elif not self.erg or a["target_w"] is None or s.state != "recording" or not self._pedalling(s):
                 tr.want = ("sim", 0.0)           # (paused or not pedalling: no ERG wall to restart against)
             else:
-                tr.want = ("erg", a["target_w"])
+                self._update_cap(s)
+                tr.want = ("erg", a["target_w"] * self.cap)
         elif tr.want is not None and tr.want[0] == "erg":
             tr.want = ("sim", 0.0)                       # never leave it holding a workout's watts
 
@@ -297,6 +408,31 @@ class Engine(threading.Thread):
         last = s.live_power[-1][0]
         return start is not None and now - last <= 3 and last - start >= 2
 
+    CAP_DOWN, CAP_UP, CAP_MIN = 0.03, 0.02, 0.70
+    CAP_WAIT_DOWN, CAP_WAIT_UP = 25.0, 30.0   # s: heart rate answers a change in power in about 30 s
+
+    def _update_cap(self, s: Session) -> None:
+        """The VT1 ceiling: above VT1 (30-s heart rate over it, or alpha 1 under 0.75 for 30 s: the Z2
+        guard's own test) the target is trimmed 3 %, then it waits 25 s for heart rate to answer
+        before trimming again, never under 70 %; clearly under VT1 (3 bpm below, alpha 1 fine) it
+        gives 2 % back every 30 s. Slow on purpose: a fast loop on heart rate overshoots and rebounds."""
+        if not self.ceiling:
+            self.cap = 1.0
+            return
+        now = utcnow()
+        row = s.hrv.latest(now)
+        g = self._guard(s, now, row[1] if row else None, s.hrv.coverage[-1] if s.hrv.coverage else None)
+        if not g or not g.get("ref"):
+            return                                  # no VT1 known: nothing to hold you under
+        t, ref, hr30 = time.monotonic(), g["ref"]["hr"], g.get("hr30")
+        over = g.get("state") == "above"
+        clear = hr30 is not None and hr30 < ref - 3 and g.get("a1_low_s", 0) == 0
+        if over and t - self._cap_t >= self.CAP_WAIT_DOWN and self.cap > self.CAP_MIN:
+            self.cap, self._cap_t = max(self.CAP_MIN, round(self.cap - self.CAP_DOWN, 2)), t
+            self.worker.log(f"VT1 ceiling: target at {self.cap:.0%}")
+        elif clear and self.cap < 1.0 and t - self._cap_t >= self.CAP_WAIT_UP:
+            self.cap, self._cap_t = min(1.0, round(self.cap + self.CAP_UP, 2)), t
+
     def _trainer_w(self) -> Optional[float]:
         tr = getattr(self.worker, "trainer", None)
         return tr.power_w if tr is not None and time.monotonic() - tr.data_at < 3 else None
@@ -312,21 +448,48 @@ class Engine(threading.Thread):
                 "total": p.total, "t": a["t"], "index": a["index"], "left": a.get("left"),
                 "label": (a.get("step") or {}).get("label", ""), "target": a["target_w"],
                 "next": nxt and {"dur": nxt["dur"], "lo": nxt["lo"], "hi": nxt["hi"], "label": nxt["label"]},
-                "intensity": p.intensity, "erg": self.erg, "ftp": p.ftp,
+                "intensity": p.intensity, "erg": self.erg, "ftp": p.ftp, "ceiling": self.ceiling, "cap": self.cap,
                 "trainer": tr and {"controlled": tr.controlled, "error": tr.error, "power": tr.power_w}}
+
+    def _meta(self, s: Session) -> None:
+        """The ride's sidecar (ride_summary.META): room conditions and the workout as ridden."""
+        m = {"temp_c": self.settings.get("room_temp"), "rh_pct": self.settings.get("room_rh")}
+        if self._wo_meta:
+            m["workout"] = {**self._wo_meta, "log": self.step_log}
+        try:
+            rs.save_meta(self.out_dir, os.path.basename(s.base), m)
+        except OSError as e:
+            self.worker.log(f"meta: {e}")
+
+    def _log_step(self) -> None:
+        """Note when each workout step starts (ride second, step, intensity): the Fitness check and
+        the step-by-step targets in the summary are read from it."""
+        s, p = self.session, self.player
+        if s is None or p is None or s.state != "recording":
+            return
+        a = p.at(len(s.seconds))
+        if a["done"]:
+            return
+        if not self.step_log or self.step_log[-1][1] != a["index"] or self.step_log[-1][2] != p.intensity:
+            self.step_log.append([len(s.seconds), a["index"], p.intensity])
 
     def _start_ride(self, now) -> None:
         self._a1_low_since = None
+        self.step_log, self._wo_meta = [], None
+        self.cap, self._cap_t = 1.0, 0.0                 # (the ceiling toggle itself stays as you left it)
         self.player, self.workout_done, self.erg = None, False, True
         w = self.workouts().get(self.workout_id) if self.workout_id else None
         if w is not None:
             if self.settings.get("ftp"):
                 self.player = wk.Player(w, self.settings["ftp"])
+                self._wo_meta = {"id": self.workout_id, "name": w["name"], "ftp": self.settings["ftp"],
+                                 "steps": [[st["dur"], st["lo"], st["hi"], st["label"]] for st in w["steps"]]}
             else:
                 self.error = "Set your FTP on the home screen to ride a workout."
         self.session = Session(self.out_dir)
         self.session.pedal_name = self.worker.pedal_name or "Assioma"
         self.session.start(now)
+        self._meta(self.session)
         self.worker.log(f"ride started: {os.path.basename(self.session.base)}")
         self.screen, self.dialog, self.pedal_since = "ride", None, None
 
@@ -341,15 +504,21 @@ class Engine(threading.Thread):
     def _save(self) -> None:
         s = self.session
         self._drain()
+        self._meta(s)                                    # with the workout's step log
         result = s.finish()
         if not result:                             # nothing recorded
+            try:
+                os.remove(rs.meta_path(self.out_dir, os.path.basename(s.base)))
+            except OSError:
+                pass
             self._leave_ride("home")
             return
         ride_id = os.path.basename(s.base)
         self.worker.log(f"ride saved: {ride_id}")
         self.rides_version += 1
         try:                                       # the ride list's entry, ready before it's asked for
-            info = rs.short(rs.summarize(rs.load(s.base + rs.SUFFIX), self.settings.get("ftp")))
+            info = rs.short(rs.summarize(rs.load(s.base + rs.SUFFIX), self.settings.get("ftp"), None,
+                                         rs.load_meta(self.out_dir, ride_id)))
             with open(rs.cache_path(self.out_dir, ride_id), "w") as fh:
                 json.dump(info, fh)
         except Exception as e:
@@ -363,7 +532,7 @@ class Engine(threading.Thread):
         if path is None:
             return
         base = os.path.join(self.out_dir, ride_id)
-        exts = ("_raw.csv", rs.SUFFIX, ".fit", "_summary.json", "_log.txt") if path.endswith(rs.SUFFIX) else (".fit",)
+        exts = (("_raw.csv", rs.SUFFIX, ".fit", "_summary.json", "_log.txt") if path.endswith(rs.SUFFIX) else (".fit",)) + (rs.META,)
         for f in [base + e for e in exts] + [rs.cache_path(self.out_dir, ride_id)]:
             try:
                 os.remove(f)
@@ -388,6 +557,9 @@ class Engine(threading.Thread):
             self.settings["ftp"] = ftp
         if lthr is None or (isinstance(lthr, (int, float)) and 100 <= lthr <= 220):
             self.settings["lthr"] = lthr
+        for key, lo, hi in (("room_temp", 5, 40), ("room_rh", 5, 100)):     # the room, from your hygrometer
+            if key in new and (new[key] is None or (isinstance(new[key], (int, float)) and lo <= new[key] <= hi)):
+                self.settings[key] = new[key]
         if isinstance(plan, (int, float)) and 10 <= plan <= 600:
             self.settings["plan_min"] = plan
         trainer = new.get("trainer")
@@ -403,6 +575,19 @@ class Engine(threading.Thread):
             self.worker = self._new_worker()
         if self.settings_path:
             save_settings(self.settings_path, self.settings)
+
+    def _connect(self, device: str, on: bool) -> None:
+        """The Connections pane: connect (an attempt that says when it can't find the sensor) or let
+        go, without touching the other sensors. The strap and trainer choice is remembered."""
+        kind = {"pedals": "pedal"}.get(device, device)
+        if hasattr(self.worker, "set_want"):
+            self.worker.set_want(kind, on)
+            if device in ("hr", "trainer") and self.settings.get(device) != on:
+                self.settings[device] = on
+                if self.settings_path:
+                    save_settings(self.settings_path, self.settings)
+        elif device in ("hr", "trainer"):
+            self._settings({device: on})               # a worker without a lifecycle: reconnect it
 
     def _prefs(self, new: dict) -> None:
         changed = False
@@ -471,6 +656,9 @@ class Engine(threading.Thread):
 
     def _tick(self) -> None:
         now = utcnow()
+        if self.screen in PAGES:
+            self._plan_today()
+        self._log_step()
         self._drive_trainer()
         if self.session is not None:
             self.session.tick(now)
@@ -515,13 +703,17 @@ class Engine(threading.Thread):
         view = getattr(w, "view", lambda k: (w.status.get(k, ""), ""))   # (status, "ANT+" / "Bluetooth")
         (pedal, pedal_link), (hr, hr_link) = view("pedal"), view("hr")
         trainer, trainer_link = view("trainer")
+        sensor = getattr(w, "sensor", None)            # the lifecycle (BleWorker): {state, status, link, note}
         base = {
             "screen": self.screen, "summary_id": self.summary_id, "back_to": self.back_to,
             "settings": dict(self.settings),
             "sensors": [{"label": "Pedals", "status": pedal, "link": pedal_link}]
                        + ([{"label": "Strap", "status": hr, "link": hr_link}] if hr else [])
                        + ([{"label": "Trainer", "status": trainer, "link": trainer_link}] if trainer else []),
+            "devices": {k: sensor(kind) for k, kind in (("pedals", "pedal"), ("hr", "hr"), ("trainer", "trainer"))}
+                       if sensor else None,
             "error": self.error, "dialog": self.dialog, "rides_version": self.rides_version,
+            "plan_version": self.plan_version, "plan_msg": self.plan_msg,
             "config": {"ftp": self.settings.get("ftp"), "plan_min": self.settings.get("plan_min")},
         }
         s = self.session
@@ -621,6 +813,25 @@ def make_server(engine: Engine, app_mode: dict) -> ThreadingHTTPServer:
                              "steps": [[st["dur"], st["lo"], st["hi"], st["label"]] for st in w["steps"]],
                              "estimate": wk.estimate(w, ftp) if ftp else None}
                             for k, w in engine.workouts().items()])
+            elif u.path == "/api/parse":                     # the builder's live preview
+                try:
+                    steps = wk.parse_text(q.get("text", [""])[0])
+                    w = {"steps": steps}
+                    ftp = engine.settings.get("ftp")
+                    self._json({"steps": [[st["dur"], st["lo"], st["hi"], st["label"]] for st in steps],
+                                "total": wk.total_s(w), "estimate": wk.estimate(w, ftp) if ftp else None,
+                                "split": pl.zone_split(w)})
+                except ValueError as e:
+                    self._json({"error": str(e)})
+            elif u.path == "/api/workout_text":              # a workout as shorthand, to edit a copy
+                w = engine.workouts().get(q.get("id", [""])[0])
+                self._json({"name": w["name"], "text": wk.to_text(w["steps"])} if w else {"error": "no such workout"})
+            elif u.path == "/api/plan":
+                rides = rs.ride_list(engine.out_dir, engine.settings.get("ftp"))
+                over = pl.overview(engine.plan, engine.workouts(), rides, engine.settings.get("ftp"), date.today())
+                prog = training.progress(rides)
+                self._json({**over, "status_text": pl.status_text(prog, rides, engine.settings, over),
+                            "pmc_now": prog["pmc"]})
             elif u.path == "/api/progress":
                 self._json(training.progress(rs.ride_list(engine.out_dir, engine.settings.get("ftp"))))
             elif u.path == "/api/ride":

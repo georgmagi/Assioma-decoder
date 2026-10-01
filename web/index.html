@@ -12,6 +12,7 @@
   <span class="brand">Assioma</span>
   <div class="tabs" role="tablist">
     <button data-page="home" role="tab">Home</button>
+    <button data-page="plan" role="tab">Plan</button>
     <button data-page="workouts" role="tab">Workouts</button>
     <button data-page="stats" role="tab">Statistics</button>
   </div>
@@ -41,7 +42,7 @@
       <dl class="ov-stats hf-stats" id="hf-stats"></dl>
     </div>
   </section>
-  <div class="home-row three">
+  <div class="home-row">
     <section class="panel ov-last" id="ov-last">
       <div class="panel-head"><h2>Last ride</h2><span class="sub-title" id="ov-last-when"></span><button class="btn" id="b-last">Open</button></div>
       <dl class="ov-stats" id="ov-last-stats"></dl>
@@ -49,17 +50,10 @@
     </section>
     <section class="panel ov-vt1">
       <div class="panel-head">
-        <h2>VT1</h2><output class="readout" id="hv-readout"></output>
-        <div class="seg" id="hv-by" role="group" aria-label="VT1 by"><button data-by="hr">Heart rate</button><button data-by="power">Power</button></div>
+        <h2>Thresholds</h2><output class="readout" id="hv-readout"></output>
       </div>
       <div class="vt1t-wrap"><canvas id="hv-chart"></canvas></div>
       <p class="ov-note" id="hv-note"></p>
-    </section>
-    <section class="panel ov-eftp">
-      <div class="panel-head"><h2>eFTP</h2><em class="link" id="ef-quality"></em><button class="btn" id="b-useftp" hidden></button></div>
-      <div class="ef-top"><span class="num" id="ef-num">--</span><span class="unit">W</span><span class="ef-sub" id="ef-sub"></span></div>
-      <div class="ef-chart"><canvas id="ef-chart"></canvas></div>
-      <p class="ov-note" id="ef-note"></p>
     </section>
   </div>
   <div class="home-row">
@@ -74,7 +68,10 @@
         <label><span>Threshold heart rate</span><input id="set-lthr" type="number" min="100" max="220" step="1" inputmode="numeric"><span class="u">bpm</span></label>
         <label><span>VT1 heart rate</span><input id="set-vt1" type="number" min="90" max="210" step="1" inputmode="numeric" placeholder="auto"><span class="u">bpm</span></label>
         <label><span>Planned ride</span><input id="set-plan" type="number" min="10" max="600" step="5" inputmode="numeric"><span class="u">min</span></label>
+        <label><span>Room temperature</span><input id="set-temp" type="number" min="5" max="40" step="0.5" inputmode="decimal"><span class="u">°C</span></label>
+        <label><span>Humidity</span><input id="set-rh" type="number" min="5" max="100" step="1" inputmode="numeric"><span class="u">%</span></label>
       </form>
+      <p class="hint set-hint">Room temperature and humidity are saved with each ride (heat raises heart rate at the same power): update them from your hygrometer before you ride.</p>
     </section>
   </div>
 </div>
@@ -132,6 +129,7 @@
     <div class="wo-btns">
       <button class="btn" id="wo-skip">Skip step</button>
       <button class="btn toggle" id="wo-erg">ERG on</button>
+      <button class="btn toggle" id="wo-ceil" title="Trim the ERG target while you're above VT1">VT1 ceiling</button>
       <button class="btn" id="wo-end">End workout</button>
     </div>
   </div>
@@ -197,6 +195,11 @@
     <button class="btn" id="sum-home">Home</button>
     <h1 id="sum-title"></h1>
     <button class="btn" id="sum-file">Show FIT file</button>
+    <form class="sum-env settings" id="sum-env" onsubmit="return false" title="The room during this ride: change it if it wasn't right">
+      <span class="sum-env-lab">Room</span>
+      <label><input id="sum-temp" type="number" min="5" max="40" step="0.5" inputmode="decimal" placeholder="--"><span class="u">°C</span></label>
+      <label><input id="sum-rh" type="number" min="5" max="100" step="1" inputmode="numeric" placeholder="--"><span class="u">%</span></label>
+    </form>
     <button class="btn danger-text" id="sum-delete">Delete ride</button>
   </div>
   <dl class="panel sum-stats" id="sum-stats"></dl>
@@ -236,6 +239,21 @@
       <div class="vt1-head" id="vt1-head"></div>
       <div class="vt1-wrap"><canvas id="vt1-chart"></canvas></div>
       <p class="pc" id="vt1-note"></p>
+    </section>
+    <section class="panel" id="card-dur">
+      <div class="panel-head"><h2>Durability</h2><em class="link" id="dur-score"></em></div>
+      <dl class="ov-stats" id="dur-stats"></dl>
+      <p class="pc" id="dur-note"></p>
+    </section>
+    <section class="panel" id="card-check">
+      <div class="panel-head"><h2>Weekly check</h2></div>
+      <table class="leg-table" id="check-table"></table>
+      <p class="pc" id="check-note"></p>
+    </section>
+    <section class="panel" id="card-wsteps">
+      <div class="panel-head"><h2>Workout: target and pedals</h2></div>
+      <div class="table-wrap"><table class="leg-table" id="wsteps-table"></table></div>
+      <p class="pc" id="wsteps-note"></p>
     </section>
     <section class="panel" id="card-pc">
       <div class="panel-head"><h2>Beat to beat</h2></div>
@@ -289,12 +307,34 @@
   </div>
   <section class="panel vt1-trend">
     <div class="panel-head">
-      <h2>VT1 over time</h2>
+      <h2>Thresholds over time</h2>
       <output class="readout" id="vt1t-readout"></output>
-      <div class="seg" id="vt1t-by" role="group" aria-label="VT1 by"><button data-by="hr">Heart rate</button><button data-by="power">Power</button></div>
     </div>
     <div class="vt1t-wrap"><canvas id="vt1t-chart"></canvas></div>
     <p class="wk-note" id="vt1t-note"></p>
+  </section>
+  <section class="panel ov-eftp">
+    <div class="panel-head"><h2>eFTP</h2><em class="link" id="ef-quality"></em><button class="btn" id="b-useftp" hidden></button></div>
+    <div class="ef-top"><span class="num" id="ef-num">--</span><span class="unit">W</span><span class="ef-sub" id="ef-sub"></span></div>
+    <ul class="ef-ev" id="ef-ev"></ul>
+    <div class="ef-chart"><canvas id="ef-chart"></canvas></div>
+    <p class="ov-note" id="ef-note"></p>
+  </section>
+  <section class="panel vt1-trend">
+    <div class="panel-head">
+      <h2>Weekly checks</h2>
+      <output class="readout" id="fc-readout"></output>
+    </div>
+    <div class="vt1t-wrap"><canvas id="fc-chart"></canvas></div>
+    <p class="wk-note" id="fc-note"></p>
+  </section>
+  <section class="panel vt1-trend">
+    <div class="panel-head">
+      <h2>Aerobic efficiency</h2>
+      <output class="readout" id="eff-readout"></output>
+    </div>
+    <div class="vt1t-wrap"><canvas id="eff-chart"></canvas></div>
+    <p class="wk-note" id="eff-note"></p>
   </section>
   <section class="panel rides">
     <div class="panel-head"><h2>History</h2><span class="count" id="rides-count"></span></div>
@@ -308,15 +348,54 @@
   </section>
 </div>
 
+<div class="screen plan" id="scr-plan" hidden>
+  <div class="sum-head">
+    <h1>Training plan <span class="sub-title" id="pl-range"></span></h1>
+    <label class="pl-new">Block from <input type="date" id="pl-start"> <select id="pl-weeks"><option>2</option><option>3</option><option selected>4</option><option>5</option><option>6</option></select> weeks
+      <button class="btn" id="pl-make">New block</button></label>
+    <button class="btn" id="pl-paste">Paste plan</button>
+    <button class="btn primary" id="pl-copy">Copy status for Claude</button>
+  </div>
+  <p class="pl-msg" id="pl-msg" hidden></p>
+  <section class="panel pl-fc">
+    <div class="panel-head"><h2>Fitness, fatigue &amp; form</h2><output class="readout" id="pl-readout"></output></div>
+    <div class="vt1t-wrap"><canvas id="pl-chart"></canvas></div>
+    <p class="wk-note" id="pl-note"></p>
+  </section>
+  <section class="panel pl-cal">
+    <div class="pl-grid" id="pl-grid"></div>
+    <p class="wk-note">Click a day to change it: a workout's name, shorthand like <code>60m Z2</code> or <code>3x(12m 90%, 4m 55%)</code>, or rest. Empty removes it.</p>
+  </section>
+</div>
+
+<div class="backdrop" id="pl-dialog" hidden>
+  <div class="card pl-card" role="dialog" aria-modal="true" aria-labelledby="pl-d-title">
+    <h3 id="pl-d-title">Paste a plan</h3>
+    <p class="pl-d-sub">One line per day, as Claude writes it: <code>Week 1</code>, then <code>Tue: Threshold 2x20 | 15m 50-70%, 2x(20m 90%, 5m 55%), 10m 50%</code>, <code>Wed: 60m Z2</code>, <code>Thu: Threshold steps</code>, <code>Mon: rest</code>. Days count from the block's first Monday.</p>
+    <textarea id="pl-text" rows="14" spellcheck="false"></textarea>
+    <div class="buttons"><button class="btn" id="pl-cancel">Cancel</button><button class="btn primary" id="pl-import">Import</button></div>
+  </div>
+</div>
+<div class="backdrop" id="pl-copybox" hidden>
+  <div class="card pl-card" role="dialog" aria-modal="true">
+    <h3>Your status</h3>
+    <p class="pl-d-sub" id="pl-copied"></p>
+    <textarea id="pl-status" rows="16" readonly spellcheck="false"></textarea>
+    <div class="buttons"><button class="btn primary" id="pl-close">Done</button></div>
+  </div>
+</div>
+
 <div class="screen workouts" id="scr-workouts" hidden>
   <section class="panel wo-lib">
-    <div class="panel-head"><h2>Workouts</h2><span class="count" id="wo-count"></span></div>
+    <div class="panel-head"><h2>Workouts</h2><span class="count" id="wo-count"></span><button class="btn" id="wo-new">New workout</button></div>
     <div class="wo-rows" id="wo-rows"></div>
     <p class="hint">Add Zwift <code>.zwo</code> files to the <code>workouts</code> folder next to the app.</p>
   </section>
   <section class="panel wo-detail" id="wo-detail">
     <div class="panel-head">
       <h2 id="wd-name"></h2>
+      <button class="btn" id="wd-edit">Edit a copy</button>
+      <button class="btn danger-text" id="wd-del" hidden>Delete</button>
       <button class="btn" id="wd-select">Use for next ride</button>
       <button class="btn primary" id="wd-ride">Ride now</button>
     </div>
@@ -324,6 +403,15 @@
     <div class="wd-prof"><canvas id="wd-profile"></canvas></div>
     <dl class="ov-stats wd-stats" id="wd-stats"></dl>
     <div class="table-wrap"><table class="ride-table wd-steps"><thead><tr><th>#</th><th>Step</th><th class="n">Time</th><th class="n">Power</th><th class="n">% FTP</th></tr></thead><tbody id="wd-steps"></tbody></table></div>
+  </section>
+  <section class="panel wo-build" id="wo-build" hidden>
+    <div class="panel-head"><h2>Workout builder</h2><button class="btn" id="wb-cancel">Cancel</button><button class="btn primary" id="wb-save">Save</button></div>
+    <label class="wb-name"><span>Name</span><input id="wb-name" type="text" maxlength="60" placeholder="3x15 threshold"></label>
+    <label class="wb-text"><span>Steps</span><textarea id="wb-text" rows="3" spellcheck="false" placeholder="15m 50-70%, 3x(15m 92%, 5m 55%), 10m 50%"></textarea></label>
+    <p class="wb-help">Durations <code>90s</code> <code>12m</code> <code>1h30m</code>; power as % of FTP <code>90%</code>, a ramp <code>50-65%</code>, a zone <code>Z2</code> or <code>free</code>; repeats <code>3x(…)</code>; a label in quotes <code>"easy"</code>. Steps apart with commas.</p>
+    <p class="wb-err" id="wb-err"></p>
+    <div class="wd-prof"><canvas id="wb-profile"></canvas></div>
+    <dl class="ov-stats" id="wb-stats"></dl>
   </section>
 </div>
 
@@ -355,5 +443,6 @@
 <script src="screens.js"></script>
 <script src="workout.js"></script>
 <script src="progress.js"></script>
+<script src="plan.js"></script>
 </body>
 </html>

@@ -178,6 +178,7 @@ class AntHrWorker(threading.Thread):
         self.opened = 0.0                         # monotonic time the channel was opened
         self.last_data = 0.0                      # monotonic time of the last HR message
         self.device: Optional[int] = None         # the strap's ANT+ device number
+        self.enabled = True                       # the strap is wanted (Connections pane): else nothing is sent
         self.log = lambda text: None
         self._halt = threading.Event()
         self._dev = None
@@ -261,7 +262,7 @@ class AntHrWorker(threading.Thread):
                     self.status = f"connected: strap #{self.device}" if self.device else "connected: ANT+ strap"
                     bpm = page[7] or bpm
                     rr = beats.feed(page)
-                    if rr or now - last_sent >= 1.0:
+                    if self.enabled and (rr or now - last_sent >= 1.0):
                         self.q.put(hr_notification(datetime.now(timezone.utc).replace(tzinfo=None), bpm, rr))
                         last_sent = now
                 elif msg_id == CHANNEL_EVENT and len(data) >= 3 and data[1] == 1:

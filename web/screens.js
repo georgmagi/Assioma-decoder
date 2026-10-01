@@ -22,23 +22,50 @@ const DEVICES = [
   { key: "hr", label: "Heart-rate strap", sensor: "Strap", what: "heart rate and beat-to-beat intervals (ANT+ stick if plugged in)", value: (h) => h.hr == null ? "" : `${fmt(h.hr)} bpm` },
   { key: "trainer", label: "Smart trainer", sensor: "Trainer", what: "ERG targets for workouts (one app at a time)", value: (h) => h.trainer_w == null ? "" : `${fmt(h.trainer_w)} W` },
 ];
+// Each card is the control: click to connect (it tries for 20 s and says when it can't find the
+// sensor), click a connected one twice to let it go. States from the worker (BleWorker.sensor):
+// off, searching (quietly, in the background), connecting, connected, failed (with a hint).
+const STATE_TEXT = { off: "Not connected · click to connect", searching: "Searching…", connecting: "Connecting…",
+                     connected: "Connected", failed: "Couldn't find it" };
+const DISC = { key: null, until: 0 };                          // a first click on a connected card
+function deviceState(s, d) {
+  if (s.devices) return s.devices[d.key];
+  // a worker without a lifecycle (a replay): from the old status strings
+  const sn = (s.sensors || []).find((x) => x.label === d.sensor), st = sn ? sn.status : "";
+  const on = d.key === "pedals" || !!s.settings[d.key];
+  return { state: !on ? "off" : st.startsWith("connected") ? "connected" : "searching", status: st, link: sn?.link, note: "" };
+}
 function renderConnections(s) {
-  const h = s.home || {}, sens = s.sensors || [];
-  const key = JSON.stringify([sens, h.power_w, h.hr, h.trainer_w, s.settings.hr, s.settings.trainer]);
+  const h = s.home || {};
+  const confirm = DISC.until > performance.now() ? DISC.key : null;
+  const key = JSON.stringify([s.devices, s.sensors, h.power_w, h.hr, h.trainer_w, s.settings.hr, s.settings.trainer, confirm]);
   if (key === HOME.connKey) return;
   HOME.connKey = key;
   $("dev-list").innerHTML = DEVICES.map((d) => {
-    const on = d.key === "pedals" || !!s.settings[d.key];
-    const sn = sens.find((x) => x.label === d.sensor), status = on ? sn?.status || "starting…" : "not connected";
-    const ok = on && status.startsWith("connected");
-    const name = ok && status.includes(": ") ? status.split(": ")[1] : status;
-    const btn = d.key === "pedals" ? "" : `<button class="btn${on ? "" : " primary"}" data-dev="${d.key}" data-on="${on ? 0 : 1}">${on ? "Disconnect" : "Connect"}</button>`;
-    return `<div class="dev${ok ? " ok" : on ? " wait" : " off"}"><i class="dot"></i>` +
-      `<div class="dev-main"><b>${d.label}</b>${on ? linkTag(sn?.link) : ""}<span class="dev-st">${esc(name)}</span><span class="dev-what">${d.what}</span></div>` +
-      `<span class="val">${on ? d.value(h) : ""}</span>${btn}</div>`;
+    const x = deviceState(s, d), st = x.state;
+    const name = st === "connected" && x.status.includes(": ") ? x.status.split(": ")[1] : "";
+    const line = confirm === d.key ? "Click again to disconnect"
+      : st === "connected" ? `Connected${name ? ` · ${esc(name)}` : ""}`
+      : st === "failed" ? esc(x.note || STATE_TEXT.failed)
+      : st === "searching" && d.key === "pedals" ? "Searching… turn the cranks to wake them"
+      : STATE_TEXT[st] || esc(x.status);
+    return `<button class="dev st-${st}${confirm === d.key ? " confirm" : ""}" data-dev="${d.key}" data-state="${st}"><i class="dot"></i>` +
+      `<span class="dev-main"><b>${d.label}</b>${st === "connected" ? linkTag(x.link) : ""}<span class="dev-st">${line}</span>` +
+      `<span class="dev-what">${d.what}</span></span><span class="val">${st === "connected" ? d.value(h) : ""}</span></button>`;
   }).join("");
-  for (const b of $("dev-list").querySelectorAll("button[data-dev]"))
-    b.addEventListener("click", () => act("connect", { device: b.dataset.dev, on: b.dataset.on === "1" }));
+  for (const b of $("dev-list").querySelectorAll("button[data-dev]")) {
+    b.addEventListener("click", () => {
+      const dev = b.dataset.dev;
+      b.blur();
+      if (b.dataset.state === "connected") {
+        if (DISC.key === dev && DISC.until > performance.now()) { DISC.key = null; act("connect", { device: dev, on: false }); }
+        else { DISC.key = dev; DISC.until = performance.now() + 3000; HOME.connKey = null; renderConnections(S.snap);
+               setTimeout(() => { HOME.connKey = null; if (S.snap) renderConnections(S.snap); }, 3100); }
+      } else {
+        act("connect", { device: dev, on: true });            // also "try again" after it couldn't find it
+      }
+    });
+  }
 }
 
 // --------------------------------------------------------------------------- home
@@ -47,7 +74,6 @@ function renderConnections(s) {
 function renderHome(s) {
   renderConnections(s);
   renderSettings(s);
-  if (HOME.prog && HOME.efFtp !== s.config.ftp) { HOME.efFtp = s.config.ftp; drawEftp(HOME.prog, s); }   // FTP changed
   if (S.prevScreen !== "home" || HOME.progFor !== s.rides_version) {    // on arriving, and after a save / delete
     HOME.progFor = s.rides_version;
     loadOverview();
@@ -62,7 +88,6 @@ async function loadOverview() {
   HOME.prog = prog;
   drawHero();
   vt1Home().draw(prog);
-  drawEftp(prog, S.snap);
   // last ride
   const r = rides[0];
   $("ov-last-empty").hidden = !!r;
@@ -235,8 +260,8 @@ function drawForm(prog, ramp = 0) {
 window.addEventListener("resize", () => { if (!$("scr-home").hidden) drawHero(); });
 $("b-start").addEventListener("click", (e) => { act("start"); e.currentTarget.blur(); });
 let VT1_HOME = null;                              // made on first use: vt1Trend lives in progress.js, loaded later
-const vt1Home = () => (VT1_HOME ||= vt1Trend({ chart: "hv-chart", readout: "hv-readout", note: "hv-note", seg: "hv-by" }, 190));
-window.addEventListener("resize", () => { if (!$("scr-home").hidden && HOME.prog) { vt1Home().draw(HOME.prog); drawEftp(HOME.prog, S.snap); } });
+const vt1Home = () => (VT1_HOME ||= vt1Trend({ chart: "hv-chart", readout: "hv-readout", note: "hv-note" }, 250));
+window.addEventListener("resize", () => { if (!$("scr-home").hidden && HOME.prog) vt1Home().draw(HOME.prog); });
 
 // ---- the top bar's Start: the next ride's workout beside it, and the countdown when you pedal
 function renderNavStart(s) {
@@ -260,6 +285,8 @@ function renderSettings(s) {
     $("set-lthr").value = s.settings.lthr ?? "";
     $("set-vt1").value = s.settings.vt1_hr ?? "";
     $("set-plan").value = s.settings.plan_min ?? "";
+    $("set-temp").value = s.settings.room_temp ?? "";
+    $("set-rh").value = s.settings.room_rh ?? "";
   }
   // empty VT1 = your latest ride that crossed it (vt1.py): shown as the placeholder
   const auto = s.vt1 && s.vt1.source === "ride" ? s.vt1 : null;
@@ -270,9 +297,10 @@ function renderSettings(s) {
 function sendSettings() {
   const num = (id) => { const v = parseFloat($(id).value); return Number.isFinite(v) ? v : null; };
   const plan = num("set-plan");
-  act("settings", { ftp: num("set-ftp"), lthr: num("set-lthr"), vt1_hr: num("set-vt1"), plan_min: plan ?? undefined });
+  act("settings", { ftp: num("set-ftp"), lthr: num("set-lthr"), vt1_hr: num("set-vt1"), plan_min: plan ?? undefined,
+                    room_temp: num("set-temp"), room_rh: num("set-rh") });
 }
-for (const id of ["set-ftp", "set-lthr", "set-vt1", "set-plan"]) {
+for (const id of ["set-ftp", "set-lthr", "set-vt1", "set-plan", "set-temp", "set-rh"]) {
   $(id).addEventListener("change", sendSettings);
   $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") e.target.blur(); e.stopPropagation(); });
 }
@@ -406,6 +434,10 @@ function renderSummary(d) {
   $("sum-c-beats").hidden = !d.beats.t.length && !d.series.a1.some((v) => v != null);
   drawPoincare(d.poincare);
   renderVt1(d);
+  renderDurability(d);
+  renderCheck(d);
+  renderWorkoutSteps(d);
+  renderEnv(d);
   makeSummaryCharts(d);
 }
 
@@ -444,6 +476,9 @@ function renderVt1(d) {
   if (!v) notes.push("Needs 10 min of steady riding with α1 after the first 10 min.");
   else {
     notes.push(`From ${fmt(v.minutes)} min of steady α1.`);
+    const v2 = d.vt2 && d.vt2[VT1.by];                             // the second threshold, alpha 1 = 0.5 (near FTP)
+    if (v2) notes.push(`VT2 (α1 0.5): ${v2.kind === "cross" ? `${fmt(v2.value)} ${unit}` : v2.kind === "between"
+      ? `between ${fmt(v2.value)} and ${fmt(v2.value2)} ${unit}` : `${v2.kind} ${fmt(v2.value)} ${unit}`}.`);
     if (v.beats_pct != null && v.beats_pct < 95)
       notes.push(`Only ${fmt(v.beats_pct)}% of beats arrived (Bluetooth): α1 reads high near 0.75, so VT1 is likely lower.`);
   }
@@ -634,25 +669,43 @@ $("sum-home").addEventListener("click", () => act("home"));
 $("sum-file").addEventListener("click", () => act("show_file"));
 $("sum-delete").addEventListener("click", (e) => { act("delete"); e.currentTarget.blur(); });
 
-// --------------------------------------------------------------------------- eFTP (eftp.py) on Home
+// --------------------------------------------------------------------------- eFTP (eftp.py) on Statistics
 // The critical power of your best 3-20 min efforts over 42 days, beside your FTP setting; the chart
 // is the evidence: your best power for each duration (dots, log time) and the model's curve.
 function drawEftp(prog, s) {
-  const e = prog.eftp || {}, f = e.current, ftp = s?.config?.ftp;
+  const e = prog.eftp || {}, cur = e.current, ftp = s?.config?.ftp;
+  const fit = cur?.cp_fit || null, f = fit;                      // the model drawn on the chart
   const q = $("ef-quality"), use = $("b-useftp");
-  $("ef-num").textContent = f ? fmt(f.cp) : "--";
-  q.hidden = !f;
-  if (f) { q.textContent = `${f.quality} fit`; q.className = `link${f.quality === "good" ? " ant" : ""}`; }
-  const diff = f && ftp ? f.cp - ftp : null;
-  $("ef-sub").innerHTML = f ? `W′ <b>${fmt(f.w_prime / 1000, 1)}</b> kJ · best 20 min ×0.95 <b>${fmt(f.best20_95)}</b> W` +
-    (diff != null ? ` · your FTP <b>${fmt(ftp)}</b> (${diff >= 0 ? "+" : "−"}${fmt(Math.abs(diff))})` : "") : "";
-  use.hidden = !f || (ftp && Math.abs(diff) < 3);
-  use.textContent = f ? `Use ${fmt(f.cp)} W as FTP` : "";
-  use.onclick = () => f && act("settings", { ftp: Math.round(f.cp) });
-  $("ef-note").textContent = !f
-    ? (e.best20 ? "Not enough hard efforts in the last 42 days: ride a few all-out 3–12 min efforts or a 20 min test." : "Builds from the power in your rides.")
-    : f.quality === "rough" ? "Your longer bests look easier than your short ones: an all-out 20 min (or 8–12 min) effort will sharpen it."
-    : f.quality === "fair" ? "From your best efforts of the last 42 days. More all-out efforts tighten it." : "From your best efforts of the last 42 days.";
+  const val = cur ? cur.ftp : null;
+  $("ef-num").textContent = val ? fmt(val) : "--";
+  q.hidden = !cur;
+  if (cur) {
+    q.textContent = cur.method === "ramp" ? "ramp test" : `${fit.quality} fit`;
+    q.className = `link${cur.method === "ramp" || fit?.quality === "good" ? " ant" : ""}`;
+  }
+  const diff = val && ftp ? val - ftp : null;
+  $("ef-sub").innerHTML = diff == null ? "" : `your FTP <b>${fmt(ftp)}</b> (${Math.abs(diff) < 1 ? "same" : `${diff >= 0 ? "+" : "−"}${fmt(Math.abs(diff))}`})`;
+  // every piece of evidence, the one in use marked: ramp test, HRV threshold (alpha 1 = 0.5), best efforts
+  const day = (iso) => SHORT_DAY.format(dayOf(iso));
+  $("ef-ev").innerHTML = (cur?.evidence || []).map((x) => {
+    const used = (x.kind === "ramp" && cur.method === "ramp") || (x.kind === "hrvt2" && cur.method === "hrvt2")
+      || (x.kind === "efforts" && cur.method === "cp");
+    if (x.kind === "ramp") return `<li class="${used ? "used" : ""}"><span>Ramp test, ${day(x.day)}: 75% of ${fmt(x.map)} W</span><b>${fmt(x.value)} W</b></li>`;
+    if (x.kind === "hrvt2") return `<li class="${used ? "used" : ""}${x.trusted ? "" : " weak"}"><span>HRV threshold (α1 0.5), ${day(x.day)}` +
+      `${x.trusted ? "" : `: only ${fmt(x.beats_pct)}% of beats, reads high`}</span><b>${x.bound === "above" ? "above " : ""}${fmt(x.value)} W</b></li>`;
+    return `<li class="${used ? "used" : ""}"><span>Best efforts, 42 days (${x.quality} fit)</span><b>${used ? "" : "at least "}${fmt(x.value)} W</b></li>`;
+  }).join("");
+  use.hidden = !cur || (ftp && Math.abs(diff) < 3);
+  use.textContent = cur ? `Use ${fmt(val)} W as FTP` : "";
+  use.onclick = () => cur && act("settings", { ftp: Math.round(val) });
+  $("ef-note").textContent = !cur
+    ? (e.best20 ? "Not enough hard efforts in the last 42 days: ride a ramp test, or all-out 3–12 min efforts or a 20 min test." : "Builds from the power in your rides.")
+    : cur.method === "ramp"
+      ? "From your ramp test. The HRV threshold needs a steady block near FTP with every beat: ride Threshold steps with the ANT+ strap."
+      : cur.method === "hrvt2" ? "Where α1 fell to 0.5 in a steady block: the second threshold, close to FTP."
+      : fit.quality === "rough" ? "Your longer bests look easier than your short ones: an all-out 20 min (or 8–12 min) effort will sharpen it."
+      : fit.quality === "fair" ? "Critical power of your best efforts in the last 42 days. More all-out efforts tighten it."
+      : "Critical power of your best efforts in the last 42 days.";
   // the power-duration curve, 1 min to 60 min on a log axis, with CP + W'/t through it
   const cv = $("ef-chart"), dpr = devicePixelRatio || 1, wd = cv.clientWidth, ht = cv.clientHeight;
   if (!wd || !ht) return;
@@ -664,7 +717,7 @@ function drawEftp(prog, s) {
   if (!pts.length) return;
   const lcd = THEME === "lcd", ml = 34, mr = 8, mt = 8, mb = 18, W = wd - ml - mr, H = ht - mt - mb;
   const t0 = Math.log(60), t1 = Math.log(3600);
-  const ps = pts.map(([, p]) => p).concat(f ? [f.cp, f.cp + f.w_prime / 150] : []);
+  const ps = pts.map(([, p]) => p).concat(f ? [f.cp, f.cp + f.w_prime / 150] : [], val ? [val] : []);
   const step = 25, y0 = Math.floor((Math.min(...ps) - 10) / step) * step, y1 = Math.ceil((Math.max(...ps) + 10) / step) * step;
   const X = (t) => ml + ((Math.log(t) - t0) / (t1 - t0)) * W, Y = (p) => mt + H - ((p - y0) / (y1 - y0)) * H;
   ctx.font = "11px Bahnschrift, 'Segoe UI', sans-serif"; ctx.strokeStyle = C.grid; ctx.fillStyle = C.dim; ctx.lineWidth = 1;
@@ -673,16 +726,16 @@ function drawEftp(prog, s) {
   for (let p = y0; p <= y1; p += ys) { ctx.beginPath(); ctx.moveTo(ml, Y(p)); ctx.lineTo(ml + W, Y(p)); ctx.stroke(); ctx.fillText(p, ml - 5, Y(p) + 4); }
   ctx.textAlign = "center";
   for (const [t, l] of [[60, "1 min"], [300, "5"], [1200, "20"], [3600, "60 min"]]) ctx.fillText(l, Math.min(ml + W - 16, Math.max(ml + 14, X(t))), ht - 4);
-  if (f) {                                                         // the model, and CP itself
+  if (f || val) {                                                  // eFTP, and the model through your efforts
     ctx.strokeStyle = lcd ? C.fg : C.warn; ctx.setLineDash([4, 4]);
-    ctx.beginPath(); ctx.moveTo(ml, Y(f.cp)); ctx.lineTo(ml + W, Y(f.cp)); ctx.stroke(); ctx.setLineDash([]);
-    ctx.strokeStyle = lcd ? C.fg : C.power; ctx.lineWidth = 2; ctx.beginPath();
+    ctx.beginPath(); ctx.moveTo(ml, Y(val)); ctx.lineTo(ml + W, Y(val)); ctx.stroke(); ctx.setLineDash([]);   // eFTP
+    if (f) { ctx.strokeStyle = lcd ? C.fg : C.power; ctx.lineWidth = 2; ctx.beginPath();
     const m0 = Math.log(150);                                      // the 2-parameter model only holds from a few minutes
     for (let k = 0; k <= 50; k++) {
       const t = Math.exp(m0 + ((t1 - m0) * k) / 50), p = f.cp + f.w_prime / t;
       k ? ctx.lineTo(X(t), Y(p)) : ctx.moveTo(X(t), Y(p));
     }
-    ctx.stroke();
+    ctx.stroke(); }
   }
   for (const [t, p] of pts) {                                      // your bests; filled = used in the fit
     const used = f && f.durations.includes(t);
@@ -690,4 +743,59 @@ function drawEftp(prog, s) {
     ctx.fillStyle = C.fg; ctx.strokeStyle = C.fg; ctx.lineWidth = 1.5;
     used ? ctx.fill() : ctx.stroke();
   }
+}
+
+// --------------------------------------------------------------------------- summary: conditions,
+// durability, the Fitness check and the workout's targets (checks.py, ride_summary._workout_steps)
+function renderEnv(d) {
+  const e = d.env || {};
+  if (document.activeElement?.closest?.("#sum-env")) return;
+  $("sum-temp").value = e.temp_c ?? "";
+  $("sum-rh").value = e.rh_pct ?? "";
+}
+for (const id of ["sum-temp", "sum-rh"]) {
+  $(id).addEventListener("change", () => {
+    const v = (x) => { const n = parseFloat($(x).value); return Number.isFinite(n) ? n : null; };
+    act("ride_meta", { temp_c: v("sum-temp"), rh_pct: v("sum-rh") });
+  });
+  $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") e.target.blur(); e.stopPropagation(); });
+}
+function renderDurability(d) {
+  const x = d.durability;
+  $("card-dur").hidden = !x;
+  if (!x) return;
+  const sc = $("dur-score");
+  sc.textContent = x.score; sc.className = `link${x.score === "good" ? " ant" : ""}`;
+  $("dur-stats").innerHTML = [
+    ovStat("HR drift", `${x.drift_pct > 0 ? "+" : ""}${x.drift_pct.toFixed(1)}`, "%"),
+    ovStat('<span class="greek">α</span>1 change', x.a1_drop == null ? "--" : `${x.a1_drop > 0 ? "−" : "+"}${Math.abs(x.a1_drop).toFixed(2)}`),
+    ovStat("Started fading", x.onset_min == null ? "never" : `${x.onset_min}`, x.onset_min == null ? "" : "min"),
+    ovStat("Heart rate", `${fmt(x.hr_first)}→${fmt(x.hr_last)}`, "bpm"),
+  ].join("");
+  $("dur-note").textContent = `First third against last third of ${fmt(x.minutes)} min of steady riding at about ${fmt(x.power)} W. ` +
+    "Good: heart rate drifted under 3 % against power and α1 held; poor: over 6 % or α1 fell by 0.2 or more.";
+}
+function renderCheck(d) {
+  const c = d.check;
+  $("card-check").hidden = !c;
+  if (!c) return;
+  $("check-table").innerHTML = `<tr><th></th><th>Power</th><th>HR</th><th>α1</th><th>RMSSD</th></tr>` +
+    c.steps.map((s, i) => `<tr><td>${esc(s.label || `Step ${i + 1}`)}</td><td class="n">${fmt(s.power)} W</td><td class="n">${fmt(s.hr)}</td>` +
+      `<td class="n">${fmt(s.a1, 2)}</td><td class="n">${s.rmssd == null ? "--" : s.rmssd.toFixed(1)}</td></tr>`).join("");
+  $("check-note").innerHTML = `Heart rate rises <b>${c.hr_b.toFixed(2)}</b> bpm per W` +
+    (c.hrr60 != null ? ` · recovery <b>${fmt(c.hrr60)}</b> bpm in 60 s` : "") +
+    `. The trend over your checks is on Statistics.`;
+}
+function renderWorkoutSteps(d) {
+  const ws = d.workout_steps;
+  $("card-wsteps").hidden = !ws;
+  if (!ws) return;
+  $("wsteps-table").innerHTML = `<tr><th>Step</th><th>Time</th><th>Target</th><th>Pedals</th><th>Off by</th></tr>` +
+    ws.map((x) => { const off = (100 * (x.actual - x.target)) / x.target;
+      return `<tr><td>${esc(x.label || `#${x.index + 1}`)}</td><td class="n">${minsec(x.seconds)}</td><td class="n">${fmt(x.target)} W</td>` +
+        `<td class="n">${fmt(x.actual)} W</td><td class="n">${off > 0 ? "+" : ""}${off.toFixed(1)}%</td></tr>`; }).join("");
+  const steady = ws.filter((x) => x.seconds >= 120);
+  const mean = steady.length ? steady.reduce((a, x) => a + (100 * (x.actual - x.target)) / x.target, 0) / steady.length : null;
+  $("wsteps-note").textContent = mean == null ? "" : `On average your pedals read ${Math.abs(mean).toFixed(1)}% ${mean >= 0 ? "above" : "below"} the trainer's target ` +
+    "(the first 20 s of each step left out while the trainer settles). Your rides are recorded from the pedals either way.";
 }

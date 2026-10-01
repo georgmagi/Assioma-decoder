@@ -650,9 +650,9 @@ function syncPrefs(p) {
 
 // one screen at a time: home, ride or summary (the Python side decides)
 function showScreen(name) {
-  for (const n of ["home", "workouts", "stats", "ride", "summary"]) $("scr-" + n).hidden = n !== name;
+  for (const n of ["home", "plan", "workouts", "stats", "ride", "summary"]) $("scr-" + n).hidden = n !== name;
   // the top bar on the pages; a ride (and a ride's summary) has the whole window
-  const page = ["home", "workouts", "stats"].includes(name);
+  const page = ["home", "plan", "workouts", "stats"].includes(name);
   $("topnav").hidden = !page && name !== "summary";
   for (const b of $("topnav").querySelectorAll("button[data-page]"))
     b.classList.toggle("on", b.dataset.page === (name === "summary" ? S.snap?.back_to : name));
@@ -690,11 +690,13 @@ function apply(s) {
     renderHome(s);
   } else if (s.screen === "summary") {
     showSummary(s.summary_id);
-    $("sum-home").textContent = { stats: "Statistics", workouts: "Workouts" }[s.back_to] || "Home";
+    $("sum-home").textContent = { stats: "Statistics", workouts: "Workouts", plan: "Plan" }[s.back_to] || "Home";
   } else if (s.screen === "stats") {
     showStats(s);
   } else if (s.screen === "workouts") {
     renderWorkoutsPage(s);
+  } else if (s.screen === "plan") {
+    showPlan(s);
   }
   if (s.closed) { $("offline").textContent = "Recorder closed. You can close this tab."; $("offline").hidden = false; }
 }

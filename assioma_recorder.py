@@ -346,6 +346,57 @@ class BleWorker(threading.Thread):
         self.status["trainer"] = ""
         self.ant = None                      # ANT+ heart rate (ant_hr.AntHrWorker), preferred over Bluetooth
         self.log_file = None
+        # each sensor's lifecycle, for the Connections pane: wanted or not; an attempt you started by
+        # clicking (a deadline: then "couldn't find it"); and the state shown
+        self.want = {"pedal": True, "hr": want_hr, "trainer": False}
+        self.attempt = {"pedal": None, "hr": None, "trainer": None}   # monotonic deadline of a clicked attempt
+        self.state = {"pedal": "searching", "hr": "searching" if want_hr else "off", "trainer": "off"}
+        self.note = {"pedal": "", "hr": "", "trainer": ""}
+
+    ATTEMPT_S = 20.0          # how long a clicked connect tries before saying it couldn't find the sensor
+    HINT = {"pedal": "Couldn't find the pedals: they sleep when still. Turn the cranks to wake them, then try again.",
+            "hr": "Couldn't find the strap: it sleeps without skin contact. Wet the pads, put it on, then try again.",
+            "trainer": "Couldn't find the trainer: is it plugged in, and closed in other apps? It takes one connection."}
+
+    def set_want(self, kind: str, on: bool) -> None:
+        """The Connections pane (from the app's thread): connect now, trying for ATTEMPT_S, or let go."""
+        self.want[kind] = on
+        if kind == "hr" and self.ant is not None:
+            self.ant.enabled = on
+        if on:
+            self.attempt[kind] = time.monotonic() + self.ATTEMPT_S
+            self.note[kind] = ""
+            if self.state[kind] != "connected":
+                self.state[kind] = "connecting"
+        else:
+            self.attempt[kind], self.state[kind], self.note[kind] = None, "off", ""
+            self.status[kind] = ""
+
+    def _waiting(self, kind: str, what: str) -> None:
+        """Between scans: 'connecting' while a clicked attempt runs, then 'couldn't find it' once it
+        runs out (and the search goes on quietly, so the sensor still connects once it wakes)."""
+        dl = self.attempt[kind]
+        if dl is not None and time.monotonic() > dl:
+            self.attempt[kind] = None
+            self.state[kind], self.note[kind] = "failed", self.HINT[kind]
+            self.status[kind] = "not found"
+            self.log(f"{kind}: not found within {self.ATTEMPT_S:.0f} s")
+        elif dl is not None:
+            self.state[kind], self.status[kind] = "connecting", f"looking for the {what}…"
+        elif self.state[kind] != "failed":
+            self.state[kind], self.status[kind] = "searching", f"waiting for the {what}…"
+
+    def _connected(self, kind: str, name: str) -> None:
+        self.state[kind], self.note[kind], self.attempt[kind] = "connected", "", None
+        self.status[kind] = f"connected: {name}"
+
+    def sensor(self, kind: str) -> dict:
+        """What the Connections pane shows: {state, status, link, note}."""
+        status, link = self.view(kind)
+        st = self.state[kind]
+        if kind == "hr" and self.want["hr"] and self._ant_has_hr() and self.ant.receiving():
+            st = "connected"
+        return {"state": st, "status": status, "link": link, "note": self.note[kind]}
 
     @staticmethod
     def _load_saved() -> str:
@@ -384,11 +435,15 @@ class BleWorker(threading.Thread):
         return self.status.get(kind, ""), self.link.get(kind, "")
 
     def run(self) -> None:
-        if self.want_hr:
+        self.want["trainer"] = self.want["trainer"] or self.want_trainer
+        if self.want["trainer"]:
+            self.state["trainer"] = "searching"
+        if True:                                      # the stick is opened even with the strap off: connecting it later is instant
             try:
                 import ant_hr
                 self.ant = ant_hr.AntHrWorker(self.q)
                 self.ant.log = self.log
+                self.ant.enabled = self.want["hr"]
                 self.ant.start()
             except Exception as e:
                 self.log(f"ANT+ not available: {type(e).__name__}: {e}")
@@ -408,11 +463,8 @@ class BleWorker(threading.Thread):
     async def _main(self) -> None:
         import bleak  # noqa: F401  (fail early with a clear message)
         self._scan_lock = asyncio.Lock()
-        jobs = [self._keep_connected("pedal", self._pick_pedal, [CPM_UUID, PRIVATE_UUID])]
-        if self.want_hr:
-            jobs.append(self._keep_connected("hr", self._pick_hr, [HR_UUID]))
-        if self.want_trainer:
-            jobs.append(self._keep_trainer())
+        jobs = [self._keep_connected("pedal", self._pick_pedal, [CPM_UUID, PRIVATE_UUID]),
+                self._keep_connected("hr", self._pick_hr, [HR_UUID]), self._keep_trainer()]
         await asyncio.gather(*jobs)
 
     def _pick_trainer(self, found: dict):
@@ -426,14 +478,21 @@ class BleWorker(threading.Thread):
         """The smart trainer: find it (FTMS service), connect, and let TrainerControl keep it on target.
         Anything that goes wrong only costs the trainer link (logged, shown, retried): never the ride."""
         from bleak import BleakClient, BleakScanner
-        self.status["trainer"] = "starting…"
         while not self._halt.is_set():
-            self.status["trainer"] = "searching for the trainer (one app at a time: close others)…"
+            if not self.want["trainer"]:
+                self.state["trainer"] = "off"
+                await asyncio.sleep(0.3)
+                continue
+            self._waiting("trainer", "trainer")
             async with self._scan_lock:
                 found = await BleakScanner.discover(timeout=5.0, return_adv=True)
+            if not self.want["trainer"]:
+                continue
             hit = self._pick_trainer(found)
             if not hit:
+                self._waiting("trainer", "trainer")
                 continue
+            self.state["trainer"] = "connecting"
             dev, adv = hit
             name = self._devname(dev, adv) or dev.address
             self.status["trainer"] = f"connecting to {name}…"
@@ -443,13 +502,13 @@ class BleWorker(threading.Thread):
                 async with BleakClient(dev, disconnected_callback=lambda _c: loop.call_soon_threadsafe(lost.set),
                                        timeout=20) as client:
                     self.log(f"trainer: connected to {name} ({dev.address})")
-                    self.status["trainer"] = f"connected: {name}"
+                    self._connected("trainer", name)
+                    let_go = lambda: self._halt.is_set() or not self.want["trainer"]
                     try:
-                        await self.trainer.run(client, lambda: client.is_connected and not lost.is_set(),
-                                               self._halt.is_set)
+                        await self.trainer.run(client, lambda: client.is_connected and not lost.is_set(), let_go)
                     finally:
-                        if self._halt.is_set():
-                            await self.trainer.release(client)      # hand it back (Reset) on the way out
+                        if let_go():
+                            await self.trainer.release(client)      # hand it back (Reset): closing, or let go
                     if lost.is_set():
                         self.log("trainer: disconnected")
             except Exception as e:
@@ -499,8 +558,8 @@ class BleWorker(threading.Thread):
         n = dec.Notification(utcnow(), short_uuid(str(sender.uuid)), bytes(data))
         now = time.monotonic()
         self.last_data["hr" if n.char == dec.HR_CHAR else "pedal"] = now
-        if n.char == dec.HR_CHAR and self._ant_has_hr():
-            return                        # ANT+ has the strap: don't count its beats twice
+        if n.char == dec.HR_CHAR and (self._ant_has_hr() or not self.want["hr"]):
+            return                        # ANT+ has the strap (don't count its beats twice), or it's off
         if n.char == dec.PRIVATE_CHAR:
             self._last_private = now
         if n.char in (dec.PRIVATE_CHAR, dec.CPM_CHAR) and self._held is not None:
@@ -510,20 +569,31 @@ class BleWorker(threading.Thread):
 
     async def _keep_connected(self, kind: str, pick, uuids: list) -> None:
         from bleak import BleakClient, BleakScanner
-        what = "pedals (pedal to wake them)" if kind == "pedal" else "heart-rate strap"
         while not self._halt.is_set():
+            if not self.want[kind]:
+                self.state[kind] = "off"
+                await asyncio.sleep(0.3)
+                continue
             if kind == "hr" and (self._ant_has_hr() or (self.ant is not None and self.ant.is_alive()
                                                           and self.ant.status.startswith("looking"))):
+                if self._ant_has_hr() and self.ant.receiving():
+                    self._connected("hr", self.ant.status.split(": ", 1)[-1])
+                else:
+                    self._waiting(kind, "strap")
                 await asyncio.sleep(0.5)          # ANT+ has the strap, or is still looking for the stick
                 continue
             if kind == "hr":
                 self.link[kind] = "Bluetooth"
-            self.status[kind] = f"searching for {what}…"
+            self._waiting(kind, "pedals" if kind == "pedal" else "strap")
             async with self._scan_lock:
                 found = await BleakScanner.discover(timeout=5.0, return_adv=True)
+            if not self.want[kind]:
+                continue
             hit = pick(found)
             if not hit:
+                self._waiting(kind, "pedals" if kind == "pedal" else "strap")
                 continue
+            self.state[kind] = "connecting"
             dev, adv = hit
             name = self._devname(dev, adv) or dev.address
             self.status[kind] = f"connecting to {name}…"
@@ -558,11 +628,14 @@ class BleWorker(threading.Thread):
                             self.q.put(n)
                         self._save(dev.address)
                         self.pedal_name = name
-                    self.status[kind] = f"connected: {name}"
+                    self._connected(kind, name)
                     self.log(f"{kind}: connected to {name} ({dev.address}), missing {missing or 'none'}")
                     since = time.monotonic()
                     while not self._halt.is_set() and not lost.is_set() and client.is_connected:
                         await asyncio.sleep(0.5)
+                        if not self.want[kind]:
+                            self.log(f"{kind}: disconnected (asked to)")
+                            break
                         if kind == "hr" and self._ant_has_hr():
                             self.log("hr: the ANT+ stick has the strap: Bluetooth disconnected")
                             break
@@ -579,7 +652,8 @@ class BleWorker(threading.Thread):
                 self.log(f"{kind}: {type(e).__name__}: {e}")
                 self.status[kind] = f"connection lost ({type(e).__name__}), retrying…"
                 await asyncio.sleep(2)
-            if not self._halt.is_set():
+            if not self._halt.is_set() and self.want[kind]:
+                self.state[kind] = "connecting"
                 self.status[kind] = "connection lost, reconnecting…"
 
 
