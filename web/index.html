@@ -8,31 +8,75 @@
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
+<nav class="topnav" id="topnav" hidden>
+  <span class="brand">Assioma</span>
+  <div class="tabs" role="tablist">
+    <button data-page="home" role="tab">Home</button>
+    <button data-page="workouts" role="tab">Workouts</button>
+    <button data-page="stats" role="tab">Statistics</button>
+  </div>
+  <div class="nav-go">
+    <button class="nav-wo" id="nav-wo" title="Change the workout"></button>
+    <button class="btn primary" id="b-start">Start ride</button>
+  </div>
+</nav>
+
 <div class="screen home" id="scr-home" hidden>
-  <section class="panel start">
-    <div class="panel-head"><h2>Next ride</h2></div>
-    <div class="sensors-list" id="home-sensors"></div>
-    <form class="settings" id="home-settings" onsubmit="return false">
-      <label><span>FTP</span><input id="set-ftp" type="number" min="50" max="600" step="1" inputmode="numeric"><span class="u">W</span></label>
-      <label><span>Threshold heart rate</span><input id="set-lthr" type="number" min="100" max="220" step="1" inputmode="numeric"><span class="u">bpm</span></label>
-      <label><span>Planned ride</span><input id="set-plan" type="number" min="10" max="600" step="5" inputmode="numeric"><span class="u">min</span></label>
-      <label class="switch"><span>Heart-rate strap</span><input id="set-hr" type="checkbox"><i></i></label>
-    </form>
-    <div class="go">
-      <button class="btn primary big" id="b-start">Start ride</button>
-      <p class="hint" id="home-hint">or just start pedalling</p>
+  <section class="panel hero">
+    <div class="hero-weeks">
+      <div class="panel-head">
+        <h2>Last 7 days</h2>
+        <div class="seg" id="hw-metric" role="group" aria-label="Measure"><button data-m="time_s">Time</button><button data-m="tss">TSS</button></div>
+      </div>
+      <p class="verdict" id="hw-verdict"></p>
+      <dl class="hero-now" id="hw-now"></dl>
+      <div class="hw-chart"><canvas id="hw-chart"></canvas></div>
+      <div class="hw-mix" id="hw-mix"></div>
+    </div>
+    <div class="hero-form" id="hero-form">
+      <span class="hf-lab">Form</span><span class="hf-num" id="hf-num">--</span>
+      <p class="hf-word" id="hf-word"></p>
+      <div class="hf-gauge" id="hf-gauge"></div>
+      <div class="hf-spark"><canvas id="hf-spark"></canvas></div>
+      <dl class="ov-stats hf-stats" id="hf-stats"></dl>
     </div>
   </section>
-  <section class="panel rides">
-    <div class="panel-head"><h2>Rides</h2><span class="count" id="rides-count"></span><button class="btn" id="b-progress">Progress</button></div>
-    <div class="table-wrap">
-      <table class="ride-table">
-        <thead><tr><th>Day</th><th>Start</th><th>Workout</th><th class="n">Time</th><th class="n">Avg W</th><th class="n">NP</th><th class="n">HR</th><th class="n"><span class="greek">α</span>1</th><th class="n">TSS</th><th></th></tr></thead>
-        <tbody id="ride-rows"></tbody>
-      </table>
-      <p class="empty-note" id="rides-empty" hidden>No rides yet. They'll show up here once you save one.</p>
-    </div>
-  </section>
+  <div class="home-row three">
+    <section class="panel ov-last" id="ov-last">
+      <div class="panel-head"><h2>Last ride</h2><span class="sub-title" id="ov-last-when"></span><button class="btn" id="b-last">Open</button></div>
+      <dl class="ov-stats" id="ov-last-stats"></dl>
+      <p class="empty-note" id="ov-last-empty" hidden>No rides yet. Your first one shows up here.</p>
+    </section>
+    <section class="panel ov-vt1">
+      <div class="panel-head">
+        <h2>VT1</h2><output class="readout" id="hv-readout"></output>
+        <div class="seg" id="hv-by" role="group" aria-label="VT1 by"><button data-by="hr">Heart rate</button><button data-by="power">Power</button></div>
+      </div>
+      <div class="vt1t-wrap"><canvas id="hv-chart"></canvas></div>
+      <p class="ov-note" id="hv-note"></p>
+    </section>
+    <section class="panel ov-eftp">
+      <div class="panel-head"><h2>eFTP</h2><em class="link" id="ef-quality"></em><button class="btn" id="b-useftp" hidden></button></div>
+      <div class="ef-top"><span class="num" id="ef-num">--</span><span class="unit">W</span><span class="ef-sub" id="ef-sub"></span></div>
+      <div class="ef-chart"><canvas id="ef-chart"></canvas></div>
+      <p class="ov-note" id="ef-note"></p>
+    </section>
+  </div>
+  <div class="home-row">
+    <section class="panel conn">
+      <div class="panel-head"><h2>Connections</h2></div>
+      <div class="dev-list" id="dev-list"></div>
+    </section>
+    <section class="panel set-panel">
+      <div class="panel-head"><h2>Your numbers</h2></div>
+      <form class="settings" id="set-form" onsubmit="return false">
+        <label><span>FTP</span><input id="set-ftp" type="number" min="50" max="600" step="1" inputmode="numeric"><span class="u">W</span></label>
+        <label><span>Threshold heart rate</span><input id="set-lthr" type="number" min="100" max="220" step="1" inputmode="numeric"><span class="u">bpm</span></label>
+        <label><span>VT1 heart rate</span><input id="set-vt1" type="number" min="90" max="210" step="1" inputmode="numeric" placeholder="auto"><span class="u">bpm</span></label>
+        <label><span>Planned ride</span><input id="set-plan" type="number" min="10" max="600" step="5" inputmode="numeric"><span class="u">min</span></label>
+      </form>
+    </section>
+  </div>
 </div>
 
 <div class="screen ride" id="scr-ride" hidden>
@@ -72,6 +116,26 @@
     <div class="sub" id="clock-sub">not started</div>
   </div>
 </header>
+
+<section class="panel wo-strip" id="wo-strip" hidden>
+  <div class="wo-now" id="wo-now"></div>
+  <div class="wo-mid">
+    <div class="wo-prof"><canvas id="wo-profile"></canvas></div>
+    <div class="wo-foot"><span id="wo-next"></span><span class="wo-trainer" id="wo-trainer"></span></div>
+  </div>
+  <div class="wo-ctl" id="wo-ctl">
+    <div class="wo-int" role="group" aria-label="Intensity">
+      <button class="btn" id="wo-down5" title="-5 %">−5</button><button class="btn" id="wo-down" title="-1 %">−</button>
+      <span id="wo-int">100%</span>
+      <button class="btn" id="wo-up" title="+1 %">+</button><button class="btn" id="wo-up5" title="+5 %">+5</button>
+    </div>
+    <div class="wo-btns">
+      <button class="btn" id="wo-skip">Skip step</button>
+      <button class="btn toggle" id="wo-erg">ERG on</button>
+      <button class="btn" id="wo-end">End workout</button>
+    </div>
+  </div>
+</section>
 
 <main>
   <section class="panel dyn" id="dyn">
@@ -165,6 +229,14 @@
       <div class="panel-head"><h2>Pedalling</h2></div>
       <table class="leg-table" id="sum-legs"></table>
     </section>
+    <section class="panel vt1-card" id="card-vt1">
+      <div class="panel-head"><h2>VT1</h2>
+        <div class="seg" id="vt1-by" role="group" aria-label="VT1 by"><button data-by="hr" class="on">Heart rate</button><button data-by="power">Power</button></div>
+      </div>
+      <div class="vt1-head" id="vt1-head"></div>
+      <div class="vt1-wrap"><canvas id="vt1-chart"></canvas></div>
+      <p class="pc" id="vt1-note"></p>
+    </section>
     <section class="panel" id="card-pc">
       <div class="panel-head"><h2>Beat to beat</h2></div>
       <div class="pc-wrap"><canvas id="poincare"></canvas></div>
@@ -173,10 +245,9 @@
   </div>
 </div>
 
-<div class="screen progress" id="scr-progress" hidden>
+<div class="screen progress" id="scr-stats" hidden>
   <div class="sum-head">
-    <button class="btn" id="prog-home">Home</button>
-    <h1>Progress</h1>
+    <h1>Statistics</h1>
     <dl class="totals" id="prog-totals"></dl>
   </div>
   <section class="panel pmc">
@@ -216,6 +287,44 @@
       <p class="wk-note" id="wk-note"></p>
     </section>
   </div>
+  <section class="panel vt1-trend">
+    <div class="panel-head">
+      <h2>VT1 over time</h2>
+      <output class="readout" id="vt1t-readout"></output>
+      <div class="seg" id="vt1t-by" role="group" aria-label="VT1 by"><button data-by="hr">Heart rate</button><button data-by="power">Power</button></div>
+    </div>
+    <div class="vt1t-wrap"><canvas id="vt1t-chart"></canvas></div>
+    <p class="wk-note" id="vt1t-note"></p>
+  </section>
+  <section class="panel rides">
+    <div class="panel-head"><h2>History</h2><span class="count" id="rides-count"></span></div>
+    <div class="table-wrap">
+      <table class="ride-table">
+        <thead><tr><th>Day</th><th>Start</th><th>Workout</th><th class="n">Time</th><th class="n">Avg W</th><th class="n">NP</th><th class="n">HR</th><th class="n"><span class="greek">α</span>1</th><th class="n">TSS</th><th></th></tr></thead>
+        <tbody id="ride-rows"></tbody>
+      </table>
+      <p class="empty-note" id="rides-empty" hidden>No rides yet. They'll show up here once you save one.</p>
+    </div>
+  </section>
+</div>
+
+<div class="screen workouts" id="scr-workouts" hidden>
+  <section class="panel wo-lib">
+    <div class="panel-head"><h2>Workouts</h2><span class="count" id="wo-count"></span></div>
+    <div class="wo-rows" id="wo-rows"></div>
+    <p class="hint">Add Zwift <code>.zwo</code> files to the <code>workouts</code> folder next to the app.</p>
+  </section>
+  <section class="panel wo-detail" id="wo-detail">
+    <div class="panel-head">
+      <h2 id="wd-name"></h2>
+      <button class="btn" id="wd-select">Use for next ride</button>
+      <button class="btn primary" id="wd-ride">Ride now</button>
+    </div>
+    <p class="wd-desc" id="wd-desc"></p>
+    <div class="wd-prof"><canvas id="wd-profile"></canvas></div>
+    <dl class="ov-stats wd-stats" id="wd-stats"></dl>
+    <div class="table-wrap"><table class="ride-table wd-steps"><thead><tr><th>#</th><th>Step</th><th class="n">Time</th><th class="n">Power</th><th class="n">% FTP</th></tr></thead><tbody id="wd-steps"></tbody></table></div>
+  </section>
 </div>
 
 <footer class="bar">
@@ -244,6 +353,7 @@
 <script src="dynamics.js"></script>
 <script src="app.js"></script>
 <script src="screens.js"></script>
+<script src="workout.js"></script>
 <script src="progress.js"></script>
 </body>
 </html>

@@ -10,9 +10,13 @@ const hm = (s) => `${Math.floor(s / 3600)}:${String(Math.floor(s / 60) % 60).pad
 const dayOf = (iso) => { const [y, m, d] = iso.split("-").map(Number); return new Date(y, m - 1, d); };
 const isoOf = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
-async function showProgress(s) {
+async function showStats(s) {
+  if (S.prevScreen !== "stats" || HOME.loadedFor !== s.rides_version) {     // the history
+    HOME.loadedFor = s.rides_version;
+    loadRides();
+  }
   // (re)load on arriving here, and when a ride was saved or deleted meanwhile; one fetch at a time
-  if (PROG.loading || (PROG.data && S.prevScreen === "progress" && PROG.version === s.rides_version)) return;
+  if (PROG.loading || (PROG.data && S.prevScreen === "stats" && PROG.version === s.rides_version)) return;
   PROG.version = s.rides_version;
   PROG.loading = true;
   try {
@@ -21,7 +25,7 @@ async function showProgress(s) {
   if (!PROG.month) PROG.month = dayOf(PROG.data.today);
   renderProgress();
 }
-function redrawProgress() { if (PROG.data && !$("scr-progress").hidden) renderProgress(); }
+function redrawProgress() { if (PROG.data && !$("scr-stats").hidden) renderProgress(); }
 
 function renderProgress() {
   const d = PROG.data, t = d.totals;
@@ -31,6 +35,7 @@ function renderProgress() {
   makePmc(d.pmc);
   renderCalendar();
   makeWeekly(d.weeks);
+  drawVt1Trend();
 }
 
 // ---- today's fitness, fatigue and form, and what the form means
@@ -200,4 +205,85 @@ for (const b of $("wk-metric").querySelectorAll("button")) {
     b.blur();
   });
 }
-$("prog-home").addEventListener("click", () => act("home"));
+
+// ---- VT1 ride by ride (vt1.py): a dot with its 80 % interval where alpha 1 crossed 0.75, a
+// triangle where the ride only gave a bound (pointing the way VT1 lies), a bar for "somewhere in
+// this gap". Click a mark to open the ride. One widget, on Statistics and on Home; they share the
+// heart rate / power choice.
+const VT1T = { by: store.get("vt1By", "hr"), all: [] };
+function vt1Trend(ids, height) {
+  const w = { ids, height, marks: [], data: null };
+  for (const b of $(ids.seg).querySelectorAll("button")) {
+    b.classList.toggle("on", b.dataset.by === VT1T.by);
+    b.addEventListener("click", () => {
+      VT1T.by = b.dataset.by; store.set("vt1By", VT1T.by);
+      for (const x of VT1T.all) {
+        for (const o of $(x.ids.seg).querySelectorAll("button")) o.classList.toggle("on", o.dataset.by === VT1T.by);
+        if (x.data) drawVt1Into(x);
+      }
+    });
+  }
+  const hitAt = (ev) => {
+    const r = ev.currentTarget.getBoundingClientRect(), mx = ev.clientX - r.left, my = ev.clientY - r.top;
+    return w.marks.find((m) => Math.abs(m.x - mx) < 9 && Math.abs(m.y - my) < 12);
+  };
+  $(ids.chart).addEventListener("click", (ev) => { const h = hitAt(ev); if (h && h.id) act("open", h.id); });
+  $(ids.chart).addEventListener("mousemove", (ev) => { ev.currentTarget.style.cursor = hitAt(ev) ? "pointer" : ""; });
+  w.draw = (data) => { w.data = data; drawVt1Into(w); };
+  VT1T.all.push(w);
+  return w;
+}
+function drawVt1Into(w) {
+  const d = w.data, cv = $(w.ids.chart), dpr = devicePixelRatio || 1, lcd = THEME === "lcd";
+  const by = VT1T.by, unit = by === "hr" ? "bpm" : "W";
+  const pts = (d.vt1 || []).filter((r) => r[by]);
+  const wd = cv.parentElement.clientWidth, ht = w.height;
+  if (!wd) return;
+  cv.style.width = wd + "px"; cv.style.height = ht + "px";
+  cv.width = Math.round(wd * dpr); cv.height = Math.round(ht * dpr);
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, wd, ht);
+  w.marks = [];
+  const crosses = pts.filter((r) => r[by].kind === "cross");
+  const last = crosses[crosses.length - 1];
+  $(w.ids.readout).innerHTML = last ? `latest <b>${fmt(last[by].value)}</b> ${unit} (${SHORT_DAY.format(dayOf(last.day))})` : "";
+  $(w.ids.note).textContent = !pts.length
+    ? "Each ride with a heart-rate strap and α1 adds a point here. A crossing needs a steady block hard enough to take α1 under 0.75."
+    : `${crosses.length} of ${pts.length} rides crossed 0.75; the others only show which side of it they stayed.`;
+  if (!pts.length) return;
+  const vals = pts.flatMap((r) => [r[by].value, r[by].value2, r[by].lo, r[by].hi].filter((v) => v != null));
+  const step = by === "hr" ? 5 : 25;
+  const y0 = Math.floor((Math.min(...vals) - step) / step) * step, y1 = Math.ceil((Math.max(...vals) + step) / step) * step;
+  const t1 = dayOf(d.today).getTime(), t0 = Math.min(dayOf(pts[0].day).getTime(), t1 - 28 * 86400e3) - 2 * 86400e3;
+  const ml = 40, mr = 14, mt = 10, mb = 24, W = wd - ml - mr, H = ht - mt - mb;
+  const X = (t) => ml + ((t - t0) / (t1 + 86400e3 - t0)) * W, Y = (v) => mt + H - ((v - y0) / (y1 - y0)) * H;
+  ctx.font = "11px Bahnschrift, 'Segoe UI', sans-serif";
+  ctx.strokeStyle = C.grid; ctx.fillStyle = C.dim; ctx.lineWidth = 1; ctx.textAlign = "right";
+  const ystep = (y1 - y0) / step > 6 ? step * 2 : step;
+  for (let v = y0; v <= y1; v += ystep) {
+    ctx.beginPath(); ctx.moveTo(ml, Y(v)); ctx.lineTo(ml + W, Y(v)); ctx.stroke();
+    ctx.fillText(v, ml - 6, Y(v) + 4);
+  }
+  ctx.textAlign = "center";                                          // a date label every week or so
+  const days = (t1 - t0) / 86400e3, every = days > 120 ? 28 : days > 50 ? 14 : 7;
+  for (let t = dayOf(d.today).getTime(); t >= t0; t -= every * 86400e3) ctx.fillText(SHORT_DAY.format(new Date(t)), X(t + 43200e3), mt + H + 16);
+  const ink = lcd ? C.fg : C.a1;
+  for (const r of pts) {
+    const e = r[by], x = X(dayOf(r.day).getTime() + 43200e3);
+    ctx.strokeStyle = ctx.fillStyle = ink; ctx.lineWidth = 1.5;
+    if (e.kind === "cross") {
+      if (e.lo != null) { ctx.beginPath(); ctx.moveTo(x, Y(e.lo)); ctx.lineTo(x, Y(e.hi)); ctx.stroke(); }
+      ctx.beginPath(); ctx.arc(x, Y(e.value), 4.5, 0, 2 * Math.PI); ctx.fill();
+    } else if (e.kind === "between") {
+      ctx.setLineDash([2, 3]); ctx.beginPath(); ctx.moveTo(x, Y(e.value)); ctx.lineTo(x, Y(e.value2)); ctx.stroke(); ctx.setLineDash([]);
+      for (const v of [e.value, e.value2]) { ctx.beginPath(); ctx.moveTo(x - 4, Y(v)); ctx.lineTo(x + 4, Y(v)); ctx.stroke(); }
+    } else {
+      const up = e.kind === "above", y = Y(e.value), k = up ? -1 : 1;  // a bound: an open triangle pointing the way VT1 lies
+      ctx.beginPath(); ctx.moveTo(x, y + k * 6); ctx.lineTo(x - 5, y - k * 3); ctx.lineTo(x + 5, y - k * 3); ctx.closePath(); ctx.stroke();
+    }
+    w.marks.push({ x, y: Y(e.value), id: r.id });
+  }
+}
+const VT1_STATS = vt1Trend({ chart: "vt1t-chart", readout: "vt1t-readout", note: "vt1t-note", seg: "vt1t-by" }, 240);
+function drawVt1Trend() { if (PROG.data) VT1_STATS.draw(PROG.data); }

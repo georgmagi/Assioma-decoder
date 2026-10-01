@@ -104,17 +104,26 @@ function renderTiles(s) {
   $("hr").style.color = bpm ? C.hr : C.fg;
   const hrSub = $("hr-sub");
   const warn = s.strap && s.strap.warn;
-  hrSub.textContent = !s.strap ? "" : warn || `RR ${fmt(h.rr)} ms`;
-  hrSub.classList.toggle("warn", !!warn);
+  // the Z2 guard: your 30-s heart rate against your own VT1 (recorder_app Engine._guard)
+  const g = s.guard, gs = g && g.ref && g.state;
+  hrSub.textContent = !s.strap ? "" : warn ? warn
+    : gs === "above" ? (g.headroom != null && g.headroom < 0 ? `${fmt(-g.headroom)} above VT1 ${fmt(g.ref.hr)}` : `α1 says above VT1`)
+    : gs ? `${fmt(g.headroom)} below VT1 ${fmt(g.ref.hr)}` : `RR ${fmt(h.rr)} ms`;
+  hrSub.classList.toggle("warn", !!warn || gs === "near");
+  hrSub.classList.toggle("bad", !warn && gs === "above");
+  $("t-hr").classList.toggle("over", !warn && gs === "above");
 
   const a1 = h.alpha1, a1Sub = $("a1-sub");
   $("a1").textContent = fmt(a1, 2);
   $("a1").style.color = alphaColour(a1, h.art);
   const partial = (h.cov ?? 100) < 97;             // beats missing from the strap: read α1 with care
+  const low = g ? g.a1_low_s : 0, aboveS = g && g.ref ? g.above_s : 0;
   a1Sub.textContent = a1 == null ? (h.note || "")
+    : low >= 30 ? `under 0.75 for ${minsec(low)}`
     : partial ? `${fmt(h.cov)}% of beats · art ${fmt(h.art, 1)}%`
+    : aboveS >= 60 ? `${minsec(aboveS)} above VT1 · art ${fmt(h.art, 1)}%`
     : `RMSSD ${fmt(h.rmssd, 1)} · art ${fmt(h.art, 1)}%`;
-  a1Sub.classList.toggle("warn", a1 != null && partial);
+  a1Sub.classList.toggle("warn", a1 != null && (partial || low >= 30));
 
   const r = s.ride;
   $("clock").textContent = r.clock;
@@ -138,8 +147,9 @@ showPowerMode();
 // --------------------------------------------------------------------------- heartbeats in the HR tile
 // One faint full-height line per beat, sliding in at the right edge and drifting left over 2 s, the
 // newest brighter; a dot in the corner pulses as each beat comes in. The right edge shows
-// "now - 0.55 s": the strap reports a beat up to ~0.5 s late, so every beat enters at the edge.
-const STRIP = { span: 2.0, delay: 0.55, glow: 0.6, edge: null, pulseAt: -1 };
+// "now - 0.4 s": a beat is stamped when it arrives (ANT+: within ~0.25 s of the beat) and the page
+// fetches every 0.25 s, so every beat still enters at the edge.
+const STRIP = { span: 2.0, delay: 0.4, glow: 0.6, edge: null, pulseAt: -1 };
 function drawBeats() {
   const cv = $("beats"), s = S.snap, now = serverNow();
   const dpr = window.devicePixelRatio || 1;
@@ -433,6 +443,22 @@ function makeCharts() {
     u.ctx.fillStyle = C.z2;
     u.ctx.fillRect(u.bbox.left, y1, u.bbox.width, y0 - y1);
   };
+  const vt1Line = (u) => {                                         // your VT1 heart rate (the Z2 guard)
+    const ref = S.snap?.guard?.ref;
+    if (!ref) return;
+    if (ref.lo != null) {
+      const y1 = u.valToPos(ref.hi, "hr", true), y0 = u.valToPos(ref.lo, "hr", true);
+      u.ctx.fillStyle = blend(C.hr, C.panel, 0.9);
+      u.ctx.fillRect(u.bbox.left, y1, u.bbox.width, y0 - y1);
+    }
+    hline(u, "hr", ref.hr, blend(C.hr, C.panel, 0.4), true);
+    const dpr = devicePixelRatio || 1;
+    u.ctx.save();
+    u.ctx.font = `${11 * dpr}px Bahnschrift, 'Segoe UI', sans-serif`;
+    u.ctx.fillStyle = blend(C.hr, C.panel, 0.25); u.ctx.textAlign = "left";
+    u.ctx.fillText(`VT1 ${Math.round(ref.hr)}`, u.bbox.left + 6 * dpr, u.valToPos(ref.hr, "hr", true) - 4 * dpr);
+    u.ctx.restore();
+  };
   const thresholds = (u) => {                                      // 0.75 ≈ VT1, 0.5 ≈ VT2
     hline(u, "a1", 0.75, blend(C.good, C.panel, 0.45), true);
     hline(u, "a1", 0.5, blend(C.bad, C.panel, 0.45), true);
@@ -457,7 +483,7 @@ function makeCharts() {
       { scale: "pw", stroke: C.power, width: 2.25, paths: smooth, points: { show: false },                       // 10 s
         ...(lcd ? { fill: dither } : {}) },                   // LCD: a dithered area, told apart from HR by fill
       { scale: "hr", stroke: C.hr, width: lcd ? 2 : 2.25, paths: smooth, points: { show: false } }],
-    hooks: { drawClear: [drawZ2], setCursor: [readout] },
+    hooks: { drawClear: [drawZ2, vt1Line], setCursor: [readout] },
   }, [G.x, G.pw, G.pa, hrLine()], elP);
   plots.beats = new uPlot({
     ...common(elB),
@@ -519,11 +545,12 @@ for (const b of $("views").querySelectorAll("button")) {
 // --------------------------------------------------------------------------- bottom bar
 function renderBar(s) {
   const box = $("sensors");
-  box.replaceChildren(...s.sensors.map(({ label, status }) => {
+  box.hidden = s.screen !== "ride" && !s.error;     // the pages have the Connections pane on Home
+  box.replaceChildren(...s.sensors.map(({ label, status, link }) => {
     const ok = status.startsWith("connected");
     const el = document.createElement("span");
     el.className = "sensor" + (ok ? " ok" : "");
-    el.innerHTML = `<i class="dot"></i><b></b><span></span>`;
+    el.innerHTML = `<i class="dot"></i><b></b><span></span>${linkTag(link)}`;
     el.querySelector("b").textContent = label;
     el.querySelector("span").textContent = ok && status.includes(": ") ? status.split(": ")[1] : status;
     return el;
@@ -623,8 +650,15 @@ function syncPrefs(p) {
 
 // one screen at a time: home, ride or summary (the Python side decides)
 function showScreen(name) {
-  for (const n of ["home", "ride", "summary", "progress"]) $("scr-" + n).hidden = n !== name;
+  for (const n of ["home", "workouts", "stats", "ride", "summary"]) $("scr-" + n).hidden = n !== name;
+  // the top bar on the pages; a ride (and a ride's summary) has the whole window
+  const page = ["home", "workouts", "stats"].includes(name);
+  $("topnav").hidden = !page && name !== "summary";
+  for (const b of $("topnav").querySelectorAll("button[data-page]"))
+    b.classList.toggle("on", b.dataset.page === (name === "summary" ? S.snap?.back_to : name));
 }
+for (const b of $("topnav").querySelectorAll("button[data-page]"))
+  b.addEventListener("click", () => { act("nav", b.dataset.page); b.blur(); });
 function apply(s) {
   if (!s || !s.screen) return;
   if (s.pn != null) {
@@ -645,8 +679,10 @@ function apply(s) {
   showScreen(s.screen);
   renderBar(s);
   renderDialog(s);
+  if (!$("topnav").hidden) renderNavStart(s);
   if (s.screen === "ride" && s.ride) {
     renderTiles(s);
+    renderWorkout(s);
     renderDyn(s);
     $("z2-key").hidden = !s.config.ftp;
     if (s.pn != null) renderGraph();
@@ -654,9 +690,11 @@ function apply(s) {
     renderHome(s);
   } else if (s.screen === "summary") {
     showSummary(s.summary_id);
-    $("sum-home").textContent = s.back_to === "progress" ? "Progress" : "Home";
-  } else if (s.screen === "progress") {
-    showProgress(s);
+    $("sum-home").textContent = { stats: "Statistics", workouts: "Workouts" }[s.back_to] || "Home";
+  } else if (s.screen === "stats") {
+    showStats(s);
+  } else if (s.screen === "workouts") {
+    renderWorkoutsPage(s);
   }
   if (s.closed) { $("offline").textContent = "Recorder closed. You can close this tab."; $("offline").hidden = false; }
 }
@@ -684,9 +722,9 @@ document.addEventListener("keydown", (e) => {
   if (e.target.closest?.("input, textarea")) return;               // typing in the settings
   if (e.code === "Space") {
     e.preventDefault();
-    if (S.snap?.screen === "home") act("start");
+    if (["home", "workouts"].includes(S.snap?.screen)) act("start");
     else if (S.snap?.screen === "ride" && !S.snap?.dialog) act("toggle");
-  } else if (e.key === "Escape" && (S.snap?.screen === "summary" || S.snap?.screen === "progress")) {
+  } else if (e.key === "Escape" && S.snap?.screen === "summary") {
     act("home");
   } else if (e.key === "F11") {
     e.preventDefault();

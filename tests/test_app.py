@@ -142,11 +142,14 @@ def test_deleting_a_ride_from_its_summary_asks_first(tmp_path):
     assert not os.listdir(tmp_path / ".cache")
 
 
-def test_rides_can_be_deleted_from_the_list_and_the_list_learns_of_it(tmp_path):
+def test_rides_can_be_deleted_from_the_history_and_the_list_learns_of_it(tmp_path):
     e = _engine(tmp_path)
     s = _ride(e, 30)
     _stop_and_save(e)
     e._do("home")
+    e._do("delete", os.path.basename(s.base))                    # not from the home page
+    assert e.dialog is None
+    e._do("nav", "stats")
     version = e.rides_version
     ride = os.path.basename(s.base)
     e._do("delete", "../settings")                               # only ride ids
@@ -167,19 +170,46 @@ def test_theme_span_and_power_mode_are_remembered(tmp_path):
     assert app.load_settings(path) == {**app.SETTINGS_DEFAULTS, "theme": "lcd", "span": 0, "power3s": True}
 
 
-def test_progress_opens_rides_and_their_summary_goes_back_there(tmp_path):
+def test_statistics_opens_rides_and_their_summary_goes_back_there(tmp_path):
     e = _engine(tmp_path)
     s = _ride(e, 30)
     _stop_and_save(e)
     e._do("home")
-    e._do("progress")
-    assert e.screen == "progress"
+    e._do("nav", "stats")
+    assert e.screen == "stats"
     e._do("open", os.path.basename(s.base))
-    assert e.screen == "summary" and e.back_to == "progress"
+    assert e.screen == "summary" and e.back_to == "stats"
     e._do("home")
-    assert e.screen == "progress"
+    assert e.screen == "stats"
     e._do("home")
     assert e.screen == "home"
+
+
+def test_pages_are_reachable_but_never_mid_ride(tmp_path):
+    e = _engine(tmp_path)
+    for page in ("workouts", "stats", "home"):
+        e._do("nav", page)
+        assert e.screen == page
+    for bad in ("ride", "settings"):                              # not pages
+        e._do("nav", bad)
+        assert e.screen == "home"
+    e._do("nav", "workouts")
+    _ride(e, 5)                                                   # a ride can start from Workouts
+    e._do("nav", "stats")
+    assert e.screen == "ride"
+    e._do("connect", {"device": "trainer", "on": True})          # nor reconnect sensors mid-ride
+    assert not e.settings["trainer"]
+
+
+def test_connections_pane_switches_the_strap_and_trainer(tmp_path):
+    e = _engine(tmp_path)
+    before = FakeWorker.made
+    e._do("connect", {"device": "trainer", "on": True})
+    assert e.settings["trainer"] and FakeWorker.made == before + 1          # reconnected with it
+    e._do("connect", {"device": "hr", "on": False})
+    assert not e.settings["hr"] and FakeWorker.made == before + 2
+    e._do("connect", {"device": "pedals", "on": False})                     # the pedals are always on
+    assert FakeWorker.made == before + 2
 
 
 def test_only_rides_in_the_folder_can_be_opened(tmp_path):
@@ -244,3 +274,105 @@ def test_http_api_state_rides_and_buttons(tmp_path):
         srv.shutdown()
         e.quit.set()
         e.join(2)
+
+
+def test_z2_guard_against_your_vt1(tmp_path):
+    e = _engine(tmp_path, vt1_hr=150)                       # set by hand: wins over the rides
+    s = _ride(e, 0)
+    s.t0 = s.started
+    for i in range(60):
+        s._second({"time": s.started + timedelta(seconds=i), "power_w": 180, "heart_rate_bpm": 155})
+    now = s.started + timedelta(seconds=60)
+    for hr, state in ((155, "above"), (148, "near"), (140, "below")):
+        s.live_hr[:] = [(t, hr) for t in range(30, 61)]
+        g = e._guard(s, now, alpha1=1.0, coverage=100)
+        assert g["state"] == state and g["ref"]["hr"] == 150 and abs(g["headroom"] - (150 - hr)) < 1e-9
+    assert g["above_s"] == 60                                # the ride's seconds above VT1
+    # alpha 1 under 0.75 for 30 s says "above" whatever the heart rate says; not with too few beats
+    assert e._guard(s, now, alpha1=0.7, coverage=100)["state"] == "below"
+    assert e._guard(s, now + timedelta(seconds=31), alpha1=0.7, coverage=100)["state"] == "above"
+    assert e._guard(s, now + timedelta(seconds=40), alpha1=0.7, coverage=80)["a1_low_s"] == 0
+
+
+def test_vt1_reference_comes_from_your_latest_crossing(tmp_path, monkeypatch):
+    rides = [{"start_utc": "2026-10-02T07:00:00+00:00", "vt1_hr": {"kind": "above", "value": 150}},
+             {"start_utc": "2026-10-01T07:00:00+00:00", "vt1_hr": {"kind": "cross", "value": 158.4, "lo": 156, "hi": 161}},
+             {"start_utc": "2026-09-20T07:00:00+00:00", "vt1_hr": {"kind": "cross", "value": 163}}]
+    monkeypatch.setattr(rs, "ride_list", lambda folder, ftp=None: rides)
+    e = _engine(tmp_path)
+    e.vt1_ref()                                              # found in the background
+    for _ in range(100):
+        if e._vt1_auto:
+            break
+        threading.Event().wait(0.02)
+    ref = e.vt1_ref()
+    assert ref["hr"] == 158.4 and ref["lo"] == 156 and ref["day"] == "2026-10-01" and ref["source"] == "ride"
+    e._do("settings", {"vt1_hr": 155})
+    assert e.vt1_ref() == {"hr": 155, "source": "setting"}
+    e._do("settings", {"vt1_hr": 300})                       # out of range: ignored
+    assert e.settings["vt1_hr"] == 155
+
+
+class _Trainer:
+    want = None
+    controlled, error, power_w = True, "", None
+
+
+def _pedal(s, secs, watts=150):
+    """Notifications' worth of pedal power up to now (what _pedalling looks at)."""
+    now = (app.utcnow() - s.t0).total_seconds()
+    s.live_power[:] = [(now - secs + k * 0.25, watts, watts) for k in range(int(secs * 4) + 1)]
+
+
+def test_workout_drives_the_trainer_safely(tmp_path):
+    e = _engine(tmp_path)                                    # FTP 200
+    e.worker.trainer = _Trainer()
+    e._do("workout", "vt1-steps")
+    assert e.workout_id == "vt1-steps"
+    s = _ride(e, 0)
+    s.t0 = app.utcnow()
+    _pedal(s, 1)                                             # just started pedalling: not yet
+    e._drive_trainer()
+    assert e.worker.trainer.want == ("sim", 0.0)
+    _pedal(s, 2.5)                                           # 2 s of pedalling: ERG on, warm-up at 45 %
+    e._drive_trainer()
+    kind, w = e.worker.trainer.want
+    assert kind == "erg" and abs(w - 90) < 1e-6
+    e._do("wo_nudge", 5)
+    e._drive_trainer()
+    assert abs(e.worker.trainer.want[1] - 94.5) < 1e-6
+    e._do("wo_skip")
+    e._drive_trainer()
+    assert abs(e.worker.trainer.want[1] - 0.60 * 200 * 1.05) < 1e-6
+    s.live_power[:] = []                                     # stopped pedalling: flat at once
+    e._drive_trainer()
+    assert e.worker.trainer.want == ("sim", 0.0)
+    _pedal(s, 3)
+    e._drive_trainer()
+    e._do("stop")                                            # paused while deciding: flat
+    e._drive_trainer()
+    assert e.worker.trainer.want == ("sim", 0.0) and e.dialog == "finish"
+    e._do("resume"); _pedal(s, 3)
+    e._drive_trainer()
+    assert e.worker.trainer.want[0] == "erg"
+    e.player.shift = 10_000                                  # past the end: done, flat
+    e._drive_trainer()
+    assert e.player is None and e.workout_done and e.worker.trainer.want == ("sim", 0.0)
+
+
+def test_leaving_a_ride_never_leaves_erg_on_and_no_ftp_no_workout(tmp_path):
+    e = _engine(tmp_path)
+    e.worker.trainer = _Trainer()
+    e._do("workout", "vo2-5x4")
+    s = _ride(e, 5)
+    s.t0 = app.utcnow()
+    _pedal(s, 3); e._drive_trainer()
+    assert e.worker.trainer.want[0] == "erg"
+    e._do("stop"); e._do("discard"); e._do("discard_confirm")
+    assert e.screen == "home" and e.worker.trainer.want == ("sim", 0.0)
+    e2 = _engine(tmp_path, ftp=None)
+    e2._do("workout", "vo2-5x4")
+    _ride(e2, 0)
+    assert e2.player is None and "FTP" in e2.error
+    e2._do("workout", "../../etc")                          # only known workouts
+    assert e2.workout_id == "vo2-5x4" or e2.workout_id is None

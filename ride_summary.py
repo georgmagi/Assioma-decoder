@@ -21,7 +21,9 @@ from datetime import datetime, timedelta, timezone
 from statistics import median
 from typing import Optional
 
+import eftp
 import hrv
+import vt1
 
 SUFFIX = "_per_second.csv"
 ZONES = [(0.55, "Z1"), (0.75, "Z2"), (0.90, "Z3"), (1.05, "Z4"), (1.20, "Z5"), (float("inf"), "Z6")]  # Coggan
@@ -29,7 +31,7 @@ ZONES = [(0.55, "Z1"), (0.75, "Z2"), (0.90, "Z3"), (1.05, "Z4"), (1.20, "Z5"), (
 # Z4 95-105 %, Z5 106 % and up
 HR_ZONES = [(0.685, "Z1"), (0.835, "Z2"), (0.945, "Z3"), (1.055, "Z4"), (float("inf"), "Z5")]
 TEXT = {"time", "rider_position", "rr_ms"}
-SUMMARY_VERSION = 3                     # bump when the cached short summary changes
+SUMMARY_VERSION = 6                     # bump when the cached short summary changes
 
 
 def load(path: str) -> list[dict]:
@@ -196,20 +198,24 @@ def summarize(rows: list[dict], ftp: Optional[float] = None, lthr: Optional[floa
             **_decoupling(power, hr),
         },
         "best": {str(s): _best(power, s) for s in (5, 60, 300, 1200)},
+        "mmp": eftp.mmp(power),
         "zones": zone_s, "hr_zones": hr_zone_s, "a1_bands": a1_bands,
         "legs": legs,
         "series": {"t": ts, "power": power, "hr": hr, "cadence": cad, "a1": a1},
         "beats": {"t": beat_t, "rr": [round(b.rr, 1) for b in beats], "artifact": [bool(b.artifact) for b in beats]},
         "poincare": _poincare(clean),
+        "vt1": vt1.estimate(rows),
     }
 
 
 def short(s: dict) -> dict:
     """The few numbers the ride list shows."""
-    st = s["stats"]
+    st, v = s["stats"], s.get("vt1") or {}
+    brief = lambda e: e and {k: e[k] for k in ("kind", "value", "value2", "lo", "hi") if k in e}
     return {"v": SUMMARY_VERSION, "start_utc": s["start_utc"], **{k: st[k] for k in
             ("ride_s", "elapsed_s", "avg_power", "np", "avg_hr", "avg_a1", "tss", "if", "ftp", "work_kj",
-             "decoupling_pct")}}
+             "decoupling_pct")}, "vt1_hr": brief(v.get("hr")), "vt1_power": brief(v.get("power")),
+            "vt1_beats_pct": v.get("beats_pct"), "zones": s["zones"], "mmp": s["mmp"]}
 
 
 # --------------------------------------------------------------------------- #

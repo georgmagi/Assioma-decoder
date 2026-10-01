@@ -28,6 +28,7 @@ from typing import Iterable, Iterator, Optional
 PRIVATE_CHAR = "2701000A-489A-4A48-9DA8-80097E460D77"
 CPM_CHAR = "2A63"
 HR_CHAR = "2A37"
+ANT_HR_CHAR = "ANT+2A37"     # heart rate from the ANT+ stick (ant_hr.py), already exact: no repeat filter
 
 DEG_PER_UNIT = 360 / 256
 RIDER_POSITION = {0: "seated", 1: "to_seated", 2: "standing", 3: "to_standing"}
@@ -269,6 +270,8 @@ class Decoder:
             return [{"time": n.time, **parse_frame(f)} for f in self._slip.feed(n.data)]
         if n.char == CPM_CHAR:
             return [{"time": n.time, **parse_cpm(n.data)}]
+        if n.char == ANT_HR_CHAR and len(n.data) >= 2:
+            return [{"time": n.time, **parse_hr(n.data)}]
         if n.char == HR_CHAR and len(n.data) >= 2:
             r = {"time": n.time, **parse_hr(n.data)}
             if "rr_ms" in r:

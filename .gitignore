@@ -5,3 +5,7 @@ __pycache__/
 .pytest_cache/
 CLAUDE.md
 settings.json
+
+# the built app (build_exe.py)
+*.exe
+build/

@@ -17,6 +17,8 @@ from __future__ import annotations
 from datetime import date, datetime, timedelta
 from typing import Optional
 
+import eftp
+
 CTL_DAYS, ATL_DAYS = 42, 7
 
 
@@ -84,10 +86,16 @@ def progress(rides: list[dict], today: Optional[date] = None) -> dict:
     by_day: dict = {}
     for r in sorted(rides, key=lambda r: r["start_utc"]):
         by_day.setdefault(local_day(r["start_utc"]).isoformat(), []).append(
-            {k: r.get(k) for k in ("id", "start_utc", "ride_s", "tss", "np", "avg_hr", "work_kj")})
+            {k: r.get(k) for k in ("id", "start_utc", "ride_s", "tss", "np", "avg_hr", "work_kj", "zones")})
+    # VT1 ride by ride (vt1.py): crossings and bounds, oldest first
+    vt1 = [{"id": r.get("id"), "day": local_day(r["start_utc"]).isoformat(), "hr": r.get("vt1_hr"),
+            "power": r.get("vt1_power"), "beats_pct": r.get("vt1_beats_pct")}
+           for r in sorted(rides, key=lambda r: r["start_utc"]) if r.get("vt1_hr") or r.get("vt1_power")]
     return {
         "today": today.isoformat(),
         "days": by_day,
+        "vt1": vt1,
+        "eftp": eftp.history(rides, today, lambda r: local_day(r["start_utc"])),
         "weeks": weeks(rides, today),
         "pmc": pmc(rides, today),
         "totals": {"rides": len(rides), "time_s": sum(r.get("ride_s") or 0 for r in rides),

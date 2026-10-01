@@ -1,20 +1,17 @@
 #!/usr/bin/env python3
 """
-Assioma Recorder: live display + FIT recording for Favero Assioma pedals.
+Assioma recording core: a ride (Session: raw log, per-second CSV, live stats, HRV, FIT on finish),
+the sensor connections (BleWorker: the left pedal over Bluetooth, heart rate over ANT+ or
+Bluetooth) and a replay of a log for testing. The app (recorder_app.py) is built on these.
 
-Connects to the left pedal over Bluetooth, shows power, cadence, L/R
-balance, Cycling Dynamics, heart rate, RR intervals and DFA alpha 1 live, and saves the ride as
-a FIT file with Cycling Dynamics that Garmin Connect / intervals.icu read.
+From the command line it converts logs to FIT:
 
-    python assioma_recorder.py                 record (pedals only)
-    python assioma_recorder.py --hr            also connect a Bluetooth heart-rate strap
     python assioma_recorder.py --from-nrf LOG.csv --date 2026-09-28
                                                convert an nRF Connect log to FIT
     python assioma_recorder.py --rebuild rides/ride_..._raw.csv
                                                rebuild a FIT from a raw log (e.g. after a crash)
 
 Read-only: it only subscribes to notifications and never writes to the pedals.
-Needs: Python 3.10+ and `pip install bleak` (only for live recording).
 """
 from __future__ import annotations
 
@@ -22,8 +19,8 @@ import argparse
 import asyncio
 import csv
 import os
-import sys
 import queue
+import sys
 import threading
 import time
 from datetime import datetime, timedelta, timezone
@@ -33,15 +30,16 @@ from typing import Optional
 
 import assioma_decoder as dec
 import fit_writer
+import ftms
 import hrv
-from dashboard import fmt, run_gui
 
 _BASE = "-0000-1000-8000-00805f9b34fb"
 CPM_UUID = "00002a63" + _BASE
 HR_UUID = "00002a37" + _BASE
 HR_SERVICE = "0000180d" + _BASE
 PRIVATE_UUID = dec.PRIVATE_CHAR.lower()
-HERE = os.path.dirname(os.path.abspath(__file__))
+# your files (rides, settings, the pedal address) live next to the code, or next to the .exe
+HERE = os.path.dirname(sys.executable if getattr(sys, "frozen", False) else os.path.abspath(__file__))
 PEDAL_FILE = os.path.join(HERE, "left_pedal_address.txt")
 CSV_COLUMNS = ["time"] + dec.SECOND_COLUMNS + ["rr_ms"] + hrv.COLUMNS
 
@@ -341,6 +339,12 @@ class BleWorker(threading.Thread):
         self._held: Optional[list] = None    # pedal data held back while checking which pedal it is
         self._saved = self._load_saved()     # address of the left pedal from earlier rides
         self.last_data = {"pedal": 0.0, "hr": 0.0}   # monotonic time of each sensor's last notification
+        self.link = {"pedal": "Bluetooth", "hr": "", "trainer": "Bluetooth"}  # how each is connected, for the screen
+        # the smart trainer (FTMS): connected only when asked for; the app sets trainer.want
+        self.want_trainer = False
+        self.trainer = ftms.TrainerControl(log=self.log)
+        self.status["trainer"] = ""
+        self.ant = None                      # ANT+ heart rate (ant_hr.AntHrWorker), preferred over Bluetooth
         self.log_file = None
 
     @staticmethod
@@ -362,8 +366,32 @@ class BleWorker(threading.Thread):
 
     def stop(self) -> None:
         self._halt.set()
+        if self.ant is not None:
+            self.ant.stop()
+
+    ANT_GRACE_S = 15          # after the ANT+ stick opens, Bluetooth HR waits this long for the strap
+
+    def _ant_has_hr(self) -> bool:
+        """Heart rate comes over ANT+ (lossless RR) while the stick hears the strap, and for a moment
+        after the stick opens; otherwise over Bluetooth."""
+        a = self.ant
+        return a is not None and a.stick and (a.receiving() or time.monotonic() - a.opened < self.ANT_GRACE_S)
+
+    def view(self, kind: str) -> tuple:
+        """(status, link) of a sensor for the screen; heart rate straight from ANT+ while it has it."""
+        if kind == "hr" and self._ant_has_hr():
+            return self.ant.status, "ANT+"
+        return self.status.get(kind, ""), self.link.get(kind, "")
 
     def run(self) -> None:
+        if self.want_hr:
+            try:
+                import ant_hr
+                self.ant = ant_hr.AntHrWorker(self.q)
+                self.ant.log = self.log
+                self.ant.start()
+            except Exception as e:
+                self.log(f"ANT+ not available: {type(e).__name__}: {e}")
         try:
             from bleak.backends.winrt.util import uninitialize_sta   # Windows only; harmless elsewhere
             uninitialize_sta()
@@ -383,7 +411,52 @@ class BleWorker(threading.Thread):
         jobs = [self._keep_connected("pedal", self._pick_pedal, [CPM_UUID, PRIVATE_UUID])]
         if self.want_hr:
             jobs.append(self._keep_connected("hr", self._pick_hr, [HR_UUID]))
+        if self.want_trainer:
+            jobs.append(self._keep_trainer())
         await asyncio.gather(*jobs)
+
+    def _pick_trainer(self, found: dict):
+        c = [(d, a) for d, a in found.values()
+             if ftms.FTMS_SERVICE in [u.lower() for u in (a.service_uuids or [])]
+             and "assioma" not in self._devname(d, a).lower()]
+        c = sorted(c, key=lambda x: x[1].rssi or -999, reverse=True)
+        return c[0] if c else None
+
+    async def _keep_trainer(self) -> None:
+        """The smart trainer: find it (FTMS service), connect, and let TrainerControl keep it on target.
+        Anything that goes wrong only costs the trainer link (logged, shown, retried): never the ride."""
+        from bleak import BleakClient, BleakScanner
+        self.status["trainer"] = "starting…"
+        while not self._halt.is_set():
+            self.status["trainer"] = "searching for the trainer (one app at a time: close others)…"
+            async with self._scan_lock:
+                found = await BleakScanner.discover(timeout=5.0, return_adv=True)
+            hit = self._pick_trainer(found)
+            if not hit:
+                continue
+            dev, adv = hit
+            name = self._devname(dev, adv) or dev.address
+            self.status["trainer"] = f"connecting to {name}…"
+            loop = asyncio.get_running_loop()
+            lost = asyncio.Event()
+            try:
+                async with BleakClient(dev, disconnected_callback=lambda _c: loop.call_soon_threadsafe(lost.set),
+                                       timeout=20) as client:
+                    self.log(f"trainer: connected to {name} ({dev.address})")
+                    self.status["trainer"] = f"connected: {name}"
+                    try:
+                        await self.trainer.run(client, lambda: client.is_connected and not lost.is_set(),
+                                               self._halt.is_set)
+                    finally:
+                        if self._halt.is_set():
+                            await self.trainer.release(client)      # hand it back (Reset) on the way out
+                    if lost.is_set():
+                        self.log("trainer: disconnected")
+            except Exception as e:
+                self.log(f"trainer: {type(e).__name__}: {e}")
+                self.status["trainer"] = f"trainer link lost ({type(e).__name__}), retrying…"
+                await asyncio.sleep(2)
+            self.trainer.controlled = False
 
     @staticmethod
     def _devname(dev, adv) -> str:
@@ -426,6 +499,8 @@ class BleWorker(threading.Thread):
         n = dec.Notification(utcnow(), short_uuid(str(sender.uuid)), bytes(data))
         now = time.monotonic()
         self.last_data["hr" if n.char == dec.HR_CHAR else "pedal"] = now
+        if n.char == dec.HR_CHAR and self._ant_has_hr():
+            return                        # ANT+ has the strap: don't count its beats twice
         if n.char == dec.PRIVATE_CHAR:
             self._last_private = now
         if n.char in (dec.PRIVATE_CHAR, dec.CPM_CHAR) and self._held is not None:
@@ -437,6 +512,12 @@ class BleWorker(threading.Thread):
         from bleak import BleakClient, BleakScanner
         what = "pedals (pedal to wake them)" if kind == "pedal" else "heart-rate strap"
         while not self._halt.is_set():
+            if kind == "hr" and (self._ant_has_hr() or (self.ant is not None and self.ant.is_alive()
+                                                          and self.ant.status.startswith("looking"))):
+                await asyncio.sleep(0.5)          # ANT+ has the strap, or is still looking for the stick
+                continue
+            if kind == "hr":
+                self.link[kind] = "Bluetooth"
             self.status[kind] = f"searching for {what}…"
             async with self._scan_lock:
                 found = await BleakScanner.discover(timeout=5.0, return_adv=True)
@@ -482,6 +563,9 @@ class BleWorker(threading.Thread):
                     since = time.monotonic()
                     while not self._halt.is_set() and not lost.is_set() and client.is_connected:
                         await asyncio.sleep(0.5)
+                        if kind == "hr" and self._ant_has_hr():
+                            self.log("hr: the ANT+ stick has the strap: Bluetooth disconnected")
+                            break
                         # watchdog: connected but silent (both sensors notify at least ~1/s) -> reconnect
                         quiet = time.monotonic() - max(self.last_data[kind], since)
                         if quiet > self.SILENT_S:
@@ -533,60 +617,25 @@ class ReplayWorker(threading.Thread):
 # --------------------------------------------------------------------------- #
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--hr", action="store_true", help="also connect a Bluetooth heart-rate strap")
-    ap.add_argument("--pedal", default="", help="only use a pedal whose name contains this (e.g. 12345)")
-    ap.add_argument("--hr-name", default="", help="only use a HR strap whose name contains this")
-    ap.add_argument("--out", default=os.path.join(HERE, "rides"), help="folder for recordings")
-    ap.add_argument("--ftp", type=float, default=None, help="your FTP in W: shades the Z2 band (56-75 %%) on the power graph")
-    ap.add_argument("--plan", type=float, default=60, help="planned ride length in minutes: the ride overview's axis (default 60)")
-    ap.add_argument("--from-nrf", metavar="LOG", help="convert an nRF Connect log to FIT and exit")
+    ap.add_argument("--from-nrf", metavar="LOG", help="convert an nRF Connect log to FIT")
     ap.add_argument("--date", help="date of the nRF log (YYYY-MM-DD)")
     ap.add_argument("--utc-offset", type=float, default=None, help="hours ahead of UTC (default: this computer's)")
-    ap.add_argument("--rebuild", metavar="RAW", help="rebuild FIT from a recorder raw log and exit")
-    ap.add_argument("--replay", metavar="LOG", help="test the window by replaying an nRF log")
-    ap.add_argument("--speed", type=float, default=1.0, help="replay speed")
+    ap.add_argument("--rebuild", metavar="RAW", help="rebuild FIT from a recorder raw log")
     args = ap.parse_args()
-    offset = local_utc_offset_h() if args.utc_offset is None else args.utc_offset
-
-    if args.from_nrf or args.rebuild:
-        if args.from_nrf:
-            if not args.date:
-                ap.error("--from-nrf needs --date")
-            notes = dec.read_nrf_log(args.from_nrf, args.date, offset)
-            base = os.path.splitext(args.from_nrf)[0]
-        else:
-            notes = read_raw_log(args.rebuild)
-            base = args.rebuild[:-8] if args.rebuild.endswith("_raw.csv") else os.path.splitext(args.rebuild)[0]
-        path, s, n = convert(notes, base)
-        print(f"{n} s ({n / 60:.0f} min), avg {fmt(s['avg_power'])} W, NP {fmt(s['np'])} W -> {path}")
-        return
-
-    q: queue.Queue = queue.Queue()
-    session = Session(args.out)
-    if args.replay:
+    if args.from_nrf:
         if not args.date:
-            ap.error("--replay needs --date")
-        worker = ReplayWorker(q, list(dec.read_nrf_log(args.replay, args.date, offset)), args.speed)
+            ap.error("--from-nrf needs --date")
+        offset = local_utc_offset_h() if args.utc_offset is None else args.utc_offset
+        notes = dec.read_nrf_log(args.from_nrf, args.date, offset)
+        base = os.path.splitext(args.from_nrf)[0]
+    elif args.rebuild:
+        notes = read_raw_log(args.rebuild)
+        base = args.rebuild[:-8] if args.rebuild.endswith("_raw.csv") else os.path.splitext(args.rebuild)[0]
     else:
-        worker = BleWorker(q, args.hr, args.pedal, args.hr_name)
-    # a log per ride: connection events, and on a hard crash (e.g. a Tcl "Fatal Error") the stack
-    # of every thread, written by faulthandler before the process dies
-    log = open(session.base + "_log.txt", "a", buffering=1)
-    import faulthandler
-    faulthandler.enable(log, all_threads=True)
-    worker.log_file = log
-    worker.log(f"recorder started, {sys.version.split()[0]}, bleak {getattr(sys.modules.get('bleak'), '__version__', '?')}")
-    worker.start()
-    try:
-        run_gui(session, worker, q, utcnow, args.ftp, args.plan)
-    finally:
-        worker.stop()
-        worker.join(timeout=6)          # let it disconnect before the interpreter shuts down
-        worker.log("recorder closed")
-        if not session._raw.closed:     # window crashed: still save what we have
-            result = session.finish()
-            if result:
-                print("saved", result[0])
+        ap.error("nothing to do: record with start_app.bat, or use --from-nrf / --rebuild")
+    path, s, n = convert(notes, base)
+    fmt = lambda v: "-" if v is None else f"{v:.0f}"
+    print(f"{n} s ({n / 60:.0f} min), avg {fmt(s['avg_power'])} W, NP {fmt(s['np'])} W -> {path}")
 
 
 if __name__ == "__main__":
