@@ -20,7 +20,9 @@ function drawProfile(cv, steps, opts = {}) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, w, h);
   const total = steps.reduce((a, s) => a + s[0], 0) || 1;
-  const top = Math.max(1.2, ...steps.map((s) => Math.max(s[1] ?? 0, s[2] ?? 0)));
+  // fill: the highest step reaches the top (the ride strip); otherwise a fixed 120 % scale
+  const peak = Math.max(0, ...steps.map((s) => Math.max(s[1] ?? 0, s[2] ?? 0)));
+  const top = opts.fill ? Math.max(0.5, peak) * 1.04 : Math.max(1.2, peak);
   const X = (t) => (t / total) * w, Y = (f) => h - (f / top) * (h - 2);
   let t = 0;
   for (const [dur, lo, hi] of steps) {
@@ -114,12 +116,12 @@ function renderWorkout(s) {
   $("wo-ctl").hidden = false;
   const tgt = w.target, pct = tgt != null && w.ftp ? Math.round((100 * tgt) / w.ftp) : null;
   $("wo-now").innerHTML =
-    `<span class="wo-step">${esc(w.label || `Step ${w.index + 1}`)} · ${minsec(Math.max(0, w.left))} left</span>` +
+    `<span class="wo-step">${esc(w.label || `Step ${w.index + 1}`)} · <b>${minsec(Math.max(0, w.left))}</b></span>` +
     `<span class="wo-target">${tgt == null ? "free ride" : `<span class="num">${fmt(tgt)}</span><span class="unit">W</span>` +
       `<span class="pct">${pct}%</span>`}</span>`;
   const n = w.next;
-  $("wo-next").innerHTML = n ? `Next <b>${minsec(n.dur)}</b> ${n.lo == null ? "free ride"
-    : `at <b>${fmt(n.lo * w.ftp * w.intensity)}${n.hi !== n.lo ? `–${fmt(n.hi * w.ftp * w.intensity)}` : ""}</b> W`}${n.label ? ` · ${esc(n.label)}` : ""}`
+  $("wo-next").innerHTML = n ? `Next ${n.lo == null ? "free"
+    : `<b>${fmt(n.lo * w.ftp * w.intensity)}${n.hi !== n.lo ? `–${fmt(n.hi * w.ftp * w.intensity)}` : ""}</b> W`} · ${minsec(n.dur)}`
     : "Last step";
   $("wo-int").textContent = `${Math.round(w.intensity * 100)}%`;
   const erg = $("wo-erg");
@@ -127,27 +129,26 @@ function renderWorkout(s) {
   erg.classList.toggle("on", w.erg);
   const ceil = $("wo-ceil");
   ceil.classList.toggle("on", !!w.ceiling);
-  ceil.textContent = w.ceiling && w.cap < 1 ? `VT1 ceiling −${Math.round((1 - w.cap) * 100)}%` : "VT1 ceiling";
+  ceil.textContent = w.ceiling && w.cap < 1 ? `VT1 cap −${Math.round((1 - w.cap) * 100)}%` : "VT1 cap";
   const tr = w.trainer;
   $("wo-trainer").textContent = !s.settings.trainer ? "trainer not used"
     : !tr ? "" : tr.error ? tr.error
-    : tr.controlled ? (w.erg && tgt != null ? (w.ceiling && w.cap < 1 ? `held under VT1: ${fmt(tgt * w.cap)} W` : "trainer holding target") : "trainer riding flat")
+    : tr.controlled ? (w.erg && tgt != null ? (w.ceiling && w.cap < 1 ? `held under VT1: ${fmt(tgt * w.cap)} W` : "trainer holding") : "trainer flat")
     : "waiting for the trainer…";
   $("wo-trainer").classList.toggle("warn", !!(tr && tr.error) || (s.settings.trainer && tr && !tr.controlled));
-  drawProfile($("wo-profile"), w.steps, { at: w.t, ftpLine: true });
+  drawProfile($("wo-profile"), w.steps, { at: w.t, ftpLine: true, fill: true });
 }
 
-for (const [id, name, arg] of [["wo-down5", "wo_nudge", -5], ["wo-down", "wo_nudge", -1], ["wo-up", "wo_nudge", 1],
-                               ["wo-up5", "wo_nudge", 5], ["wo-skip", "wo_skip"], ["wo-erg", "wo_erg"], ["wo-ceil", "wo_ceiling"]]) {
+for (const [id, name, arg] of [["wo-down", "wo_nudge", -1], ["wo-up", "wo_nudge", 1], ["wo-skip", "wo_skip"], ["wo-erg", "wo_erg"], ["wo-ceil", "wo_ceiling"]]) {
   $(id).addEventListener("click", (e) => { act(name, arg); e.currentTarget.blur(); });
 }
 // ending the workout takes a second click within 3 s (a stray click mid-interval shouldn't end it)
 $("wo-end").addEventListener("click", (e) => {
   const b = e.currentTarget;
   b.blur();
-  if (b.classList.contains("confirm")) { b.classList.remove("confirm"); b.textContent = "End workout"; act("wo_end"); return; }
-  b.classList.add("confirm"); b.textContent = "Click again to end";
-  setTimeout(() => { b.classList.remove("confirm"); b.textContent = "End workout"; }, 3000);
+  if (b.classList.contains("confirm")) { b.classList.remove("confirm"); b.textContent = "End"; act("wo_end"); return; }
+  b.classList.add("confirm"); b.textContent = "Sure?";
+  setTimeout(() => { b.classList.remove("confirm"); b.textContent = "End"; }, 3000);
 });
 
 // ---- the builder: the shorthand (workout.parse_text) with a live preview, saved as a .zwo file

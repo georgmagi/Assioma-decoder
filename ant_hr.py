@@ -40,6 +40,9 @@ OPEN, CLOSE, EXT_RX, LIB_CONFIG = 0x4B, 0x4C, 0x66, 0x6E
 BROADCAST, CHANNEL_EVENT = 0x4E, 0x40
 EV_SEARCH_TIMEOUT, EV_RX_FAIL, EV_CLOSED, EV_GO_TO_SEARCH = 0x01, 0x02, 0x07, 0x08
 RECEIVE_ONLY = 0x40
+# ANT+ manufacturer ids (HR data page 2), to tell the straps apart: a Garmin strap's beat times are
+# smoothed in exercise (ride_summary.smoothed_rr), a Polar H10's are not
+MANUFACTURERS = {1: "Garmin", 32: "Wahoo", 123: "Polar", 263: "Coospo"}
 MAX_LEN = 41                                             # longest message data (ANT spec)
 
 
@@ -179,6 +182,7 @@ class AntHrWorker(threading.Thread):
         self.last_data = 0.0                      # monotonic time of the last HR message
         self.device: Optional[int] = None         # the strap's ANT+ device number
         self.enabled = True                       # the strap is wanted (Connections pane): else nothing is sent
+        self.maker: Optional[str] = None          # from data page 2, e.g. "Garmin", "Polar"
         self.log = lambda text: None
         self._halt = threading.Event()
         self._dev = None
@@ -259,7 +263,13 @@ class AntHrWorker(threading.Thread):
                             self.device = dev_no
                             self.log(f"ANT+: strap #{dev_no}")
                     self.last_data = now = time.monotonic()
-                    self.status = f"connected: strap #{self.device}" if self.device else "connected: ANT+ strap"
+                    if page[0] & 0x7F == 2:                # manufacturer page: id, serial
+                        maker = MANUFACTURERS.get(page[1], f"maker {page[1]}")
+                        if maker != self.maker:
+                            self.maker = maker
+                            self.log(f"ANT+: strap made by {maker}")
+                    who = f"{self.maker} strap" if self.maker else "strap"
+                    self.status = f"connected: {who} #{self.device}" if self.device else f"connected: ANT+ {who}"
                     bpm = page[7] or bpm
                     rr = beats.feed(page)
                     if self.enabled and (rr or now - last_sent >= 1.0):

@@ -28,7 +28,8 @@ from typing import Iterable, Iterator, Optional
 PRIVATE_CHAR = "2701000A-489A-4A48-9DA8-80097E460D77"
 CPM_CHAR = "2A63"
 HR_CHAR = "2A37"
-ANT_HR_CHAR = "ANT+2A37"     # heart rate from the ANT+ stick (ant_hr.py), already exact: no repeat filter
+ANT_HR_CHAR = "ANT+2A37"
+BLE_HR_SECOND = "2A37/BLE"   # the same strap over Bluetooth while ANT+ is the source: kept for comparison (linkcheck.py)     # heart rate from the ANT+ stick (ant_hr.py), already exact: no repeat filter
 
 DEG_PER_UNIT = 360 / 256
 RIDER_POSITION = {0: "seated", 1: "to_seated", 2: "standing", 3: "to_standing"}

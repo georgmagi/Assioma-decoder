@@ -54,6 +54,27 @@ def test_fitness_check_line_and_recovery():
     assert checks.fitness_check(rows, {"workout": {"id": "vo2-5x4"}}) is None
 
 
+def test_fitness_check_leaves_out_skipped_steps():
+    # 5 Oct: Skip pressed through the warm-up and 60-70 %, ridden from 75 %: those steps must not
+    # borrow the 75 % step's last 3 minutes
+    w = wk.BUILT_IN["vt1-steps"]["steps"]
+    log, t, power, hr = [[0, 0, 1.0]], 0, [], []
+    for i, st in enumerate(w):
+        if i in (1, 2, 3):
+            t += 1
+            log.append([t, i, 1.0])
+            continue
+        if i:
+            log.append([t, i, 1.0])
+        for k in range(st["dur"] if i else 3):
+            power.append(st["lo"] * 200)
+            hr.append(60 + 0.1 * st["lo"] * 200)
+        t += st["dur"] if i else 3
+    meta = {"workout": {"id": "vt1-steps", "log": log, "steps": [[st["dur"], st["lo"], st["hi"], st["label"]] for st in w]}}
+    rows = _rows(power, hr)
+    assert checks.fitness_check(rows, meta) is None                               # only 75 and 80 % ridden
+
+
 def test_heat_model_learns_bpm_per_degree_and_corrects_the_trend():
     rides = []
     for k, temp in enumerate((18, 20, 22, 24, 26, 19)):

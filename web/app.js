@@ -147,9 +147,25 @@ showPowerMode();
 // --------------------------------------------------------------------------- heartbeats in the HR tile
 // One faint full-height line per beat, sliding in at the right edge and drifting left over 2 s, the
 // newest brighter; a dot in the corner pulses as each beat comes in. The right edge shows
-// "now - 0.4 s": a beat is stamped when it arrives (ANT+: within ~0.25 s of the beat) and the page
-// fetches every 0.25 s, so every beat still enters at the edge.
-const STRIP = { span: 2.0, delay: 0.4, glow: 0.6, edge: null, pulseAt: -1 };
+// "now - delay": a beat is stamped when it arrives (ANT+: within ~0.25 s of the beat) and the page
+// sees it one fetch later. The delay is learnt: the longest of the last 20 beats' wait for the page,
+// plus 30 ms, so every beat still enters at the edge and none waits longer than it has to.
+const STRIP = { span: 2.0, delay: 0.4, glow: 0.6, edge: null, pulseAt: -1, seen: null, lags: [], at: null };
+function learnDelay(s, now) {
+  for (const [t] of s.beats) {
+    if (STRIP.seen != null && t < STRIP.seen - 10) STRIP.seen = null;   // a new session: times start again
+    if (STRIP.seen != null && t <= STRIP.seen) continue;
+    STRIP.seen = t;
+    STRIP.lags.push(Math.max(0, now - t));
+    if (STRIP.lags.length > 20) STRIP.lags.shift();
+  }
+  const dt = STRIP.at == null ? 0 : Math.min(0.1, performance.now() / 1000 - STRIP.at);
+  STRIP.at = performance.now() / 1000;
+  if (STRIP.lags.length < 5) return;
+  const want = Math.min(0.6, Math.max(0.12, Math.max(...STRIP.lags) + 0.03));
+  // up at once (a beat would appear past the edge), down slowly (no visible jump)
+  STRIP.delay = want > STRIP.delay ? want : STRIP.delay + (want - STRIP.delay) * Math.min(1, dt * 0.5);
+}
 function drawBeats() {
   const cv = $("beats"), s = S.snap, now = serverNow();
   const dpr = window.devicePixelRatio || 1;
@@ -161,6 +177,7 @@ function drawBeats() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, w, hgt);
   if (!s || !s.strap || now == null || s.ride.state === "finished") return;
+  learnDelay(s, now);
   const warn = !!s.strap.warn;
   const rad = 12, xa = rad, xb = w - rad, speed = (xb - xa) / STRIP.span;
   const edge = now - STRIP.delay, tw = Math.max(1, hgt * 0.012);
@@ -679,6 +696,7 @@ function apply(s) {
   showScreen(s.screen);
   renderBar(s);
   renderDialog(s);
+  renderMorningRun(s);
   if (!$("topnav").hidden) renderNavStart(s);
   if (s.screen === "ride" && s.ride) {
     renderTiles(s);

@@ -203,7 +203,7 @@ def forecast(rides: list, days: list, today: date) -> dict:
     return {"actual": p, "plan": out}
 
 
-def status_text(progress: dict, rides: list, settings: dict, over: Optional[dict]) -> str:
+def status_text(progress: dict, rides: list, settings: dict, over: Optional[dict], morning: Optional[dict] = None) -> str:
     """What to paste when asking Claude for the next block: the numbers that matter, plainly."""
     def f(v, nd=0):
         return "--" if v is None else (f"{v:.{nd}f}" if isinstance(v, (int, float)) else str(v))
@@ -230,6 +230,11 @@ def status_text(progress: dict, rides: list, settings: dict, over: Optional[dict
     if fc.get("checks"):
         lines.append(f"- Weekly checks (HR at {fc['ref_w']} W, 20 C-corrected where known): " + ", ".join(
             f"{c['day']} {f(c['hr_ref_20c'] or c['hr_ref'])} bpm (recovery {f(c['hrr60'])})" for c in fc["checks"][-4:]))
+    if morning and morning.get("days"):
+        last = morning["days"][-7:]
+        lines.append("- Morning HRV (ln RMSSD / resting HR, last checks): " + ", ".join(
+            f"{x['date']} {x['ln_rmssd']:.2f} / {f(x['hr'])}" for x in last)
+            + (f"; reading: {morning['verdict'][1]}" if morning.get("verdict") else ""))
     eff = [x for x in progress.get("efficiency") or [] if x.get("ef")]
     if eff:
         lines.append("- Z2 efficiency (W per bpm, last rides): " + ", ".join(f"{x['day']} {x['ef']:.2f}" for x in eff[-5:]))

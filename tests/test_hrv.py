@@ -115,3 +115,35 @@ def test_coverage_flags_beats_the_strap_never_sent():
     cov = sum(seen.coverage) / len(seen.coverage)
     assert 80 < cov < 92, cov                     # about 86 % of the beats arrive
     assert "rr_coverage_pct" in seen.columns_at(seen.series[-1][0])
+
+
+def test_a_misplaced_beat_is_split_evenly_not_left_in():
+    # 160 bpm, ~3 ms beat-to-beat: one R peak timed 50 ms early (short then long, same sum)
+    import random
+    from datetime import datetime, timedelta
+    rnd = random.Random(3)
+    rr = [375 + rnd.gauss(0, 2) for _ in range(300)]
+    rr[150] -= 50
+    rr[151] += 50
+    t, h = datetime(2026, 10, 5, 21), hrv.HrvTracker()
+    for x in rr:
+        t += timedelta(milliseconds=x)
+        h.add(t, [x])
+    h._judge(final=True)
+    b = h.beats
+    assert b[150].corrected and b[151].corrected and abs(b[150].rr - b[151].rr) < 1e-9
+    assert sum(x.corrected for x in b) == 2 and not any(x.artifact for x in b)
+    assert abs((b[151].time - b[149].time).total_seconds() * 1000 - (rr[150] + rr[151])) < 1e-3
+
+
+def test_resting_variability_is_left_alone():
+    # breathing at rest swings RR by ~±60 ms beat to beat: none of that is a misplaced beat
+    import math
+    from datetime import datetime, timedelta
+    rr = [1000 + 60 * math.sin(2 * math.pi * k / 4.3) for k in range(400)]
+    t, h = datetime(2026, 10, 6, 7), hrv.HrvTracker()
+    for x in rr:
+        t += timedelta(milliseconds=x)
+        h.add(t, [x])
+    h._judge(final=True)
+    assert not any(x.corrected for x in h.beats)

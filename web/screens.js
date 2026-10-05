@@ -8,7 +8,7 @@
 const HOME = { rides: null, loadedFor: null, settingsKey: "", prog: null, progFor: null };
 const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 // how a sensor is connected: ANT+ or Bluetooth
-const linkTag = (link) => link ? `<em class="link${link === "ANT+" ? " ant" : ""}">${esc(link)}</em>` : "";
+const linkTag = (link) => link ? `<em class="link${link.startsWith("ANT+") ? " ant" : ""}">${esc(link)}</em>` : "";
 const DAY = new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short" });
 const TIME = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
 const ovStat = (label, value, unit = "") =>
@@ -74,11 +74,82 @@ function renderConnections(s) {
 function renderHome(s) {
   renderConnections(s);
   renderSettings(s);
+  if (HOME.mcFor !== s.morning_version || S.prevScreen !== "home") { HOME.mcFor = s.morning_version; loadMorning(s); }
+  $("mc-start").disabled = !!s.morning;
   if (S.prevScreen !== "home" || HOME.progFor !== s.rides_version) {    // on arriving, and after a save / delete
     HOME.progFor = s.rides_version;
     loadOverview();
   }
 }
+// ---- the morning check (morning.py): lying down, 1 min to settle and 2 to measure, most mornings.
+// The card: the reading against your own normal, the last check and a 30-day ln RMSSD lane with the
+// normal range (baseline +- 0.5 SD); resting heart rate below it.
+async function loadMorning(s) {
+  let m;
+  try { m = await (await fetch("/api/morning")).json(); } catch { return; }
+  HOME.morning = m;
+  const res = s.morning_result, days = m.days || [], last = days[days.length - 1];
+  const v = m.verdict;
+  $("mc-verdict").innerHTML = res && !res.ok ? `<b>That check didn't count:</b> ${esc(res.why)}`
+    : v ? esc(v[1]) : "Lie down with the strap on, before getting up, and press Start. Takes 3 minutes.";
+  $("mc-when").textContent = last ? `last ${SHORT_DAY.format(dayOf(last.date))}, ${last.time}` : "";
+  $("mc-stats").innerHTML = last ? [
+    ovStat("RMSSD", last.rmssd.toFixed(0), "ms"), ovStat("Resting HR", fmt(last.hr), "bpm"),
+    ovStat("7-day ln RMSSD", last.ln7.toFixed(2), last.lo != null ? `normal ${last.lo.toFixed(2)}–${last.hi.toFixed(2)}` : ""),
+  ].join("") : "";
+  $("mc-note").textContent = days.length ? "ln RMSSD: higher means more recovered. The band is your normal from the 30 days before; it appears after 7 checks." : "";
+  drawMorning(m);
+}
+function drawMorning(m) {
+  const cv = $("mc-chart"), days = (m.days || []).slice(-30);
+  if (!days.length) { cv.hidden = true; return; }
+  cv.hidden = false;
+  const lcd = THEME === "lcd";
+  const t1 = dayOf(days[days.length - 1].date).getTime(), t0 = Math.min(dayOf(days[0].date).getTime(), t1 - 13 * 86400e3);
+  const lv = days.flatMap((d) => [d.ln_rmssd, d.lo, d.hi].filter((x) => x != null)), hv = days.map((d) => d.hr);
+  const [l0, l1] = niceRange(lv, 0.25, 0.1), [h0, h1] = niceRange(hv, 5, 2);
+  const ch = laneChart(cv, 190, [
+    { label: "ln RMSSD", weight: 1.6, y0: l0, y1: l1, step: l1 - l0 > 1.5 ? 0.5 : 0.25, fmt: (v) => v.toFixed(2) },
+    { label: "resting HR, bpm", weight: 1, y0: h0, y1: h1, step: h1 - h0 > 20 ? 10 : 5, fmt: (v) => `${Math.round(v)}` },
+  ], t0, t1);
+  if (!ch) return;
+  const { ctx, X } = ch, [L1, L2] = ch.lanes, mid = (d) => X(dayOf(d.date).getTime() + 43200e3);
+  const band = days.filter((d) => d.lo != null);                     // the normal range
+  if (band.length) {
+    ctx.fillStyle = blend(lcd ? C.fg : C.good, C.panel, 0.85);
+    ctx.beginPath();
+    band.forEach((d, i) => (i ? ctx.lineTo(mid(d), L1.Y(d.hi)) : ctx.moveTo(mid(d), L1.Y(d.hi))));
+    for (const d of [...band].reverse()) ctx.lineTo(mid(d), L1.Y(d.lo));
+    ctx.closePath(); ctx.fill();
+  }
+  const line = (lane, key, colour, width) => {
+    ctx.strokeStyle = colour; ctx.lineWidth = width; ctx.beginPath();
+    days.forEach((d, i) => (i ? ctx.lineTo(mid(d), lane.Y(d[key])) : ctx.moveTo(mid(d), lane.Y(d[key]))));
+    ctx.stroke();
+  };
+  line(L1, "ln7", lcd ? C.fg : blend(C.fg, C.panel, 0.3), 2);        // the 7-day mean
+  for (const d of days) {
+    ctx.beginPath(); ctx.arc(mid(d), L1.Y(d.ln_rmssd), 3.5, 0, 2 * Math.PI);
+    ctx.fillStyle = lcd ? C.fg : C.rr; ctx.fill();
+  }
+  line(L2, "hr", lcd ? C.fg : C.hr, 1.5);
+}
+// the countdown while it runs (on any page): lie still, breathe normally
+function renderMorningRun(s) {
+  const m = s.morning;
+  $("mc-run").hidden = !m;
+  if (!m) return;
+  $("mc-phase").textContent = m.phase === "settle" ? "Settling" : "Measuring";
+  $("mc-hint").textContent = m.phase === "settle" ? "Lie still and breathe normally. Measuring starts after a minute."
+    : "Keep still, don't talk. Almost there.";
+  $("mc-left").textContent = minsec(m.left);
+  const st = (k, v) => `<div><dt>${k}</dt><dd>${v}</dd></div>`;
+  $("mc-live").innerHTML = st("Heart rate", m.hr == null ? "--" : `${fmt(m.hr)} bpm`) + st("Beats measured", fmt(m.beats)) +
+    st("Strap", s.devices?.hr?.state === "connected" ? "on" : "--");
+}
+$("mc-start").addEventListener("click", (e) => { e.currentTarget.blur(); act("morning_start"); });
+$("mc-cancel").addEventListener("click", (e) => { e.currentTarget.blur(); act("morning_cancel"); });
+
 async function loadOverview() {
   let rides, prog;
   try {
@@ -437,6 +508,7 @@ function renderSummary(d) {
   renderDurability(d);
   renderCheck(d);
   renderWorkoutSteps(d);
+  renderLinks(d);
   renderEnv(d);
   makeSummaryCharts(d);
 }
@@ -785,6 +857,19 @@ function renderCheck(d) {
   $("check-note").innerHTML = `Heart rate rises <b>${c.hr_b.toFixed(2)}</b> bpm per W` +
     (c.hrr60 != null ? ` · recovery <b>${fmt(c.hrr60)}</b> bpm in 60 s` : "") +
     `. The trend over your checks is on Statistics.`;
+}
+// the same strap over both links in one ride (linkcheck.py); the ride's HRV comes from ANT+ only
+function renderLinks(d) {
+  const c = d.links;
+  $("card-links").hidden = !c;
+  if (!c) return;
+  const row = (k, x) => `<tr><td>${k}</td><td class="n">${fmt(x.beats)}</td><td class="n">${fmt(x.artifacts)}</td>` +
+    `<td class="n">${x.rmssd == null ? "--" : x.rmssd.toFixed(1)} ms</td><td class="n">${fmt(x.alpha1, 2)}</td></tr>`;
+  $("links-table").innerHTML = `<tr><th></th><th>Beats</th><th>Artifacts</th><th>RMSSD</th><th>Mean α1</th></tr>` +
+    row("ANT+", c.ant) + row("Bluetooth", c.ble);
+  $("links-note").innerHTML = `${fmt(c.matched)} beats on both: they differ by <b>${c.mean_abs_ms.toFixed(1)} ms</b> on average, ` +
+    `<b>${c.within_3ms_pct.toFixed(0)}%</b> within 3 ms. Only on ANT+: ${fmt(c.only_ant)} · only on Bluetooth: ${fmt(c.only_ble)}. ` +
+    "The ride's HRV uses ANT+.";
 }
 function renderWorkoutSteps(d) {
   const ws = d.workout_steps;

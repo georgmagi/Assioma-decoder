@@ -97,3 +97,12 @@ def test_stick_messages_split_and_checksum():
     assert ant_hr.split_messages(buf) == [(0x4E, bytes([0, 1, 2, 3, 4, 5, 6, 7, 8]))]
     buf += b[3:]
     assert ant_hr.split_messages(buf) == [(0x40, bytes([0, 1, 2]))] and not buf
+
+
+def test_garmin_rides_lose_alpha1_a_polar_keeps_it():
+    import ride_summary as rs
+    assert rs.smoothed_rr({"hr_strap": {"name": "Garmin strap #17859", "link": "ANT+"}})
+    assert rs.smoothed_rr({"hr_strap": {"name": "HRM200:83395", "link": "Bluetooth"}})
+    assert not rs.smoothed_rr({"hr_strap": {"name": "Polar strap #4242", "link": "ANT+"}})
+    assert not rs.smoothed_rr({"hr_strap": {"name": "Polar H10 A1B2C3D4", "link": "Bluetooth"}})
+    assert not rs.smoothed_rr({})                                            # older rides: as before

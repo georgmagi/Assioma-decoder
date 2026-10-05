@@ -226,14 +226,15 @@ def summarize(rows: list[dict], ftp: Optional[float] = None, lthr: Optional[floa
         "mmp": eftp.mmp(power),
         "env": {"temp_c": (meta or {}).get("temp_c"), "rh_pct": (meta or {}).get("rh_pct")},
         "durability": checks.durability(rows),
-        "check": checks.fitness_check(rows, meta),
+        "check": _no_a1(checks.fitness_check(rows, meta), meta),
         "workout_steps": _workout_steps(rows, meta),
         "zones": zone_s, "hr_zones": hr_zone_s, "a1_bands": a1_bands,
         "legs": legs,
         "series": {"t": ts, "power": power, "hr": hr, "cadence": cad, "a1": a1},
         "beats": {"t": beat_t, "rr": [round(b.rr, 1) for b in beats], "artifact": [bool(b.artifact) for b in beats]},
         "poincare": _poincare(clean),
-        **_thresholds(rows),
+        **(_thresholds(rows) if not smoothed_rr(meta) else {"vt1": None, "vt2": None}),
+        "rr_smoothed": smoothed_rr(meta),
     }
 
 
@@ -263,6 +264,25 @@ def _efficiency(power: list, hr: list, ftp: Optional[float]) -> dict:
     if minutes >= 10:
         out = {"ef_z2": sp / sh, "ef_z2_power": sp / n, "ef_z2_min": minutes}
     return out
+
+
+def smoothed_rr(meta: Optional[dict]) -> bool:
+    """Rides from a Garmin strap keep their heart rate, but alpha 1 (VT1, VT2, the check's alpha 1) is
+    left out. On the 4 Oct step test its beat intervals were smoothed in exercise (alpha 1 stuck at
+    1.2-1.4 up to FTP), and Rogers et al. advise against Garmin straps for alpha 1. Not the ANT+ link:
+    at rest the same strap gave the same intervals over ANT+ and Bluetooth to 0.3 ms (5 Oct test).
+    Garmin = a "Garmin ..." strap over ANT+ (its manufacturer page) or an "HRM..." name over Bluetooth;
+    a Polar H10 counts fully, over either link."""
+    s = (meta or {}).get("hr_strap") or {}
+    name = (s.get("name") or "").upper()
+    return bool(s.get("smoothed")) or "HRM" in name or "GARMIN" in name
+
+
+def _no_a1(check: Optional[dict], meta: Optional[dict]) -> Optional[dict]:
+    if check and smoothed_rr(meta):
+        for st in check["steps"]:
+            st["a1"] = None
+    return check
 
 
 def _thresholds(rows: list) -> dict:
@@ -369,6 +389,13 @@ def summarize_file(folder: str, ride_id: str, ftp=None, lthr=None) -> Optional[d
         return None
     meta = load_meta(folder, ride_id)
     s = summarize(rows, ftp, lthr, meta)
+    raw = os.path.join(folder, ride_id + "_raw.csv")
+    if os.path.exists(raw):                                  # recorded over ANT+ and Bluetooth at once
+        import linkcheck
+        try:
+            s["links"] = linkcheck.compare(raw)
+        except Exception:
+            s["links"] = None
     name, source = ride_name(ride_id)
     own_fit = os.path.join(folder, ride_id + ".fit")
     return {"id": ride_id, "name": meta.get("workout", {}).get("name") or name, "source": source,

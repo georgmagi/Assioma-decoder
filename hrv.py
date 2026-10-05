@@ -16,6 +16,15 @@ from statistics import median
 from typing import Optional
 
 ARTIFACT_THRESHOLD = 0.20   # a beat more than 20 % away from its local median is an artifact
+# a misplaced beat (one R peak timed early or late, e.g. the strap shifting under heavy breathing):
+# a short interval and a long one that add up to two normal ones. Corrected by splitting the pair
+# evenly (Lipponen & Tarvainen 2019), not removed, when each is off by more than 5 % of the local
+# median and by more than 3x the neighbours' typical beat-to-beat change, and the sum is within 3 %.
+# At 160 bpm with RMSSD ~3 ms a 50 ms shift is far under 20 % but swamps alpha 1 (5 Oct ride: 0.4
+# instead of ~0.8).
+MISPLACED_MIN = 0.05
+MISPLACED_SUM = 0.03
+MISPLACED_K = 3.0
 MEDIAN_HALF = 5             # local median over 5 beats either side (so a beat is judged 5 beats late)
 WINDOW_S = 120              # DFA window (seconds of beats)
 STEP_S = 5                  # recompute alpha 1 this often
@@ -61,10 +70,11 @@ def rmssd(rr: list) -> Optional[float]:
 
 
 class Beat:
-    __slots__ = ("time", "rr", "artifact")
+    __slots__ = ("time", "rr", "artifact", "corrected")
 
     def __init__(self, time: datetime, rr: float) -> None:
         self.time, self.rr, self.artifact = time, rr, None   # artifact: None until judged
+        self.corrected = False                                # rr changed by the misplaced-beat fix
 
 
 class HrvTracker:
@@ -101,10 +111,29 @@ class HrvTracker:
                 self.beats.append(Beat(t, rr))
         self._judge()
 
+    def _misplaced(self, i: int) -> None:
+        """Beats i and i+1: a misplaced R peak? Then split the pair evenly (beat i moves in time)."""
+        b = self.beats
+        if i < MEDIAN_HALF or i + 1 + MEDIAN_HALF >= len(b) or b[i].corrected or b[i + 1].corrected:
+            return
+        around = [x.rr for x in b[i - MEDIAN_HALF:i]] + [x.rr for x in b[i + 2:i + 2 + MEDIAN_HALF]]
+        m = median(around)
+        steps = [abs(q.rr - p.rr) for p, q in zip(b[i - MEDIAN_HALF:i], b[i - MEDIAN_HALF + 1:i])]
+        steps += [abs(q.rr - p.rr) for p, q in zip(b[i + 2:i + 1 + MEDIAN_HALF], b[i + 3:i + 2 + MEDIAN_HALF])]
+        typical = median(steps) if steps else 0.0
+        da, db = b[i].rr - m, b[i + 1].rr - m
+        if (da * db < 0 and abs(da) > MISPLACED_MIN * m and abs(db) > MISPLACED_MIN * m
+                and min(abs(da), abs(db)) > MISPLACED_K * typical and abs(da + db) < MISPLACED_SUM * m):
+            half = (b[i].rr + b[i + 1].rr) / 2
+            b[i].time += timedelta(milliseconds=half - b[i].rr)
+            b[i].rr = b[i + 1].rr = half
+            b[i].corrected = b[i + 1].corrected = True
+
     def _judge(self, final: bool = False) -> None:
         b = self.beats
-        while self._judged + (0 if final else MEDIAN_HALF) < len(b):
+        while self._judged + (0 if final else MEDIAN_HALF + 2) < len(b):
             i = self._judged
+            self._misplaced(i)
             m = median(x.rr for x in b[max(0, i - MEDIAN_HALF):i + MEDIAN_HALF + 1])
             b[i].artifact = abs(b[i].rr - m) > ARTIFACT_THRESHOLD * m
             self._judged += 1

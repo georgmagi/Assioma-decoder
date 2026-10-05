@@ -349,6 +349,9 @@ class BleWorker(threading.Thread):
         # each sensor's lifecycle, for the Connections pane: wanted or not; an attempt you started by
         # clicking (a deadline: then "couldn't find it"); and the state shown
         self.want = {"pedal": True, "hr": want_hr, "trainer": False}
+        # record the strap over Bluetooth too while ANT+ is the source: a second copy of every beat,
+        # kept in the raw log (BLE_HR_SECOND) for linkcheck.py; it never feeds the ride's HRV
+        self.both_hr = True
         self.attempt = {"pedal": None, "hr": None, "trainer": None}   # monotonic deadline of a clicked attempt
         self.state = {"pedal": "searching", "hr": "searching" if want_hr else "off", "trainer": "off"}
         self.note = {"pedal": "", "hr": "", "trainer": ""}
@@ -394,6 +397,10 @@ class BleWorker(threading.Thread):
         """What the Connections pane shows: {state, status, link, note}."""
         status, link = self.view(kind)
         st = self.state[kind]
+        if kind == "hr" and link == "ANT+" and self.both_hr and time.monotonic() - self.last_data["hr"] < 5:
+            link = "ANT+ & BT"                # both links recording
+            if self.status["hr"].startswith("connected: "):
+                status = self.status["hr"]    # the Bluetooth name says which strap ("Polar H10 …")
         if kind == "hr" and self.want["hr"] and self._ant_has_hr() and self.ant.receiving():
             st = "connected"
         return {"state": st, "status": status, "link": link, "note": self.note[kind]}
@@ -558,8 +565,12 @@ class BleWorker(threading.Thread):
         n = dec.Notification(utcnow(), short_uuid(str(sender.uuid)), bytes(data))
         now = time.monotonic()
         self.last_data["hr" if n.char == dec.HR_CHAR else "pedal"] = now
-        if n.char == dec.HR_CHAR and (self._ant_has_hr() or not self.want["hr"]):
-            return                        # ANT+ has the strap (don't count its beats twice), or it's off
+        if n.char == dec.HR_CHAR and not self.want["hr"]:
+            return                        # the strap is off
+        if n.char == dec.HR_CHAR and self._ant_has_hr():
+            if self.both_hr:              # ANT+ is the source: this copy is for the comparison only
+                self.q.put(dec.Notification(n.time, dec.BLE_HR_SECOND, n.data))
+            return                        # (never counted twice)
         if n.char == dec.PRIVATE_CHAR:
             self._last_private = now
         if n.char in (dec.PRIVATE_CHAR, dec.CPM_CHAR) and self._held is not None:
@@ -574,8 +585,8 @@ class BleWorker(threading.Thread):
                 self.state[kind] = "off"
                 await asyncio.sleep(0.3)
                 continue
-            if kind == "hr" and (self._ant_has_hr() or (self.ant is not None and self.ant.is_alive()
-                                                          and self.ant.status.startswith("looking"))):
+            if kind == "hr" and not self.both_hr and (self._ant_has_hr() or (self.ant is not None and self.ant.is_alive()
+                                                                                and self.ant.status.startswith("looking"))):
                 if self._ant_has_hr() and self.ant.receiving():
                     self._connected("hr", self.ant.status.split(": ", 1)[-1])
                 else:
@@ -636,7 +647,7 @@ class BleWorker(threading.Thread):
                         if not self.want[kind]:
                             self.log(f"{kind}: disconnected (asked to)")
                             break
-                        if kind == "hr" and self._ant_has_hr():
+                        if kind == "hr" and self._ant_has_hr() and not self.both_hr:
                             self.log("hr: the ANT+ stick has the strap: Bluetooth disconnected")
                             break
                         # watchdog: connected but silent (both sensors notify at least ~1/s) -> reconnect

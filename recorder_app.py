@@ -35,6 +35,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 import assioma_decoder as dec
+import morning as mo
 import plan as pl
 import ride_summary as rs
 import workout as wk
@@ -116,6 +117,12 @@ class Engine(threading.Thread):
         self.plan = pl.load(self.plan_path) if self.plan_path else pl.empty()
         self.plan_version, self.plan_msg = 0, ""
         self._plan_day = None                # the day whose planned workout was last put up as the next ride
+        # the morning check (morning.py): resting HR and HRV lying down, kept in morning.json
+        self.morning_path = os.path.join(os.path.dirname(settings_path), "morning.json") if settings_path else None
+        self.mornings = mo.load(self.morning_path)
+        self.mcheck: Optional[mo.Check] = None
+        self.mresult: Optional[dict] = None
+        self.morning_version = 0
         self.step_log: list = []             # [ride second, step, intensity] as the workout went
         # the VT1 ceiling (a toggle on the ride screen): ERG targets trimmed while you're above VT1
         self.ceiling = False
@@ -177,6 +184,13 @@ class Engine(threading.Thread):
                 self._connect(arg["device"], bool(arg.get("on")))
             elif name == "workout":
                 self.workout_id = arg if arg in self.workouts() else None
+            elif name == "morning_start" and self.mcheck is None:
+                if hasattr(self.worker, "set_want") and not self.worker.want.get("hr"):
+                    self._connect("hr", True)              # the check needs the strap
+                self.mcheck, self.mresult = mo.Check(now), None
+                self.worker.log("morning check started")
+            elif name == "morning_cancel":
+                self.mcheck = None
             elif name.startswith("plan_"):
                 self._plan_action(name, arg)
             elif name == "wo_save" and isinstance(arg, dict):
@@ -454,6 +468,11 @@ class Engine(threading.Thread):
     def _meta(self, s: Session) -> None:
         """The ride's sidecar (ride_summary.META): room conditions and the workout as ridden."""
         m = {"temp_c": self.settings.get("room_temp"), "rh_pct": self.settings.get("room_rh")}
+        view = getattr(self.worker, "view", None)                  # which strap, and how: HRV trusts some more than others
+        if view:
+            status, link = view("hr")
+            if status.startswith("connected"):
+                m["hr_strap"] = {"name": status.split(": ", 1)[-1], "link": link}
         if self._wo_meta:
             m["workout"] = {**self._wo_meta, "log": self.step_log}
         try:
@@ -626,6 +645,8 @@ class Engine(threading.Thread):
                 self.home_live["power"] = (r["cpm_power_w"], r["time"])
             elif r.get("type") == dec.HR_CHAR:
                 self.home_live["hr"] = (r["heart_rate_bpm"], r["time"])
+                if self.mcheck is not None:
+                    self.mcheck.feed(r["time"], r.get("heart_rate_bpm"), r.get("rr_ms") or [])
 
     def _home_value(self, name: str, now, max_age: float = 5):
         v = self.home_live.get(name)
@@ -652,10 +673,28 @@ class Engine(threading.Thread):
             except Exception as e:                 # never let a glitch stop the recording
                 self.error = f"{type(e).__name__}: {e}"[:160]
                 self.worker.log(f"engine: {self.error}")
-            time.sleep(0.1)
+            time.sleep(0.05)                       # a new beat reaches the snapshot within 50 ms
+
+    def _morning_tick(self, now) -> None:
+        c = self.mcheck
+        if c is None:
+            return
+        quiet = (now - (c.last_data or c.started)).total_seconds()
+        if c.phase(now) == "done" or quiet > 20:
+            res = c.result(now) if quiet <= 20 else {"ok": False, "why": "the strap went quiet: is it on and connected?"}
+            self.mcheck, self.mresult = None, res
+            if res.get("ok"):
+                self.mornings = mo.add(self.mornings, res)
+                try:
+                    mo.save(self.morning_path, self.mornings)
+                except OSError as e:
+                    self.worker.log(f"morning: {e}")
+            self.morning_version += 1
+            self.worker.log(f"morning check: {res}")
 
     def _tick(self) -> None:
         now = utcnow()
+        self._morning_tick(now)
         if self.screen in PAGES:
             self._plan_today()
         self._log_step()
@@ -664,7 +703,7 @@ class Engine(threading.Thread):
             self.session.tick(now)
             if self.worker.pedal_name:
                 self.session.pedal_name = self.worker.pedal_name
-        elif self.screen in PAGES and self.dialog is None:   # pedalling for 3 s on a page starts a ride
+        elif self.screen in PAGES and self.dialog is None and self.mcheck is None:   # pedalling 3 s on a page starts a ride
             if self._home_value("power", now, 3):
                 self.quiet_since = None
                 if self.armed:
@@ -704,6 +743,9 @@ class Engine(threading.Thread):
         (pedal, pedal_link), (hr, hr_link) = view("pedal"), view("hr")
         trainer, trainer_link = view("trainer")
         sensor = getattr(w, "sensor", None)            # the lifecycle (BleWorker): {state, status, link, note}
+        if sensor:                                     # the strap's name and "ANT+ & BT" when both links record
+            x = sensor("hr")
+            hr, hr_link = x["status"] or hr, x["link"] or hr_link
         base = {
             "screen": self.screen, "summary_id": self.summary_id, "back_to": self.back_to,
             "settings": dict(self.settings),
@@ -714,6 +756,10 @@ class Engine(threading.Thread):
                        if sensor else None,
             "error": self.error, "dialog": self.dialog, "rides_version": self.rides_version,
             "plan_version": self.plan_version, "plan_msg": self.plan_msg,
+            "morning_version": self.morning_version, "morning_result": self.mresult,
+            "morning": None if self.mcheck is None else {
+                "phase": self.mcheck.phase(utcnow()), "left": self.mcheck.left_s(utcnow()),
+                "beats": sum(len(x[1]) for x in self.mcheck.rr), "hr": self._home_value("hr", utcnow())},
             "config": {"ftp": self.settings.get("ftp"), "plan_min": self.settings.get("plan_min")},
         }
         s = self.session
@@ -826,11 +872,13 @@ def make_server(engine: Engine, app_mode: dict) -> ThreadingHTTPServer:
             elif u.path == "/api/workout_text":              # a workout as shorthand, to edit a copy
                 w = engine.workouts().get(q.get("id", [""])[0])
                 self._json({"name": w["name"], "text": wk.to_text(w["steps"])} if w else {"error": "no such workout"})
+            elif u.path == "/api/morning":
+                self._json(mo.trend(engine.mornings))
             elif u.path == "/api/plan":
                 rides = rs.ride_list(engine.out_dir, engine.settings.get("ftp"))
                 over = pl.overview(engine.plan, engine.workouts(), rides, engine.settings.get("ftp"), date.today())
                 prog = training.progress(rides)
-                self._json({**over, "status_text": pl.status_text(prog, rides, engine.settings, over),
+                self._json({**over, "status_text": pl.status_text(prog, rides, engine.settings, over, mo.trend(engine.mornings)),
                             "pmc_now": prog["pmc"]})
             elif u.path == "/api/progress":
                 self._json(training.progress(rs.ride_list(engine.out_dir, engine.settings.get("ftp"))))

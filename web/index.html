@@ -56,10 +56,17 @@
       <p class="ov-note" id="hv-note"></p>
     </section>
   </div>
-  <div class="home-row">
+  <div class="home-row three">
     <section class="panel conn">
       <div class="panel-head"><h2>Connections</h2></div>
       <div class="dev-list" id="dev-list"></div>
+    </section>
+    <section class="panel mc">
+      <div class="panel-head"><h2>Morning check</h2><span class="sub-title" id="mc-when"></span><button class="btn" id="mc-start">Start</button></div>
+      <p class="mc-verdict" id="mc-verdict"></p>
+      <dl class="ov-stats" id="mc-stats"></dl>
+      <div class="mc-wrap"><canvas id="mc-chart"></canvas></div>
+      <p class="ov-note" id="mc-note"></p>
     </section>
     <section class="panel set-panel">
       <div class="panel-head"><h2>Your numbers</h2></div>
@@ -115,23 +122,24 @@
 </header>
 
 <section class="panel wo-strip" id="wo-strip" hidden>
-  <div class="wo-now" id="wo-now"></div>
-  <div class="wo-mid">
-    <div class="wo-prof"><canvas id="wo-profile"></canvas></div>
-    <div class="wo-foot"><span id="wo-next"></span><span class="wo-trainer" id="wo-trainer"></span></div>
+  <div class="wo-left">
+    <div class="wo-now" id="wo-now"></div>
+    <div class="wo-next" id="wo-next"></div>
   </div>
+  <div class="wo-prof"><canvas id="wo-profile"></canvas></div>
   <div class="wo-ctl" id="wo-ctl">
-    <div class="wo-int" role="group" aria-label="Intensity">
-      <button class="btn" id="wo-down5" title="-5 %">−5</button><button class="btn" id="wo-down" title="-1 %">−</button>
-      <span id="wo-int">100%</span>
-      <button class="btn" id="wo-up" title="+1 %">+</button><button class="btn" id="wo-up5" title="+5 %">+5</button>
+    <div class="wo-btns">
+      <div class="wo-int" role="group" aria-label="Intensity">
+        <button class="btn" id="wo-down" title="-1 %">−</button><span id="wo-int">100%</span><button class="btn" id="wo-up" title="+1 %">+</button>
+      </div>
+      <button class="btn" id="wo-skip">Skip</button>
+      <button class="btn" id="wo-end">End</button>
     </div>
     <div class="wo-btns">
-      <button class="btn" id="wo-skip">Skip step</button>
       <button class="btn toggle" id="wo-erg">ERG on</button>
-      <button class="btn toggle" id="wo-ceil" title="Trim the ERG target while you're above VT1">VT1 ceiling</button>
-      <button class="btn" id="wo-end">End workout</button>
+      <button class="btn toggle" id="wo-ceil" title="Trim the ERG target while you're above VT1">VT1 cap</button>
     </div>
+    <div class="wo-trainer" id="wo-trainer"></div>
   </div>
 </section>
 
@@ -249,6 +257,11 @@
       <div class="panel-head"><h2>Weekly check</h2></div>
       <table class="leg-table" id="check-table"></table>
       <p class="pc" id="check-note"></p>
+    </section>
+    <section class="panel" id="card-links">
+      <div class="panel-head"><h2>Strap: ANT+ against Bluetooth</h2></div>
+      <table class="leg-table" id="links-table"></table>
+      <p class="pc" id="links-note"></p>
     </section>
     <section class="panel" id="card-wsteps">
       <div class="panel-head"><h2>Workout: target and pedals</h2></div>
@@ -427,6 +440,15 @@
   </div>
 </footer>
 
+<div class="backdrop" id="mc-run" hidden>
+  <div class="card mc-card">
+    <h3 id="mc-phase"></h3>
+    <p id="mc-hint"></p>
+    <div class="mc-left" id="mc-left"></div>
+    <dl class="stats" id="mc-live"></dl>
+    <div class="buttons"><button class="btn" id="mc-cancel">Cancel</button></div>
+  </div>
+</div>
 <div class="backdrop" id="dialog" hidden>
   <div class="card" role="dialog" aria-modal="true" aria-labelledby="d-title">
     <h3 id="d-title"></h3>

@@ -85,7 +85,7 @@ def fitness_check(rows: list, meta: dict) -> Optional[dict]:
     ERG step from 50 to 80 % of FTP (aerobic, so heart rate settles) gives its last 3 minutes; heart
     rate recovery is the drop over the first 60 s of the "recovery" step that follows the hardest
     step. Step starts come from the log the app kept (meta["workout"]["log"], [ride second, step,
-    intensity]) or, without one, from the steps' durations."""
+    intensity]) or, without one, from the steps' durations; a step skipped before its end is left out."""
     wo = (meta or {}).get("workout") or {}
     if wo.get("id") not in CHECK_IDS:
         return None
@@ -105,6 +105,8 @@ def fitness_check(rows: list, meta: dict) -> Optional[dict]:
         end = starts[i] + st[0]
         if end > len(rows):
             break                                                 # stopped before this step ended
+        if starts.get(i + 1, end) < end - 10:
+            continue                                              # skipped: not ridden to its end
         win = rows[end - 180: end]
         out.append({"label": st[3] if len(st) > 3 else "", "power": _mean(r.get("power_w") for r in win),
                     "hr": _mean(r.get("heart_rate_bpm") for r in win), "a1": _mean(r.get("dfa_a1") for r in win),
