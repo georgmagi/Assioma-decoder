@@ -19,6 +19,7 @@ Standard library only.
 """
 from __future__ import annotations
 
+import math
 from statistics import median
 from typing import Optional
 
@@ -160,3 +161,113 @@ def heat_model(points: list) -> Optional[dict]:
     if not 0 <= slope <= 4:
         return None
     return {"bpm_per_c": slope, "n": len(pts), "range_c": (min(ts), max(ts))}
+
+
+# --------------------------------------------------------------------------- warm-up readiness
+# Every ride starts with easy minutes, so every ride is a small test: heart rate at a fixed easy
+# power, early on, against your other rides. Higher than your normal = tired, run down or getting
+# ill (6 Oct, the day after two step tests: 135 bpm against a normal of ~125). Minutes 6-15
+# (heart rate has settled, drift hasn't started), seconds whose 30-s power is steady at 100-150 W;
+# heart rate put on 125 W with 0.4 bpm per W (the slope of Georg's HR against power, Oct rides).
+READY_W, READY_SLOPE = 125, 0.4
+READY_FROM_S, READY_TO_S, READY_MIN_S = 360, 900, 180
+
+
+def warmup(rows: list) -> Optional[dict]:
+    """{hr: heart rate at READY_W, power, a1, seconds} from the warm-up, None without 3 min of it."""
+    p = [r.get("power_w") or 0 for r in rows]
+    h = [r.get("heart_rate_bpm") for r in rows]
+    a = [r.get("dfa_a1") for r in rows]
+    sel = []
+    for i in range(READY_FROM_S, min(len(rows), READY_TO_S)):
+        w = p[i - 30:i]
+        m = sum(w) / 30
+        if 100 <= m <= 150 and max(w) - min(w) < 0.35 * m and h[i]:
+            sel.append((i, m))
+    if len(sel) < READY_MIN_S:
+        return None
+    pm = sum(m for _, m in sel) / len(sel)
+    hm = sum(h[i] for i, _ in sel) / len(sel)
+    a1 = [a[i] for i, _ in sel if a[i] is not None]
+    return {"hr": hm + READY_SLOPE * (READY_W - pm), "power": pm, "a1": sum(a1) / len(a1) if len(a1) >= 60 else None,
+            "seconds": len(sel)}
+
+
+def warmup_normal(earlier: list) -> Optional[dict]:
+    """Your normal from earlier rides' warm-ups (newest first): the median of the last 10, with 3 or more.
+    Only the recorder's own rides go in (the caller's job): OpenCycling's FIT rides, another strap and
+    warm-ups at 140-150 W, read ~10 bpm higher (Sep 2026) and would drag the normal up."""
+    hrs = [w["hr"] for w in earlier if w and w.get("hr")][:10]
+    a1s = [w["a1"] for w in earlier if w and w.get("a1")][:10]
+    if len(hrs) < 3:
+        return None
+    return {"hr": median(hrs), "a1": median(a1s) if len(a1s) >= 3 else None, "rides": len(hrs)}
+
+
+# --------------------------------------------------------------------------- the knee
+# The knee feels force per pedal stroke, not watts: torque = power / crank speed. The same watts at
+# a lower cadence press harder on every stroke. 29 Sep 5x3 (knee flared after): 23-24 Nm per rep at
+# 92-95 rpm; 6 Oct 5x4 (it didn't): 21-22 Nm at 96-98 rpm. With a 0-3 knee score per ride the
+# pattern (a torque limit? the left leg's balance or PCO?) shows up across rides.
+KNEE_REP_PCT = 0.85            # a rep: 30-s power over this share of FTP ...
+KNEE_REP_MIN_S = 60            # ... for at least a minute
+
+
+def torque(power: Optional[float], cadence: Optional[float]) -> Optional[float]:
+    """Nm at the crank (both legs together) from W and rpm; None when not pedalling."""
+    if not power or not cadence or cadence < 30:
+        return None
+    return power / (2 * math.pi * cadence / 60)
+
+
+def knee(rows: list, ftp: Optional[float]) -> dict:
+    """{reps: [{start, seconds, power, cadence, torque, balance_right, pco_left, pco_right, te_left,
+    te_right}], peak_torque: the best 1-min mean torque (Nm), torque_z2: mean torque while
+    pedalling at 56-75 % FTP}."""
+    n = len(rows)
+    g = lambda k: [r.get(k) for r in rows]
+    p, c = g("power_w"), g("cadence_rpm")
+    tq = [torque(a, b) for a, b in zip(p, c)]
+    # the best minute of torque
+    peak, acc, cnt = None, 0.0, 0
+    for i in range(n):
+        if tq[i] is not None:
+            acc, cnt = acc + tq[i], cnt + 1
+        if i >= 60 and tq[i - 60] is not None:
+            acc, cnt = acc - tq[i - 60], cnt - 1
+        if i >= 59 and cnt >= 50:
+            peak = max(peak or 0, acc / cnt)
+    z2 = [t for t, w in zip(tq, p) if t is not None and ftp and 0.56 * ftp <= w <= 0.75 * ftp]
+    reps = []
+    if ftp:
+        hard = [False] * n
+        acc = 0.0
+        for i in range(n):
+            acc += p[i] or 0
+            if i >= 30:
+                acc -= p[i - 30] or 0
+            if i >= 29 and acc / 30 >= KNEE_REP_PCT * ftp:
+                for k in range(i - 29, i + 1):
+                    hard[k] = True
+        i = 0
+        while i < n:
+            if not hard[i]:
+                i += 1
+                continue
+            j = i
+            while j < n and hard[j]:
+                j += 1
+            a, b = i, j
+            while a < b and (p[a] or 0) < KNEE_REP_PCT * ftp:       # trim the smoothing's edges
+                a += 1
+            while b > a and (p[b - 1] or 0) < KNEE_REP_PCT * ftp:
+                b -= 1
+            if b - a >= KNEE_REP_MIN_S:
+                seg = rows[a:b]
+                m = lambda k: _mean([r.get(k) for r in seg])
+                reps.append({"start": a, "seconds": b - a, "power": m("power_w"), "cadence": m("cadence_rpm"),
+                             "torque": _mean(tq[a:b]), "balance_right": m("balance_right_pct"),
+                             "pco_left": m("pco_left_mm"), "pco_right": m("pco_right_mm"),
+                             "te_left": m("te_left_pct"), "te_right": m("te_right_pct")})
+            i = j
+    return {"reps": reps, "peak_torque": peak, "torque_z2": sum(z2) / len(z2) if len(z2) >= 300 else None}

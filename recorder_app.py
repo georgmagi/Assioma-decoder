@@ -29,6 +29,7 @@ import queue
 import sys
 import threading
 import time
+from collections import deque
 from datetime import date, timedelta, timezone
 from typing import Optional
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -36,11 +37,14 @@ from urllib.parse import parse_qs, urlparse
 
 import assioma_decoder as dec
 import morning as mo
+import polar_pmd as pmd
 import plan as pl
 import ride_summary as rs
 import workout as wk
+import checks
 import training
-from assioma_recorder import (EVENT, HERE, BleWorker, ReplayWorker, Session, local_utc_offset_h,
+import wbal
+from assioma_recorder import (EVENT, HERE, STRAP_FILES, BleWorker, ReplayWorker, Session, local_utc_offset_h,
                               read_raw_log, utcnow)
 
 WEB = os.path.join(getattr(sys, "_MEIPASS", HERE), "web")     # the .exe unpacks the page to a temp folder
@@ -63,7 +67,7 @@ PAGES = ("home", "plan", "workouts", "stats")   # the app's pages (top bar); plu
 # remembered from the page (its own browser storage is lost: the port changes every run)
 SETTINGS_DEFAULTS = {"ftp": None, "lthr": None, "vt1_hr": None, "room_temp": None, "room_rh": None,
                      "plan_min": 60, "hr": True, "trainer": False, "theme": "dark", "span": 300,
-                     "power3s": False}
+                     "power3s": False, "hr_lock": None}
 PREFS = {"theme": ("dark", "lcd"), "span": (300, 1800, 0), "power3s": (True, False)}
 
 
@@ -106,6 +110,10 @@ class Engine(threading.Thread):
         self.rides_version = 0               # bumped when rides are saved or deleted: the page reloads its list
         self._vt1_auto: Optional[dict] = None   # your latest VT1 crossing (vt1.py), found in the background
         self._vt1_for = -1                   # the rides_version it was found for
+        self._wp_auto: Optional[dict] = None    # W' from your newest ramp test (wbal.py), found alongside
+        self._wb: Optional[tuple] = None     # live W'bal: (session, seconds counted, wbal.Balance)
+        self._warm_auto: Optional[dict] = None  # your normal warm-up heart rate (checks.warmup_normal)
+        self._warm: Optional[tuple] = None   # live warm-up readiness: (session, seconds when computed, result)
         self._a1_low_since = None            # when alpha 1 went under 0.75 (the Z2 guard)
         # workouts (workout.py) on the smart trainer (ftms.py via the worker)
         self.workout_id: Optional[str] = None   # picked on the home screen; None = free ride
@@ -134,6 +142,15 @@ class Engine(threading.Thread):
         # pedals have been still for 5 s, so spinning on after a ride doesn't start the next one
         self.armed, self.quiet_since = True, None
         self.home_dec = dec.Decoder()        # home: just enough decoding for the sensor check
+        # the strap's raw streams (polar_pmd), decoded live for the ride screen: the last 15 s of
+        # ECG and accelerometer on the ride's clock, and the stream setup (features, commands,
+        # answers) to put at the top of each new ride's raw log so it decodes on its own
+        self.pmd_dec = pmd.Decoder()
+        self.pmd_setup: list = []
+        self.pmd_off: Optional[timedelta] = None      # strap clock -> ours (smallest arrival lag)
+        self.strap = {"ecg": deque(maxlen=130 * 15), "acc": deque(maxlen=200 * 15)}
+        self.strap_n = {"ecg": 0, "acc": 0}           # samples ever added, for the page's "since"
+        self.strap_lock = threading.Lock()
         self.home_live: dict = {}            # name -> (value, time)
         self.quit = threading.Event()        # the window should close
         self.snap: dict = {}
@@ -144,6 +161,8 @@ class Engine(threading.Thread):
         w = self.make_worker(self.q, bool(self.settings.get("hr")))
         if hasattr(w, "want_trainer"):
             w.want_trainer = bool(self.settings.get("trainer"))
+        if hasattr(w, "set_hr_lock"):
+            w.set_hr_lock(self.settings.get("hr_lock"))
         w.log_file = self.log_file
         w.start()
         return w
@@ -184,6 +203,12 @@ class Engine(threading.Thread):
                 self._connect(arg["device"], bool(arg.get("on")))
             elif name == "workout":
                 self.workout_id = arg if arg in self.workouts() else None
+            elif name == "hr_forget":                    # a new strap: the next one to connect becomes yours
+                self.settings["hr_lock"] = None
+                if hasattr(self.worker, "set_hr_lock"):
+                    self.worker.set_hr_lock(None)
+                if self.settings_path:
+                    save_settings(self.settings_path, self.settings)
             elif name == "morning_start" and self.mcheck is None:
                 if hasattr(self.worker, "set_want") and not self.worker.want.get("hr"):
                     self._connect("hr", True)              # the check needs the strap
@@ -209,7 +234,7 @@ class Engine(threading.Thread):
                 self._show_file()
             elif name == "ride_meta" and isinstance(arg, dict) and rs.find_ride(self.out_dir, self.summary_id):
                 upd = {}
-                for key, lo, hi in (("temp_c", 5, 40), ("rh_pct", 5, 100)):
+                for key, lo, hi in (("temp_c", 5, 40), ("rh_pct", 5, 100), ("knee", 0, 3)):   # knee: 0-3, your score
                     v = arg.get(key, "keep")
                     if v is None or (isinstance(v, (int, float)) and not isinstance(v, bool) and lo <= v <= hi):
                         upd[key] = v
@@ -259,28 +284,63 @@ class Engine(threading.Thread):
     def vt1_ref(self) -> Optional[dict]:
         """VT1 heart rate to ride against: the setting if you gave one, else the latest ride whose alpha 1
         crossed 0.75 ({hr, lo, hi, day, source}). The ride list is read in the background."""
+        self._find_refs()
         if self.settings.get("vt1_hr"):
             return {"hr": self.settings["vt1_hr"], "source": "setting"}
+        return self._vt1_auto
+
+    def w_prime_ref(self) -> Optional[dict]:
+        """W' (J) from your newest ramp test, with CP = FTP: {w_prime, day, ride} (wbal.py)."""
+        self._find_refs()
+        return self._wp_auto
+
+    def _find_refs(self) -> None:
+        """Read the ride list in the background for the VT1 and W' references, once per rides_version."""
         if self._vt1_for != self.rides_version:
             self._vt1_for = self.rides_version
 
             def find(version=self.rides_version):
+                found = wp = warm = None
                 try:
-                    for r in rs.ride_list(self.out_dir, self.settings.get("ftp")):      # newest first
+                    rides = rs.ride_list(self.out_dir, self.settings.get("ftp"))       # newest first
+                    warm = checks.warmup_normal([r.get("warmup") for r in rides if r.get("source") == "Assioma"])
+                    for r in rides:
                         e = r.get("vt1_hr")
-                        if e and e.get("kind") == "cross":
+                        if found is None and e and e.get("kind") == "cross":
                             found = {"hr": e["value"], "lo": e.get("lo"), "hi": e.get("hi"), "source": "ride",
                                      "day": r["start_utc"][:10], "beats_pct": r.get("vt1_beats_pct")}
-                            break
-                    else:
-                        found = None
+                        if wp is None and r.get("ramp_w_prime"):
+                            wp = {"w_prime": r["ramp_w_prime"], "day": r["start_utc"][:10], "ride": r["id"]}
                 except Exception as ex:                    # never stops the ride screen
-                    self.worker.log(f"VT1 reference: {type(ex).__name__}: {ex}")
-                    found = None
+                    self.worker.log(f"VT1 / W' reference: {type(ex).__name__}: {ex}")
                 if version == self.rides_version:
-                    self._vt1_auto = found
+                    self._vt1_auto, self._wp_auto, self._warm_auto = found, wp, warm
             threading.Thread(target=find, daemon=True).start()
-        return self._vt1_auto
+
+    def _warmup_live(self, s: Session) -> Optional[dict]:
+        """Readiness from this ride's warm-up so far (checks.warmup), against your normal; worked out
+        every 10 s while the warm-up window fills, then kept."""
+        self._find_refs()
+        n = len(s.seconds)
+        if n < checks.READY_FROM_S + checks.READY_MIN_S:
+            return None
+        if self._warm is None or self._warm[0] is not s or (self._warm[1] < checks.READY_TO_S and n - self._warm[1] >= 10):
+            self._warm = (s, n, checks.warmup(s.seconds))
+        w, normal = self._warm[2], self._warm_auto
+        return w and {**w, "normal": normal and normal["hr"], "normal_a1": normal and normal["a1"]}
+
+    def _wbal_live(self, s: Session) -> Optional[dict]:
+        """The reserve now: W'bal over the recorded seconds so far, counted on as they come."""
+        ftp, ref = self.settings.get("ftp"), self.w_prime_ref()
+        if not ftp or not ref:
+            return None
+        if self._wb is None or self._wb[0] is not s or self._wb[2].cp != ftp or self._wb[2].w_prime != ref["w_prime"]:
+            self._wb = (s, 0, wbal.Balance(ftp, ref["w_prime"]))
+        _, n, b = self._wb
+        for row in s.seconds[n:]:
+            b.add(row.get("power_w"))
+        self._wb = (s, len(s.seconds), b)
+        return {"j": b.w, "pct": 100 * b.w / b.w_prime, "w_prime": b.w_prime, "cp": b.cp}
 
     def _guard(self, s: Session, now, alpha1, coverage) -> Optional[dict]:
         """Below / near / above VT1 now: 30-s heart rate against the reference, and alpha 1 under 0.75
@@ -506,6 +566,8 @@ class Engine(threading.Thread):
             else:
                 self.error = "Set your FTP on the home screen to ride a workout."
         self.session = Session(self.out_dir)
+        for n in self.pmd_setup:                     # how the strap's streams were set up, from before
+            self.session.log_raw(n)
         self.session.pedal_name = self.worker.pedal_name or "Assioma"
         self.session.start(now)
         self._meta(self.session)
@@ -551,7 +613,8 @@ class Engine(threading.Thread):
         if path is None:
             return
         base = os.path.join(self.out_dir, ride_id)
-        exts = (("_raw.csv", rs.SUFFIX, ".fit", "_summary.json", "_log.txt") if path.endswith(rs.SUFFIX) else (".fit",)) + (rs.META,)
+        exts = (("_raw.csv", rs.SUFFIX, ".fit", "_summary.json", "_log.txt") + STRAP_FILES if path.endswith(rs.SUFFIX)
+                else (".fit",)) + (rs.META,)
         for f in [base + e for e in exts] + [rs.cache_path(self.out_dir, ride_id)]:
             try:
                 os.remove(f)
@@ -631,12 +694,45 @@ class Engine(threading.Thread):
         try:
             while True:
                 n = self.q.get_nowait()
-                if self.session is not None:
+                if n.char in pmd.CHARS:
+                    self._strap_feed(n)
+                    if self.session is not None:
+                        self.session.log_raw(n)     # the ride's raw log keeps every frame
+                elif self.session is not None:
                     self.session.add(n)
                 else:
                     self._home_feed(n)
         except queue.Empty:
             pass
+
+    def _strap_feed(self, n) -> None:
+        if n.char == pmd.FEAT_CHAR:                  # a new connection: its setup starts here
+            self.pmd_setup, self.pmd_off = [n], None
+        elif n.char in (pmd.CMD_CHAR, pmd.CP_CHAR) and len(self.pmd_setup) < 64:
+            self.pmd_setup.append(n)
+        for kind, samples in self.pmd_dec.feed(n.char, n.time, n.data):
+            name = {pmd.ECG: "ecg", pmd.ACC: "acc"}.get(kind)
+            if not name or not samples:
+                continue
+            lag = n.time - pmd.strap_time(samples[-1][0]).replace(tzinfo=None)
+            if self.pmd_off is None or lag < self.pmd_off:
+                self.pmd_off = lag
+            with self.strap_lock:
+                for ns, vals in samples:
+                    self.strap[name].append((pmd.strap_time(ns).replace(tzinfo=None) + self.pmd_off, vals))
+                self.strap_n[name] += len(samples)
+            if name == "ecg" and self.mcheck is not None:      # the morning check judges odd beats by it
+                self.mcheck.add_ecg([(pmd.strap_time(ns).replace(tzinfo=None) + self.pmd_off, vals[0])
+                                     for ns, vals in samples])
+
+    def strap_since(self, name: str, k: int, t0) -> tuple:
+        """(total, [[s since t0, values...]]) of the samples after the page's count k."""
+        with self.strap_lock:
+            dq, total = self.strap[name], self.strap_n[name]
+            first = total - len(dq)
+            start = first if k > total or k < first else k
+            items = list(dq)[start - first:]
+        return total, [[round((t - t0).total_seconds(), 3), *v] for t, v in items]
 
     def _home_feed(self, n) -> None:
         """Home: the latest power and heart rate, for the sensor check and auto-start."""
@@ -682,11 +778,12 @@ class Engine(threading.Thread):
         quiet = (now - (c.last_data or c.started)).total_seconds()
         if c.phase(now) == "done" or quiet > 20:
             res = c.result(now) if quiet <= 20 else {"ok": False, "why": "the strap went quiet: is it on and connected?"}
-            self.mcheck, self.mresult = None, res
+            self.mcheck, self.mresult = None, res and {k: v for k, v in res.items() if k != "_ecg"}
             if res.get("ok"):
                 self.mornings = mo.add(self.mornings, res)
                 try:
                     mo.save(self.morning_path, self.mornings)
+                    mo.save_ecg(self.morning_path, res["date"], res.get("_ecg"))
                 except OSError as e:
                     self.worker.log(f"morning: {e}")
             self.morning_version += 1
@@ -694,6 +791,11 @@ class Engine(threading.Thread):
 
     def _tick(self) -> None:
         now = utcnow()
+        lock = getattr(self.worker, "hr_lock", None)
+        if lock and lock != self.settings.get("hr_lock"):          # the worker learnt your strap: keep it
+            self.settings["hr_lock"] = dict(lock)
+            if self.settings_path:
+                save_settings(self.settings_path, self.settings)
         self._morning_tick(now)
         if self.screen in PAGES:
             self._plan_today()
@@ -755,6 +857,9 @@ class Engine(threading.Thread):
             "devices": {k: sensor(kind) for k, kind in (("pedals", "pedal"), ("hr", "hr"), ("trainer", "trainer"))}
                        if sensor else None,
             "error": self.error, "dialog": self.dialog, "rides_version": self.rides_version,
+            # what the pages' numbers depend on: the rides, the day (form, "this week" roll over at
+            # midnight with the app open) and the FTP (every TSS): a change reloads them
+            "data_key": f"{self.rides_version}|{date.today().isoformat()}|{self.settings.get('ftp')}",
             "plan_version": self.plan_version, "plan_msg": self.plan_msg,
             "morning_version": self.morning_version, "morning_result": self.mresult,
             "morning": None if self.mcheck is None else {
@@ -801,6 +906,8 @@ class Engine(threading.Thread):
             "dyn": {k: live.get(k) for k in DYN_KEYS},
             "hrv": h, "strap": strap, "ride": ride,
             "guard": self._guard(s, now, h.get("alpha1"), h.get("cov")) if s.state != "finished" else None,
+            "wbal": self._wbal_live(s),
+            "warmup": self._warmup_live(s),
             "workout": self._workout_view(s),
             "beats": [[round((b.time - t0).total_seconds(), 3), b.artifact] for b in beats[-60:]
                       if (now - b.time).total_seconds() < 5.5] if t0 else [],      # the HR tile's strip
@@ -883,15 +990,21 @@ def make_server(engine: Engine, app_mode: dict) -> ThreadingHTTPServer:
             elif u.path == "/api/progress":
                 self._json(training.progress(rs.ride_list(engine.out_dir, engine.settings.get("ftp"))))
             elif u.path == "/api/ride":
-                s = rs.summarize_file(engine.out_dir, q.get("id", [""])[0], engine.settings.get("ftp"),
-                                      engine.settings.get("lthr"))
+                ftp = engine.settings.get("ftp")
+                wp = next((r["ramp_w_prime"] for r in rs.ride_list(engine.out_dir, ftp) if r.get("ramp_w_prime")), None)
+                rid = q.get("id", [""])[0]
+                rides = rs.ride_list(engine.out_dir, ftp)
+                s = rs.summarize_file(engine.out_dir, rid, ftp, engine.settings.get("lthr"), wp)
+                if s is not None:                            # your normal warm-up from the rides before this one
+                    s["warmup_normal"] = checks.warmup_normal([r.get("warmup") for r in rides if r.get("source") == "Assioma"
+                                                              and r["start_utc"] < s["start_utc"] and r["id"] != rid])
                 if s is None:
                     self._send(404, b"no such ride", "text/plain")
                     return
                 s.pop("fit_path", None)
                 self._json(s)
             elif u.path == "/api/state":
-                self._json(state(engine, app_mode, *(int(q.get(k, ["0"])[0]) for k in ("p", "h", "a", "b"))))
+                self._json(state(engine, app_mode, *(int(q.get(k, ["0"])[0]) for k in ("p", "h", "a", "b", "e", "x"))))
             else:
                 rel = "index.html" if u.path in ("/", "") else u.path.lstrip("/")
                 path = os.path.normpath(os.path.join(WEB, rel))
@@ -916,17 +1029,20 @@ def make_server(engine: Engine, app_mode: dict) -> ThreadingHTTPServer:
     return ThreadingHTTPServer(("127.0.0.1", 0), Handler)
 
 
-def state(engine: Engine, app_mode: dict, p: int, h: int, a: int, b: int) -> dict:
+def state(engine: Engine, app_mode: dict, p: int, h: int, a: int, b: int, e: int = 0, x: int = 0) -> dict:
     """The snapshot plus the graph points of the current ride that arrived since the page's counts
     (no ride: zero counts, which tells the page to clear its graphs)."""
     out = {**engine.snap, "app": app_mode["app"], "closed": engine.quit.is_set()}
     session = engine.session                       # may end while we read: keep this one
     if session is None or session.t0 is None:
-        return {**out, "pn": 0, "hn": 0, "an": 0, "bn": 0, "power": [], "hr": [], "a1": [], "beats_rr": []}
+        return {**out, "pn": 0, "hn": 0, "an": 0, "bn": 0, "power": [], "hr": [], "a1": [], "beats_rr": [], "strap": None}
     lp, lh, la, lb = session.live_power, session.live_hr, session.hrv.series, session.hrv.beats
     pn, hn, an, bn = len(lp), len(lh), len(la), session.hrv._judged
     t0 = session.t0
+    (en, ecg), (xn, acc) = engine.strap_since("ecg", e, t0), engine.strap_since("acc", x, t0)
     return {**out, "pn": pn, "hn": hn, "an": an, "bn": bn,
+            # the strap's raw streams: ECG [s, uV], accelerometer [s, x, y, z mG]
+            "strap": {"en": en, "xn": xn, "ecg": ecg, "acc": acc},
             # beats once judged: [s since t0, RR ms, artifact]
             "beats_rr": [[_r((x.time - t0).total_seconds()), _r(x.rr), bool(x.artifact)] for x in lb[b:bn]]
                         if b <= bn else [],

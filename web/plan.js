@@ -10,8 +10,10 @@ const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 async function showPlan(s) {
   $("pl-msg").hidden = !s.plan_msg;
   $("pl-msg").textContent = s.plan_msg || "";
-  if (PLAN.loading || (PLAN.data && S.prevScreen === "plan" && PLAN.version === s.plan_version && PLAN.rides === s.rides_version)) return;
-  PLAN.version = s.plan_version; PLAN.rides = s.rides_version;
+  // the status text for Claude includes the morning check: a new one reloads it too
+  if (PLAN.loading || (PLAN.data && S.prevScreen === "plan" && PLAN.version === s.plan_version && PLAN.rides === s.data_key
+      && PLAN.morning === s.morning_version)) return;
+  PLAN.version = s.plan_version; PLAN.rides = s.data_key; PLAN.morning = s.morning_version;
   PLAN.loading = true;
   try { PLAN.data = await (await fetch("/api/plan")).json(); } catch { return; } finally { PLAN.loading = false; }
   if (!$("pl-start").value) {                                    // next Monday, for a new block

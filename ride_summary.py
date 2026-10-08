@@ -21,9 +21,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import checks
+import ecg_beats
 import eftp
 import hrv
 import vt1
+import wbal
 
 SUFFIX = "_per_second.csv"
 ZONES = [(0.55, "Z1"), (0.75, "Z2"), (0.90, "Z3"), (1.05, "Z4"), (1.20, "Z5"), (float("inf"), "Z6")]  # Coggan
@@ -31,7 +33,7 @@ ZONES = [(0.55, "Z1"), (0.75, "Z2"), (0.90, "Z3"), (1.05, "Z4"), (1.20, "Z5"), (
 # Z4 95-105 %, Z5 106 % and up
 HR_ZONES = [(0.685, "Z1"), (0.835, "Z2"), (0.945, "Z3"), (1.055, "Z4"), (float("inf"), "Z5")]
 TEXT = {"time", "rider_position", "rr_ms"}
-SUMMARY_VERSION = 8                     # bump when the cached short summary changes
+SUMMARY_VERSION = 11                    # bump when the cached short summary changes
 
 
 def load(path: str) -> list[dict]:
@@ -124,7 +126,9 @@ def _poincare(rr: list) -> dict:
         m = sum(x) / len(x)
         return math.sqrt(sum((v - m) ** 2 for v in x) / (len(x) - 1))
     step = max(1, len(pairs) // 4000)          # plenty for a scatter, light on the page
-    return {"points": [[round(a), round(b)] for a, b in pairs[::step]], "sd1": sd(d), "sd2": sd(s),
+    # to 0.1 ms, not whole ms: the strap counts in 1/1024 s (0.977 ms), and rounding those to whole ms
+    # left some values empty (Python rounds an exact .5 to even), drawn as empty crosses in the plot
+    return {"points": [[round(a, 1), round(b, 1)] for a, b in pairs[::step]], "sd1": sd(d), "sd2": sd(s),
             "mean": sum(rr) / len(rr)}
 
 
@@ -152,7 +156,7 @@ def _workout_steps(rows: list, meta: dict) -> Optional[list]:
 
 
 def summarize(rows: list[dict], ftp: Optional[float] = None, lthr: Optional[float] = None,
-              meta: Optional[dict] = None) -> dict:
+              meta: Optional[dict] = None, w_prime: Optional[float] = None, ecg_path: Optional[str] = None) -> dict:
     if not rows:
         raise ValueError("no recorded seconds")
     t0 = rows[0]["time"]
@@ -208,6 +212,13 @@ def summarize(rows: list[dict], ftp: Optional[float] = None, lthr: Optional[floa
 
     ts = [round((r["time"] - t0).total_seconds()) for r in rows]
     beat_t = [round((b.time - t0).total_seconds(), 2) for b in beats]
+    odd = None
+    if ecg_path:                       # the strap's ECG: were the set-aside beats real early beats? (ecg_beats.py)
+        try:
+            ecg = ecg_beats.load(ecg_path, t0)
+            odd = ecg and ecg_beats.check(beats, [(b.time - t0).total_seconds() for b in beats], ecg)
+        except (OSError, ValueError, IndexError):
+            odd = None
     return {
         "start_utc": t0.replace(tzinfo=timezone.utc).isoformat(),
         "stats": {
@@ -226,6 +237,8 @@ def summarize(rows: list[dict], ftp: Optional[float] = None, lthr: Optional[floa
         "mmp": eftp.mmp(power),
         "env": {"temp_c": (meta or {}).get("temp_c"), "rh_pct": (meta or {}).get("rh_pct")},
         "durability": checks.durability(rows),
+        "warmup": checks.warmup(rows),                         # heart rate at 125 W early on (checks.py)
+        "knee": {**checks.knee(rows, ftp), "score": (meta or {}).get("knee")},   # torque per rep + your 0-3
         "check": _no_a1(checks.fitness_check(rows, meta), meta),
         "workout_steps": _workout_steps(rows, meta),
         "zones": zone_s, "hr_zones": hr_zone_s, "a1_bands": a1_bands,
@@ -233,6 +246,8 @@ def summarize(rows: list[dict], ftp: Optional[float] = None, lthr: Optional[floa
         "series": {"t": ts, "power": power, "hr": hr, "cadence": cad, "a1": a1},
         "beats": {"t": beat_t, "rr": [round(b.rr, 1) for b in beats], "artifact": [bool(b.artifact) for b in beats]},
         "poincare": _poincare(clean),
+        "wbal": wbal.summary(power, ftp, w_prime),             # the reserve above CP (= FTP), wbal.py
+        "odd_beats": odd,
         **(_thresholds(rows) if not smoothed_rr(meta) else {"vt1": None, "vt2": None}),
         "rr_smoothed": smoothed_rr(meta),
     }
@@ -301,6 +316,11 @@ def short(s: dict) -> dict:
             "vt1_beats_pct": v.get("beats_pct"), "zones": s["zones"], "mmp": s["mmp"],
             "vt2_hr": brief(v2.get("hr")), "vt2_power": brief(v2.get("power")),
             "temp_c": s["env"]["temp_c"], "rh_pct": s["env"]["rh_pct"],
+            "warmup": s["warmup"],
+            "knee": {"score": s["knee"]["score"], "peak_torque": s["knee"]["peak_torque"],
+                     "rep_torque": max((r["torque"] or 0 for r in s["knee"]["reps"]), default=None) or None,
+                     "rep_cadence": checks._mean([r["cadence"] for r in s["knee"]["reps"]]),
+                     "reps": len(s["knee"]["reps"])},
             "durability": s["durability"] and {k: s["durability"][k] for k in ("drift_pct", "a1_drop", "onset_min", "score")},
             "check": s["check"] and {"hr_a": s["check"]["hr_a"], "hr_b": s["check"]["hr_b"], "hrr60": s["check"]["hrr60"],
                                      "steps": [{k: st[k] for k in ("power", "hr", "a1", "rmssd")} for st in s["check"]["steps"]]}}
@@ -380,7 +400,7 @@ def ride_name(ride_id: str) -> tuple:
     return (" ".join(rest).strip() or None), source
 
 
-def summarize_file(folder: str, ride_id: str, ftp=None, lthr=None) -> Optional[dict]:
+def summarize_file(folder: str, ride_id: str, ftp=None, lthr=None, w_prime=None) -> Optional[dict]:
     path = find_ride(folder, ride_id)
     if path is None:
         return None
@@ -388,7 +408,7 @@ def summarize_file(folder: str, ride_id: str, ftp=None, lthr=None) -> Optional[d
     if not rows:
         return None
     meta = load_meta(folder, ride_id)
-    s = summarize(rows, ftp, lthr, meta)
+    s = summarize(rows, ftp, lthr, meta, w_prime, os.path.join(folder, ride_id + "_ecg.csv"))
     raw = os.path.join(folder, ride_id + "_raw.csv")
     if os.path.exists(raw):                                  # recorded over ANT+ and Bluetooth at once
         import linkcheck
@@ -466,7 +486,7 @@ def ride_list(folder: str, ftp: Optional[float] = None) -> list[dict]:
                 info = json.load(fh)
             if (info.get("v") != SUMMARY_VERSION or os.path.getmtime(cache) < os.path.getmtime(path)
                     or (os.path.exists(mp) and os.path.getmtime(cache) < os.path.getmtime(mp))
-                    or (info.get("ftp") is None and ftp)):         # an FTP set since: now it has TSS
+                    or (ftp and info.get("ftp") != ftp)):          # FTP set or changed since: its TSS is redone
                 info = None
         except (OSError, ValueError):
             pass
@@ -476,6 +496,8 @@ def ride_list(folder: str, ftp: Optional[float] = None) -> list[dict]:
             except Exception:                                     # a file we can't read: not a ride
                 continue
             info = short(summarize(rows, ftp, None, meta)) if rows else {"v": SUMMARY_VERSION, "empty": True}
+            if rows and eftp.is_ramp({"id": ride_id, "name": (meta.get("workout") or {}).get("name")}):
+                info["ramp_w_prime"] = wbal.ramp_w_prime([r.get("power_w") for r in rows], ftp)
             try:
                 with open(cache, "w") as fh:
                     json.dump(info, fh)

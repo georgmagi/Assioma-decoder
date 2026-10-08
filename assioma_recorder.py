@@ -141,8 +141,12 @@ class Session:
             self.segments.append((now, None))
             self._event(now, "resume")
 
-    def add(self, n: dec.Notification) -> None:
+    def log_raw(self, n: dec.Notification) -> None:
+        """Into the raw log only (e.g. the strap's stream setup from before the ride started)."""
         self._raw.write(f"{n.time.isoformat()},{n.char},{n.data.hex()}\n")
+
+    def add(self, n: dec.Notification) -> None:
+        self.log_raw(n)
         if self.t0 is None:
             self.t0 = n.time
         for r in self.decoder.feed(n):
@@ -266,7 +270,7 @@ class Session:
         for fh in (self._raw, self._sec):
             if not fh.closed:
                 fh.close()
-        for ext in ("_raw.csv", "_per_second.csv", ".fit"):
+        for ext in ("_raw.csv", "_per_second.csv", ".fit") + STRAP_FILES:
             try:
                 os.remove(self.base + ext)
             except OSError:
@@ -292,7 +296,20 @@ class Session:
             return None
         path = self.base + ".fit"
         summary = fit_writer.write_activity(self.seconds, path, self.pedal_name, self.battery)
+        threading.Thread(target=export_strap_streams, args=(self.base,), daemon=True).start()
         return path, summary
+
+
+STRAP_FILES = ("_ecg.csv", "_acc.csv")    # the strap's raw streams, written from the raw log
+
+
+def export_strap_streams(base: str) -> None:
+    """base_ecg.csv / base_acc.csv from the raw log, when the strap streamed (polar_pmd.export)."""
+    try:
+        import polar_pmd
+        polar_pmd.export(base + "_raw.csv", base)
+    except Exception as e:                        # never in the way of a saved ride
+        print(f"strap streams: {type(e).__name__}: {e}", file=sys.stderr)
 
 
 def convert(notes, base: str) -> tuple:
@@ -352,6 +369,15 @@ class BleWorker(threading.Thread):
         # record the strap over Bluetooth too while ANT+ is the source: a second copy of every beat,
         # kept in the raw log (BLE_HR_SECOND) for linkcheck.py; it never feeds the ride's HRV
         self.both_hr = True
+        # a Polar strap's raw streams (polar_pmd.py): ECG and accelerometer at full detail, into
+        # the raw log; the only writes the recorder makes to the strap are the PMD start commands
+        self.strap_streams = True
+        self.pmd: list = []                       # what the strap agreed to stream, for the log
+        # your strap: {address, name, ant}; once set only it is connected (Bluetooth and ANT+), so a
+        # neighbour's strap or watch can't slip into a ride. Learnt from the first strap that
+        # connects; the app keeps it in settings.json and can forget it. {} = any strap
+        self.hr_lock: dict = {}
+        self._pmd_frames = 0
         self.attempt = {"pedal": None, "hr": None, "trainer": None}   # monotonic deadline of a clicked attempt
         self.state = {"pedal": "searching", "hr": "searching" if want_hr else "off", "trainer": "off"}
         self.note = {"pedal": "", "hr": "", "trainer": ""}
@@ -450,6 +476,7 @@ class BleWorker(threading.Thread):
                 import ant_hr
                 self.ant = ant_hr.AntHrWorker(self.q)
                 self.ant.log = self.log
+                self.ant.device_lock = self.hr_lock.get("ant")
                 self.ant.enabled = self.want["hr"]
                 self.ant.start()
             except Exception as e:
@@ -549,8 +576,25 @@ class BleWorker(threading.Thread):
              and "assioma" not in self._devname(d, a).lower()]
         if self.hr_filter:
             c = [x for x in c if self.hr_filter in self._devname(*x).lower()]
+        if self.hr_lock.get("address"):
+            c = [x for x in c if x[0].address.upper() == self.hr_lock["address"].upper()]
         c = sorted(c, key=lambda x: x[1].rssi or -999, reverse=True)
         return c[0] if c else None
+
+    def set_hr_lock(self, lock: Optional[dict]) -> None:
+        """Your strap, or None to take any (the next one to connect becomes yours)."""
+        self.hr_lock = dict(lock or {})
+        if self.ant is not None:
+            self.ant.device_lock = self.hr_lock.get("ant")
+
+    @staticmethod
+    def ant_number(address: str) -> Optional[int]:
+        """A Polar strap's ANT+ device number is the end of its Bluetooth address (H10
+        24:AC:AC:12:34:56 = ANT+ #13398 = 0x3456). None when the address isn't a MAC (macOS)."""
+        try:
+            return int(address.replace(":", "")[-4:], 16) or None
+        except ValueError:
+            return None
 
     def log(self, text: str) -> None:
         """Connection events for the ride's log file (set by the recorder); never raises."""
@@ -577,6 +621,97 @@ class BleWorker(threading.Thread):
             self._held.append(n)          # pedal not confirmed as the left one yet
         else:
             self.q.put(n)
+
+    async def _start_pmd(self, client) -> None:
+        """A Polar strap (H10): ask for every raw stream it has at the highest settings it offers
+        (polar_pmd.choose_max). Commands, answers and frames all go to the queue as they are, so
+        the raw log keeps them. Any other strap has no PMD control point and is left alone."""
+        import polar_pmd as pmd
+        loop = asyncio.get_running_loop()
+        answers: asyncio.Queue = asyncio.Queue()
+
+        def on_cp(_s, data):
+            data = bytes(data)
+            self.q.put(dec.Notification(utcnow(), pmd.CP_CHAR, data))
+            loop.call_soon_threadsafe(answers.put_nowait, data)
+
+        def on_data(_s, data):
+            self._pmd_frames += 1
+            self.q.put(dec.Notification(utcnow(), pmd.DATA_CHAR, bytes(data)))
+
+        self._pmd_frames = 0
+        try:
+            await asyncio.wait_for(client.start_notify(pmd.CP, on_cp), 10)
+            await asyncio.wait_for(client.start_notify(pmd.DATA, on_data), 10)
+        except Exception:
+            return                                # not a Polar strap (or it won't let us subscribe)
+
+        async def ask(cmd: bytes) -> dict:
+            while not answers.empty():
+                answers.get_nowait()
+            self.q.put(dec.Notification(utcnow(), pmd.CMD_CHAR, cmd))
+            await asyncio.wait_for(client.write_gatt_char(pmd.CP, cmd, response=True), 10)
+            params = b""
+            while True:                           # the answer to this op code (long ones come in parts)
+                r = pmd.response(await asyncio.wait_for(answers.get(), 5))
+                if r is None or r["op"] != cmd[0]:
+                    continue
+                params += r["params"]
+                if not r["more"]:
+                    return {**r, "params": params}
+
+        got = []
+        try:
+            feat = bytes(await asyncio.wait_for(client.read_gatt_char(pmd.CP), 10))
+            self.q.put(dec.Notification(utcnow(), pmd.FEAT_CHAR, feat))
+            offered = pmd.features(feat)
+            for kind in (pmd.ECG, pmd.ACC, pmd.PPG, pmd.PPI, pmd.GYRO, pmd.MAG):
+                if kind not in offered or kind in (pmd.PPG, pmd.PPI):   # optical only: not on a chest strap
+                    continue
+                r = await ask(pmd.settings_cmd(kind))
+                if r["status"]:
+                    self.log(f"hr: {pmd.NAMES[kind]} settings: {r['error']}")
+                    continue
+                chosen = pmd.choose_max(pmd.parse_settings(r["params"]))
+                r = await ask(pmd.start_cmd(kind, chosen))
+                if r["status"] in (0, 6):
+                    got.append(f"{pmd.NAMES[kind]} {chosen}")
+                else:
+                    self.log(f"hr: {pmd.NAMES[kind]} start: {r['error']}")
+        except Exception as e:
+            self.log(f"hr: strap streams: {type(e).__name__}: {e}")
+        self.pmd = got
+        self.log(f"hr: strap streams {got or 'none'} (MTU {getattr(client, 'mtu_size', '?')})")
+        if got:
+            # the H10 only sends its streams over a paired link: it accepts the start but stays silent.
+            # Paired, the first frames can still take over 5 s (the 5-s check warned falsely, 6-8 Oct),
+            # so wait up to 20 s and note how long it took
+            t0 = time.monotonic()
+            while not self._pmd_frames and time.monotonic() - t0 < 20 and client.is_connected:
+                await asyncio.sleep(0.5)
+            if self._pmd_frames:
+                self.log(f"hr: first strap frames after {time.monotonic() - t0:.1f} s")
+            elif client.is_connected:
+                self.log("hr: the strap accepted the streams but sent nothing in 20 s: pair it with Windows "
+                         "(Settings > Bluetooth & devices > Add device)")
+
+    async def _stop_pmd(self, client) -> None:
+        """Leave the strap clean: stop its streams and unsubscribe before disconnecting, so the
+        next connection (ours or another app's) starts from nothing."""
+        import polar_pmd as pmd
+        if not self.pmd:
+            return
+        self.pmd = []
+        for kind in (pmd.ACC, pmd.ECG):
+            try:
+                await asyncio.wait_for(client.write_gatt_char(pmd.CP, pmd.stop_cmd(kind), response=True), 3)
+            except Exception:
+                pass
+        for u in (pmd.DATA, pmd.CP):
+            try:
+                await asyncio.wait_for(client.stop_notify(u), 3)
+            except Exception:
+                pass
 
     async def _keep_connected(self, kind: str, pick, uuids: list) -> None:
         from bleak import BleakClient, BleakScanner
@@ -641,20 +776,30 @@ class BleWorker(threading.Thread):
                         self.pedal_name = name
                     self._connected(kind, name)
                     self.log(f"{kind}: connected to {name} ({dev.address}), missing {missing or 'none'}")
+                    if kind == "hr" and not self.hr_lock.get("address"):
+                        ant = self.ant_number(dev.address) if "polar" in name.lower() else None   # others: ANT+ stays open
+                        self.set_hr_lock({"address": dev.address, "name": name, "ant": ant})
+                        self.log(f"hr: {name} is now your strap: others are left alone")
+                    if kind == "hr" and self.strap_streams:
+                        await self._start_pmd(client)
                     since = time.monotonic()
-                    while not self._halt.is_set() and not lost.is_set() and client.is_connected:
-                        await asyncio.sleep(0.5)
-                        if not self.want[kind]:
-                            self.log(f"{kind}: disconnected (asked to)")
-                            break
-                        if kind == "hr" and self._ant_has_hr() and not self.both_hr:
-                            self.log("hr: the ANT+ stick has the strap: Bluetooth disconnected")
-                            break
-                        # watchdog: connected but silent (both sensors notify at least ~1/s) -> reconnect
-                        quiet = time.monotonic() - max(self.last_data[kind], since)
-                        if quiet > self.SILENT_S:
-                            self.log(f"{kind}: no data for {quiet:.0f} s while connected: reconnecting")
-                            break
+                    try:
+                        while not self._halt.is_set() and not lost.is_set() and client.is_connected:
+                            await asyncio.sleep(0.5)
+                            if not self.want[kind]:
+                                self.log(f"{kind}: disconnected (asked to)")
+                                break
+                            if kind == "hr" and self._ant_has_hr() and not self.both_hr:
+                                self.log("hr: the ANT+ stick has the strap: Bluetooth disconnected")
+                                break
+                            # watchdog: connected but silent (both sensors notify at least ~1/s) -> reconnect
+                            quiet = time.monotonic() - max(self.last_data[kind], since)
+                            if quiet > self.SILENT_S:
+                                self.log(f"{kind}: no data for {quiet:.0f} s while connected: reconnecting")
+                                break
+                    finally:
+                        if kind == "hr" and not lost.is_set() and client.is_connected:
+                            await self._stop_pmd(client)
                     if lost.is_set():
                         self.log(f"{kind}: disconnected")
             except Exception as e:

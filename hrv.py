@@ -70,11 +70,12 @@ def rmssd(rr: list) -> Optional[float]:
 
 
 class Beat:
-    __slots__ = ("time", "rr", "artifact", "corrected")
+    __slots__ = ("time", "rr", "artifact", "corrected", "orig")
 
     def __init__(self, time: datetime, rr: float) -> None:
         self.time, self.rr, self.artifact = time, rr, None   # artifact: None until judged
         self.corrected = False                                # rr changed by the misplaced-beat fix
+        self.orig = rr                                        # the interval as the strap sent it
 
 
 class HrvTracker:

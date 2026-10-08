@@ -39,7 +39,7 @@ def main() -> None:
         os.path.join(HERE, "recorder_app.py"), "--name", NAME, "--onefile", "--windowed", "--noconfirm",
         "--icon", ICON, "--add-data", f"{os.path.join(HERE, 'web')}{os.pathsep}web",
         "--collect-all", "bleak", "--collect-all", "webview", "--collect-all", "libusb",
-        "--collect-submodules", "winrt", "--collect-all", "garmin_fit_sdk", "--hidden-import", "ant_hr", "--hidden-import", "vt1", "--hidden-import", "eftp", "--hidden-import", "checks", "--hidden-import", "plan", "--hidden-import", "morning", "--hidden-import", "linkcheck",
+        "--collect-submodules", "winrt", "--collect-all", "garmin_fit_sdk", "--hidden-import", "ant_hr", "--hidden-import", "vt1", "--hidden-import", "eftp", "--hidden-import", "checks", "--hidden-import", "plan", "--hidden-import", "morning", "--hidden-import", "polar_pmd", "--hidden-import", "linkcheck",
         "--distpath", HERE, "--workpath", work, "--specpath", work,
     ])
     shutil.rmtree(work, ignore_errors=True)

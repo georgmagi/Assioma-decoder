@@ -9,6 +9,8 @@ The right pedal sends bogus 999 W standard power and no private stream.
 The left pedal replays samples/ride_2026-09-26_nrf.csv and drops the connection once.
 From scan 3 an FTMS trainer "T" advertises too: it answers control point writes like the spec says
 (and records them in STATE["trainer_writes"]), and drops its connection once after its 3rd target.
+With FAKE_POLAR=1 in the environment the strap "H" is a Polar H10: it has the PMD service, answers
+settings and start commands (recorded in STATE["pmd_writes"]) and then streams ECG and ACC frames.
 """
 import asyncio
 import os
@@ -19,7 +21,10 @@ sys.path.insert(0, ROOT)
 import assioma_decoder as d  # noqa: E402
 
 NOTES = list(d.read_nrf_log(os.path.join(ROOT, "samples", "ride_2026-09-26_nrf.csv"), "2026-09-26", 3))
-STATE = {"connects": 0, "scans": 0, "left": 0, "trainer_writes": [], "trainer_drops": 0}
+STATE = {"connects": 0, "scans": 0, "left": 0, "trainer_writes": [], "trainer_drops": 0, "pmd_writes": []}
+POLAR = os.environ.get("FAKE_POLAR") == "1"
+PMD_CP, PMD_DATA = "fb005c81-02e7-f387-1cad-8acd2d8df0c8", "fb005c82-02e7-f387-1cad-8acd2d8df0c8"
+PMD_SETTINGS = {0: bytes.fromhex("00018200" "01010e00"), 2: bytes.fromhex("0004190032006400c800" "01011000" "0203020004000800")}
 _BASE = "-0000-1000-8000-00805f9b34fb"
 
 
@@ -55,6 +60,7 @@ class BleakScanner:
 class BleakClient:
     def __init__(self, dev, disconnected_callback=None, timeout=20):
         self.dev, self.cb, self.connected, self.subs = dev, disconnected_callback, False, {}
+        self.streams = set()
 
     async def __aenter__(self):
         STATE["connects"] += 1
@@ -76,9 +82,23 @@ class BleakClient:
             return bytearray(struct.pack("<II", 1 << 14, (1 << 3) | (1 << 13)))
         if "2ad8" in uuid:
             return bytearray(struct.pack("<hhH", 0, 600, 1))
+        if POLAR and self.dev.address == "H" and uuid.lower() == PMD_CP:
+            return bytearray(bytes.fromhex("0f0500"))
         raise Exception("not readable")
 
     async def write_gatt_char(self, uuid, data, response=True):
+        if POLAR and self.dev.address == "H":
+            assert uuid.lower() == PMD_CP and PMD_CP in self.subs and PMD_DATA in self.subs
+            data = bytes(data)
+            STATE["pmd_writes"].append(data)
+            if data[0] == 1:
+                answer = bytes([0xF0, 1, data[1], 0, 0]) + PMD_SETTINGS[data[1]]
+            else:
+                answer = bytes([0xF0, data[0], data[1], 0, 0])
+                if data[0] == 2:
+                    self.streams.add(data[1])
+            asyncio.get_running_loop().call_soon(self._send, PMD_CP, answer)
+            return
         assert self.dev.address == "T" and "2ad9" in uuid and "00002ad9" + _BASE in self.subs
         STATE["trainer_writes"].append(bytes(data))
         asyncio.get_running_loop().call_soon(self._send, "00002ad9" + _BASE, [0x80, data[0], 0x01])
@@ -92,7 +112,7 @@ class BleakClient:
         self.cb(self)
 
     async def start_notify(self, uuid, callback):
-        if self.dev.address == "H" and "2a37" not in uuid:
+        if self.dev.address == "H" and "2a37" not in uuid and not (POLAR and uuid.lower() in (PMD_CP, PMD_DATA)):
             raise Exception("no such characteristic")
         self.subs[uuid.lower()] = callback
 
@@ -106,9 +126,17 @@ class BleakClient:
                 await asyncio.sleep(1)
                 self._send("00002ad2" + _BASE, [0x44, 0x00, 0x10, 0x0E, 0xB4, 0x00, 0xC8, 0x00])
         if self.dev.address == "H":
+            ns, k = 600_000_000_000, 0
             while True:
-                await asyncio.sleep(1)
-                self._send("00002a37" + _BASE, [0x10, 70, 0x80, 0x03])
+                await asyncio.sleep(0.1)
+                k += 1
+                ns += 100_000_000
+                if 0 in self.streams:          # ECG: 13 samples of 3 bytes per 0.1 s
+                    self._send(PMD_DATA, bytes([0]) + ns.to_bytes(8, "little") + bytes([0]) + bytes(range(39)))
+                if 2 in self.streams:          # ACC: 20 samples x 3 axes x 16 bit per 0.1 s
+                    self._send(PMD_DATA, bytes([2]) + ns.to_bytes(8, "little") + bytes([1]) + bytes(120))
+                if k % 10 == 0:
+                    self._send("00002a37" + _BASE, [0x10, 70, 0x80, 0x03])
         if self.dev.address == "R":
             while True:
                 await asyncio.sleep(0.5)

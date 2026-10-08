@@ -24,18 +24,32 @@ function drawProfile(cv, steps, opts = {}) {
   const peak = Math.max(0, ...steps.map((s) => Math.max(s[1] ?? 0, s[2] ?? 0)));
   const top = opts.fill ? Math.max(0.5, peak) * 1.04 : Math.max(1.2, peak);
   const X = (t) => (t / total) * w, Y = (f) => h - (f / top) * (h - 2);
+  // during a ride the part already ridden is greyed as it goes, also inside a long step (a 90-min
+  // block used to stay bright to its end and then grey all at once): each step is filled bright, then
+  // again faded, clipped to the left of "now"
+  const xNow = opts.at != null ? X(opts.at) : null;
   let t = 0;
   for (const [dur, lo, hi] of steps) {
     const x0 = X(t), x1 = X(t + dur);
-    const past = opts.at != null && t + dur <= opts.at;
-    if (lo == null) {                                              // free ride: a low hatched block
-      ctx.fillStyle = blend(C.dim, C.panel, 0.7);
-      ctx.fillRect(x0, Y(0.3), Math.max(1, x1 - x0 - 1), h - Y(0.3));
-    } else {
-      ctx.fillStyle = blend(zoneColour((lo + hi) / 2), C.panel, opts.at != null && !past ? 0.15 : opts.at != null ? 0.55 : 0.2);
+    const shape = () => {
       ctx.beginPath();
-      ctx.moveTo(x0, h); ctx.lineTo(x0, Y(lo)); ctx.lineTo(Math.max(x0 + 1, x1 - 1), Y(hi)); ctx.lineTo(Math.max(x0 + 1, x1 - 1), h);
-      ctx.closePath(); ctx.fill();
+      if (lo == null) ctx.rect(x0, Y(0.3), Math.max(1, x1 - x0 - 1), h - Y(0.3));   // free ride: a low block
+      else {
+        ctx.moveTo(x0, h); ctx.lineTo(x0, Y(lo)); ctx.lineTo(Math.max(x0 + 1, x1 - 1), Y(hi)); ctx.lineTo(Math.max(x0 + 1, x1 - 1), h);
+        ctx.closePath();
+      }
+    };
+    const colour = lo == null ? C.dim : zoneColour((lo + hi) / 2);
+    const fade = lo == null ? 0.7 : xNow == null ? 0.2 : 0.15;
+    ctx.fillStyle = blend(colour, C.panel, fade);
+    shape(); ctx.fill();
+    if (xNow != null && xNow > x0) {                               // ridden: faded, up to now
+      ctx.save();
+      ctx.beginPath(); ctx.rect(x0, 0, Math.min(x1, xNow) - x0, h); ctx.clip();
+      ctx.fillStyle = C.panel; shape(); ctx.fill();                // cover the bright fill first
+      ctx.fillStyle = blend(colour, C.panel, lo == null ? 0.82 : 0.55);
+      shape(); ctx.fill();
+      ctx.restore();
     }
     t += dur;
   }

@@ -60,7 +60,7 @@ button { font: inherit; color: inherit; }
 .tiles {
   display: grid;
   /* the first column is the Cycling Dynamics panel's (--col1), so the edges line up */
-  grid-template-columns: var(--col1) minmax(0, 16.4fr) minmax(0, 17.8fr) minmax(0, 16.4fr) minmax(0, 16.4fr);
+  grid-template-columns: var(--col1) minmax(0, 16.4fr) minmax(0, 35fr) minmax(0, 16.4fr);
   column-gap: var(--gap);
   min-height: 0;
 }
@@ -153,6 +153,13 @@ button { font: inherit; color: inherit; }
 
 /* heart-rate tile: heartbeats drift across its background */
 .hr canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+/* heart rate and alpha 1 on the left of one wide tile; the ECG runs across the rest */
+.tile.hrx { grid-template-rows: none; grid-template-columns: auto minmax(0, 1fr); }
+.hx-nums { position: relative; display: grid; align-content: center; gap: 2px; width: clamp(130px, 30cqw, 200px); min-width: 0; }
+.hx-nums .value .num { font-size: min(36cqh, 12cqw); }
+.hx-a1 { display: flex; align-items: baseline; gap: 10px; margin-top: 6px; }
+.hx-a1 .num { font-size: min(20cqh, 7cqw); }
+.hx-nums .sub { font-size: clamp(10px, 8cqh, 12.5px); }
 
 /* ---- graph panel */
 main { min-height: 0; display: grid; grid-template-columns: var(--col1) minmax(0, 1fr); gap: var(--gap); }
@@ -187,6 +194,17 @@ main { min-height: 0; display: grid; grid-template-columns: var(--col1) minmax(0
 .seg button:hover:not(.on) { color: var(--fg); }
 .chart { position: relative; min-height: 0; display: grid; grid-template-rows: 1fr 1fr; gap: 6px; }
 .plot { position: relative; min-height: 0; }
+/* the strap's raw streams under the graphs: ECG and chest movement, swept like a monitor */
+.chart:has(#c-strap:not([hidden])) { grid-template-rows: 1fr 1fr 0.8fr; }
+.strap-row { display: grid; grid-template-columns: minmax(0, 1fr) clamp(220px, 24%, 320px); gap: 18px; }
+.mv-cell { display: grid; grid-template-rows: minmax(0, 1fr) auto; gap: 2px; padding-top: 22px; }
+.mv-cell .cap { left: 0; gap: 10px; }
+.mv-views { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; min-height: 0; }
+.mv-cell .mv-views canvas { position: static; width: 100%; height: 100%; min-height: 0; display: block; }
+.mv-sub { font-size: 11px; color: var(--dim); text-align: center; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.strap-cell { position: relative; min-width: 0; min-height: 0; }
+.strap-cell .cap { left: 8px; }
+.strap-cell canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .cap {
   position: absolute; left: 54px; top: 2px; z-index: 1;
   display: flex; gap: 14px; align-items: center;
@@ -1012,8 +1030,17 @@ body:has(#topnav:not([hidden])) { grid-template-rows: auto minmax(0, 1fr) auto; 
 .sum-env label { display: flex; align-items: center; gap: 4px; }
 .sum-env input[type="number"] { width: 4.2em; padding: 5px 8px; font-size: 14px; }
 .sum-env .u { width: auto; color: var(--dim); }
-.sum-cards #card-wsteps { grid-column: span 2; }
-@media (max-width: 760px) { .sum-cards #card-wsteps { grid-column: auto; } }
+.sum-cards #card-wsteps, .sum-cards #card-wbal, .sum-cards #card-knee { grid-column: span 2; }
+@media (max-width: 760px) { .sum-cards #card-wsteps, .sum-cards #card-wbal, .sum-cards #card-knee { grid-column: auto; } }
+.sum-cards #card-pc { grid-column: 1 / -1; }            /* the beat-to-beat plot: a row of its own */
+#knee-rows tr { cursor: pointer; }
+/* W' balance: the summary chart and the live gauge along the ride-time tile's bottom edge */
+.wbal-wrap { position: relative; height: 200px; }
+.wbal-wrap canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.wb-lab { letter-spacing: 0.06em; font-variant-numeric: tabular-nums; }
+.wb-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 4px; background: var(--grid); }
+.wb-bar b { display: block; height: 100%; width: 100%; background: var(--good); transition: width 0.5s, background 0.5s; }
+.wb-bar[hidden] { display: none; }
 .sum-env { align-items: center; }
 .sum-env-lab { font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--dim); }
 [data-theme="lcd"] .sum-env-lab, [data-theme="lcd"] .sum-env .u { color: #a3a7ac; }
@@ -1072,3 +1099,7 @@ code { font: 12px Consolas, "Cascadia Mono", monospace; background: color-mix(in
 .screen.workouts:has(#wo-build:not([hidden])) #wo-detail { display: none; }
 [data-theme="lcd"] .wb-name input, [data-theme="lcd"] .wb-text textarea,
 [data-theme="lcd"] .pl-card textarea { background: rgba(27, 30, 25, 0.06); border-color: rgba(27, 30, 25, 0.35); color: var(--fg); }
+
+/* the strap lock: "use another strap" in the Connections card */
+.dev .forget { cursor: pointer; text-underline-offset: 2px; }
+.dev .forget:hover { color: var(--fg); }

@@ -56,6 +56,10 @@ const S = {
   power3s: store.get("power3s", false),  // power tile: 3 s average instead of instantaneous
 };
 const serverNow = () => (S.offset == null ? null : performance.now() / 1000 + S.offset);
+// the strap's raw streams (a Polar H10): ECG [s, uV] and accelerometer [s, x, y, z mG], the last
+// 12 s, with the counts the server has sent so far; drawn a little behind real time (the strap
+// sends ECG in ~0.5 s blocks), the delay learnt from how late the newest sample arrives
+const SD = { ecg: [], acc: [], e: 0, x: 0, lag: { ecg: [], acc: [] }, delay: { ecg: 1, acc: 0.5 }, range: {} };
 
 // --------------------------------------------------------------------------- numbers that roll
 const tweens = {};                      // id -> {from, to, t0}
@@ -125,12 +129,31 @@ function renderTiles(s) {
     : `RMSSD ${fmt(h.rmssd, 1)} · art ${fmt(h.art, 1)}%`;
   a1Sub.classList.toggle("warn", a1 != null && (partial || low >= 30));
 
+  // the reserve above CP (W' balance, wbal.py): a gauge along the tile's bottom edge
+  const wb = s.wbal, wbCol = !wb ? C.dim : wb.pct >= 50 ? C.good : wb.pct >= 25 ? C.warn : C.bad;
+  $("wb-bar").hidden = !wb;
+  $("wb-lab").textContent = wb ? `W′ ${fmt(Math.max(0, wb.pct))}%` : "";
+  $("wb-lab").style.color = wb && wb.pct < 99.5 ? wbCol : "";
+  if (wb) {
+    const bar = $("wb-bar").firstElementChild;
+    bar.style.width = `${Math.max(0, Math.min(100, wb.pct)).toFixed(1)}%`;
+    bar.style.background = THEME === "lcd" ? C.fg : wbCol;
+    $("wb-lab").title = `Your reserve above CP ${fmt(wb.cp)} W: ${(wb.j / 1000).toFixed(1)} of ${(wb.w_prime / 1000).toFixed(1)} kJ left`;
+  }
+
   const r = s.ride;
   $("clock").textContent = r.clock;
   $("clock").style.color = r.state === "recording" ? C.fg : C.dim;
   const cs = $("clock-sub");
-  cs.textContent = { ready: "not started", paused: "paused", finished: "saved" }[r.state] || `elapsed ${r.elapsed}`;
-  cs.classList.toggle("warn", r.state === "paused");
+  // the warm-up readiness (checks.warmup): heart rate at 125 W early on against your normal, for the
+  // first 40 min; it decides whether today is a day for the hard session
+  const w = s.warmup, wUp = w && r.state === "recording" && s.now < 2400 ? w.hr - (w.normal ?? w.hr) : null;
+  cs.textContent = { ready: "not started", paused: "paused", finished: "saved" }[r.state]
+    || (wUp != null ? `warm-up ${fmt(w.hr)} bpm @125 W${w.normal ? ` · normal ${fmt(w.normal)}` : ""}` : `elapsed ${r.elapsed}`);
+  cs.title = wUp != null ? `Heart rate at 125 W in minutes 6-15, against the median of your last rides. ` +
+    `${wUp >= 8 ? "Well above: tired or getting ill, keep today easy." : wUp >= 4 ? "A little high: go by how the first interval feels." : "Normal: good to go."}` : "";
+  cs.classList.toggle("warn", r.state === "paused" || (wUp != null && wUp >= 4 && wUp < 8));
+  cs.classList.toggle("bad", wUp != null && wUp >= 8);
 }
 
 function showPowerMode() {
@@ -179,8 +202,59 @@ function drawBeats() {
   if (!s || !s.strap || now == null || s.ride.state === "finished") return;
   learnDelay(s, now);
   const warn = !!s.strap.warn;
-  const rad = 12, xa = rad, xb = w - rad, speed = (xb - xa) / STRIP.span;
-  const edge = now - STRIP.delay, tw = Math.max(1, hgt * 0.012);
+  const nums = $("hx-nums"), xa = nums.offsetLeft + nums.offsetWidth + 14, xb = w - 16;
+  const ecgLive = SD.ecg.length && now - SD.ecg[SD.ecg.length - 1][0] < 5;
+  if (ecgLive) drawEcg(ctx, now, xa, xb, hgt);
+  else drawBeatLines(ctx, s, now, xa, xb, hgt);
+  // the pulse dot, top right: on each R peak (ECG) or beat
+  const r = Math.max(3, hgt * 0.028), dx = w - Math.max(14, w * 0.04) - r, dy = Math.max(14, hgt * 0.14) + r * 0.6;
+  const pulse = Math.max(0, 1 - (performance.now() - STRIP.pulseAt) / 350);
+  if (pulse > 0 && !warn) {
+    const kk = 1 - pulse, rr = r * (1.3 + 1.6 * kk);
+    ctx.strokeStyle = blend(C.hr, C.panel, 0.35 + 0.65 * kk);
+    ctx.lineWidth = Math.max(1, r * 0.25);
+    ctx.beginPath(); ctx.arc(dx, dy, rr, 0, 2 * Math.PI); ctx.stroke();
+  }
+  ctx.fillStyle = warn ? C.warn : blend(C.hrDim, C.hr, Math.sqrt(pulse));
+  ctx.beginPath(); ctx.arc(dx, dy, r, 0, 2 * Math.PI); ctx.fill();
+}
+// the ECG scrolling right to left, the last 3 s, fading towards the past; the scale eases
+const ECGV = { span: 3, range: null, peak: null };
+function drawEcg(ctx, now, xa, xb, hgt) {
+  const edge = now - SD.delay.ecg, from = edge - ECGV.span, speed = (xb - xa) / ECGV.span;
+  const vis = SD.ecg.filter((r) => r[0] > from && r[0] <= edge);
+  if (vis.length < 3) return;
+  let lo = Infinity, hi = -Infinity;
+  for (const r of vis) { if (r[1] < lo) lo = r[1]; if (r[1] > hi) hi = r[1]; }
+  const pad = Math.max(80, (hi - lo) * 0.06);
+  const want = [lo - pad, hi + pad];
+  ECGV.range = ECGV.range ? ECGV.range.map((v, i) => v + (want[i] - v) * 0.06) : want;
+  const [y0, y1] = ECGV.range, top = hgt * 0.24, bot = hgt * 0.9;
+  const X = (t) => xb - (edge - t) * speed, Y = (v) => bot - ((v - y0) / (y1 - y0 || 1)) * (bot - top);
+  const g = ctx.createLinearGradient(xa, 0, xb, 0);
+  g.addColorStop(0, blend(C.hr, C.panel, 0.9));
+  g.addColorStop(0.35, blend(C.hr, C.panel, 0.45));
+  g.addColorStop(1, C.hr);
+  ctx.strokeStyle = g; ctx.lineWidth = THEME === "lcd" ? 2 : 1.6; ctx.lineJoin = "round";
+  ctx.beginPath();
+  vis.forEach((r, i) => (i ? ctx.lineTo(X(r[0]), Y(r[1])) : ctx.moveTo(X(r[0]), Y(r[1]))));
+  ctx.stroke();
+  const last = vis[vis.length - 1];                              // the head
+  ctx.fillStyle = C.hr;
+  ctx.beginPath(); ctx.arc(X(last[0]), Y(last[1]), 2.5, 0, 2 * Math.PI); ctx.fill();
+  // an R peak reaching the head pulses the dot: a high point of the last 0.3 s, clear of the last one
+  const thr = lo + 0.7 * (hi - lo);
+  for (let i = vis.length - 2; i > 0 && vis[i][0] > edge - 0.3; i--) {
+    const v = vis[i][1];
+    if (v > thr && v >= vis[i - 1][1] && v >= vis[i + 1][1] && (ECGV.peak == null || vis[i][0] - ECGV.peak > 0.25)) {
+      ECGV.peak = vis[i][0]; STRIP.pulseAt = performance.now();
+      break;
+    }
+  }
+}
+// (no ECG: one faint line per beat drifting left, as before)
+function drawBeatLines(ctx, s, now, xa, xb, hgt) {
+  const speed = (xb - xa) / STRIP.span, edge = now - STRIP.delay, tw = Math.max(1, hgt * 0.012);
   for (let i = s.beats.length - 1; i >= 0; i--) {
     const [t, art] = s.beats[i];
     const age = edge - t;
@@ -193,17 +267,6 @@ function drawBeats() {
     ctx.fillStyle = blend(art ? C.warn : C.hr, C.panel, k);
     ctx.fillRect(Math.round(x - tw), 1.5, 2 * tw, hgt - 3);
   }
-  // the pulse dot, top right, level with the label
-  const r = Math.max(3, hgt * 0.028), dx = w - Math.max(14, w * 0.08) - r, dy = Math.max(14, hgt * 0.14) + r * 0.6;
-  const pulse = Math.max(0, 1 - (performance.now() - STRIP.pulseAt) / 350);
-  if (pulse > 0 && !warn) {
-    const kk = 1 - pulse, rr = r * (1.3 + 1.6 * kk);
-    ctx.strokeStyle = blend(C.hr, C.panel, 0.35 + 0.65 * kk);
-    ctx.lineWidth = Math.max(1, r * 0.25);
-    ctx.beginPath(); ctx.arc(dx, dy, rr, 0, 2 * Math.PI); ctx.stroke();
-  }
-  ctx.fillStyle = warn ? C.warn : blend(C.hrDim, C.hr, Math.sqrt(pulse));
-  ctx.beginPath(); ctx.arc(dx, dy, r, 0, 2 * Math.PI); ctx.fill();
 }
 
 // --------------------------------------------------------------------------- graphs
@@ -686,6 +749,7 @@ function apply(s) {
     for (const [t, v, art] of s.a1) addA1(t, v, art);
     S.p += s.power.length; S.h += s.hr.length; S.a += s.a1.length; S.b += s.beats_rr.length;
   }
+  if (s.pn != null) takeStrap(s.strap);         // (action answers carry no streams)
   if (s.now != null) {                                             // smoothed server clock for the animations
     const cand = s.now - performance.now() / 1000;
     S.offset = S.offset == null || Math.abs(cand - S.offset) > 1 ? cand : S.offset + (cand - S.offset) * 0.1;
@@ -720,7 +784,7 @@ function apply(s) {
 }
 async function poll() {
   try {
-    const r = await fetch(`/api/state?p=${S.p}&h=${S.h}&a=${S.a}&b=${S.b}`);
+    const r = await fetch(`/api/state?p=${S.p}&h=${S.h}&a=${S.a}&b=${S.b}&e=${SD.e}&x=${SD.x}`);
     apply(await r.json());
     S.fails = 0;
     if (!S.snap.closed) $("offline").hidden = true;
@@ -730,10 +794,177 @@ async function poll() {
   if (!S.snap?.closed) setTimeout(poll, POLL_MS);
 }
 
+// ---- the strap's streams: ECG and chest movement, swept left to right like a monitor
+function takeStrap(st) {
+  if (!st) { SD.ecg = []; SD.acc = []; SD.e = SD.x = 0; return; }
+  for (const [k, n, rows] of [["ecg", "en", st.ecg], ["acc", "xn", st.acc]]) {
+    const cnt = k === "ecg" ? "e" : "x";
+    if (st[n] < SD[cnt]) SD[k] = [];                            // a new ride or connection
+    SD[cnt] = st[n];
+    if (!rows.length) continue;
+    for (const r of rows) SD[k].push(r);
+    const last = rows[rows.length - 1][0], now = serverNow();
+    if (now != null) {
+      const L = SD.lag[k];
+      L.push(now - last);
+      if (L.length > 12) L.shift();
+      SD.delay[k] = Math.min(3, Math.max(0.15, Math.max(...L) + 0.08));
+    }
+    let i = 0;
+    while (i < SD[k].length && SD[k][i][0] < last - 12) i++;
+    if (i) SD[k].splice(0, i);
+  }
+}
+function sweep(cv, rows, win, delay, lines, rangeOf, key) {
+  const dpr = window.devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
+  if (!w || !h) return;
+  if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+  const now = serverNow();
+  if (now == null || !rows.length) return;
+  const edge = now - delay, from = edge - win * 0.94;           // the blank gap ahead of the newest
+  const vis = rows.filter((r) => r[0] > from && r[0] <= edge);
+  if (vis.length < 2) return;
+  const want = rangeOf(vis), R = SD.range[key] || want;       // ease the scale, don't jump
+  SD.range[key] = R.map((v, i) => v + (want[i] - v) * 0.08);
+  const [lo, hi] = SD.range[key], top = 22, Y = (v) => top + (1 - (v - lo) / (hi - lo || 1)) * (h - top - 4);
+  const X = (t) => (((t % win) + win) % win) / win * w;
+  if (lo < 0 && hi > 0) {                                       // zero line
+    ctx.strokeStyle = C.grid; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(0, Y(0)); ctx.lineTo(w, Y(0)); ctx.stroke();
+  }
+  for (const [get, colour, width] of lines) {
+    ctx.strokeStyle = colour; ctx.lineWidth = width; ctx.lineJoin = "round"; ctx.beginPath();
+    let px = null;
+    for (const r of vis) {
+      const x = X(r[0]), y = Y(get(r));
+      if (px == null || x < px) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      px = x;
+    }
+    ctx.stroke();
+  }
+  ctx.fillStyle = C.fg;                                         // the sweep's head
+  ctx.fillRect(Math.round(X(edge)) - 1, top, 2, h - top - 4);
+}
+function drawStrap() {
+  const row = $("c-strap"), now = serverNow();
+  const on = S.snap?.screen === "ride" && SD.acc.length && now != null && now - SD.acc[SD.acc.length - 1][0] < 10;
+  if (row.hidden === !!on) row.hidden = !on;
+  if (!on) return;
+  const lcd = THEME === "lcd";
+  // movement: each axis minus its mean over the window (takes gravity out), in G
+  const vis = SD.acc.filter((r) => r[0] > now - SD.delay.acc - 8);
+  const mean = [1, 2, 3].map((i) => vis.reduce((a, r) => a + r[i], 0) / (vis.length || 1));
+  sweep($("acc"), SD.acc, 8, SD.delay.acc, [1, 2, 3].map((i, j) => [
+    (r) => (r[i] - mean[j]) / 1000,
+    lcd ? blend(C.fg, C.panel, [0, 0.35, 0.6][j]) : [C.power, C.rr, C.a1][j], 1.25,
+  ]), (rows) => {
+    let m = 0.05;
+    for (const r of rows) for (let j = 0; j < 3; j++) m = Math.max(m, Math.abs((r[j + 1] - mean[j]) / 1000));
+    return [-m * 1.1, m * 1.1];
+  }, "acc");
+  drawMove(now);
+}
+
+// ---- the chest path: where the chest moves, from the accelerometer. Gravity gives "up" (at rest
+// the strap feels 1 G upwards); side-to-side is the strap's own x axis (along the strap) laid
+// flat, fore-aft the third direction. Each axis is high-passed at 0.7 Hz (below any cadence),
+// integrated twice to displacement and high-passed again after each step, so slow drift and
+// breathing drop out and what's left is the movement within each pedal stroke, in mm.
+const MV = { pts: [], at: -1, m: null };
+function highpass(x, fc, fs) {
+  const w0 = 2 * Math.PI * fc / fs, c = Math.cos(w0), al = Math.sin(w0) / (2 * Math.SQRT1_2);
+  const a0 = 1 + al, b0 = (1 + c) / 2 / a0, b1 = -(1 + c) / a0, b2 = b0, a1 = -2 * c / a0, a2 = (1 - al) / a0;
+  const y = new Float64Array(x.length);
+  let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+  for (let i = 0; i < x.length; i++) {
+    const v = b0 * x[i] + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+    x2 = x1; x1 = x[i]; y2 = y1; y1 = v; y[i] = v;
+  }
+  return y;
+}
+function integrate(x, dt) {
+  const y = new Float64Array(x.length);
+  for (let i = 1; i < x.length; i++) y[i] = y[i - 1] + (x[i] + x[i - 1]) * dt / 2;
+  return y;
+}
+function chestPath() {
+  const rows = SD.acc, N = Math.min(rows.length, 1600);
+  if (N < 1000 || rows[rows.length - 1][0] === MV.at) return;
+  MV.at = rows[rows.length - 1][0];
+  const seg = rows.slice(rows.length - N), dt = (seg[N - 1][0] - seg[0][0]) / (N - 1);
+  if (!(dt > 0)) return;
+  const fs = 1 / dt, mean = [1, 2, 3].map((i) => seg.reduce((a, r) => a + r[i], 0) / N), g = Math.hypot(...mean);
+  if (g < 300) { MV.pts = []; return; }
+  const up = mean.map((v) => v / g), dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  let lat = [1 - up[0] * up[0], -up[0] * up[1], -up[0] * up[2]], ln = Math.hypot(...lat);
+  if (ln < 0.3) { lat = [-up[1] * up[0], 1 - up[1] * up[1], -up[1] * up[2]]; ln = Math.hypot(...lat); }
+  lat = lat.map((v) => v / ln);
+  const fwd = [up[1] * lat[2] - up[2] * lat[1], up[2] * lat[0] - up[0] * lat[2], up[0] * lat[1] - up[1] * lat[0]];
+  const disp = [0, 1, 2].map((j) => {
+    let a = seg.map((r) => (r[j + 1] - mean[j]) * 9.80665 / 1000);      // m/s^2
+    a = highpass(highpass(a, 0.7, fs), 0.7, fs);
+    const v = highpass(integrate(a, dt), 0.7, fs);
+    return highpass(integrate(v, dt), 0.7, fs);                           // m
+  });
+  const skip = Math.round(4 * fs);                                         // the filters' start-up
+  MV.pts = [];
+  for (let k = skip; k < N; k++) {
+    const d = [disp[0][k], disp[1][k], disp[2][k]];
+    MV.pts.push([seg[k][0], dot(d, lat) * 1000, dot(d, up) * 1000, dot(d, fwd) * 1000]);
+  }
+}
+function drawMove(now) {
+  chestPath();
+  const edge = now - SD.delay.acc, recent = MV.pts.filter((p) => p[0] > edge - 4 && p[0] <= edge);
+  const views = [$("mv-front"), $("mv-side")];
+  if (recent.length < 20) {
+    for (const cv of views) cv.getContext("2d").clearRect(0, 0, cv.width, cv.height);
+    $("mv-sub").textContent = "settling…"; $("mv-scale").textContent = "";
+    return;
+  }
+  const span = (i) => Math.max(...recent.map((p) => p[i])) - Math.min(...recent.map((p) => p[i]));
+  const m = Math.max(3, ...recent.map((p) => Math.max(Math.abs(p[1]), Math.abs(p[2]), Math.abs(p[3])))) * 1.15;
+  MV.m = MV.m ? MV.m + (m - MV.m) * 0.03 : m;
+  $("mv-scale").textContent = `±${fmt(MV.m)}`;
+  $("mv-sub").textContent = `up–down ${fmt(span(2))} · side ${fmt(span(1))} · fore–aft ${fmt(span(3))}`;
+  const trail = recent.filter((p) => p[0] > edge - 1.6), ink = THEME === "lcd" ? C.fg : C.rr;
+  views.forEach((cv, vi) => {
+    const dpr = window.devicePixelRatio || 1, w = cv.clientWidth, h = cv.clientHeight;
+    if (!w || !h) return;
+    if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) { cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr); }
+    const ctx = cv.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    const r = Math.min(w, h) / 2 - 2, cx = w / 2, cy = h / 2, k = r / MV.m;
+    ctx.strokeStyle = C.grid; ctx.lineWidth = 1;                          // frame and cross-hair
+    ctx.strokeRect(cx - r + 0.5, cy - r + 0.5, 2 * r - 1, 2 * r - 1);
+    ctx.beginPath(); ctx.moveTo(cx - r, cy); ctx.lineTo(cx + r, cy); ctx.moveTo(cx, cy - r); ctx.lineTo(cx, cy + r); ctx.stroke();
+    ctx.fillStyle = C.dim; ctx.font = "10px Bahnschrift, 'Segoe UI', sans-serif"; ctx.textAlign = "left";
+    ctx.fillText(vi ? "side" : "front", cx - r + 5, cy - r + 13);
+    const hx = vi ? 3 : 1;                                                  // front: side-to-side; side: fore-aft
+    for (let i = 1; i < trail.length; i++) {
+      const a = (trail[i][0] - (edge - 1.6)) / 1.6;                        // older = fainter and thinner
+      ctx.strokeStyle = blend(ink, C.panel, 0.88 - 0.88 * a);
+      ctx.lineWidth = 0.8 + 1.6 * a;
+      ctx.beginPath();
+      ctx.moveTo(cx + trail[i - 1][hx] * k, cy - trail[i - 1][2] * k);
+      ctx.lineTo(cx + trail[i][hx] * k, cy - trail[i][2] * k);
+      ctx.stroke();
+    }
+    const p = trail[trail.length - 1];
+    ctx.fillStyle = ink;
+    ctx.beginPath(); ctx.arc(cx + p[hx] * k, cy - p[2] * k, 3, 0, 2 * Math.PI); ctx.fill();
+  });
+}
+
 function frame() {
   stepTweens();
   scrollCharts();
   drawBeats();
+  drawStrap();
   requestAnimationFrame(frame);
 }
 

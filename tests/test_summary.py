@@ -50,6 +50,9 @@ def test_ride_list_caches_short_summaries_newest_first(tmp_path):
     assert len(rides) == 1 and rides[0]["avg_power"] == 100 and rides[0]["fit"]
     assert os.path.exists(rs.cache_path(str(tmp_path), rides[0]["id"]))
     assert rs.ride_list(str(tmp_path)) == rides                                  # from the cache
+    # a new FTP redoes every TSS (Plan's planned TSS uses the new one: the two must agree)
+    again = rs.ride_list(str(tmp_path), ftp=250)
+    assert again[0]["ftp"] == 250 and abs(again[0]["tss"] - rides[0]["tss"] * (200 / 250) ** 2) < 1e-6
 
 
 def _fit_copy(tmp_path, name, seconds, start):

@@ -38,7 +38,8 @@ function deviceState(s, d) {
 function renderConnections(s) {
   const h = s.home || {};
   const confirm = DISC.until > performance.now() ? DISC.key : null;
-  const key = JSON.stringify([s.devices, s.sensors, h.power_w, h.hr, h.trainer_w, s.settings.hr, s.settings.trainer, confirm]);
+  const lock = s.settings.hr_lock;
+  const key = JSON.stringify([s.devices, s.sensors, h.power_w, h.hr, h.trainer_w, s.settings.hr, s.settings.trainer, confirm, lock]);
   if (key === HOME.connKey) return;
   HOME.connKey = key;
   $("dev-list").innerHTML = DEVICES.map((d) => {
@@ -51,8 +52,12 @@ function renderConnections(s) {
       : STATE_TEXT[st] || esc(x.status);
     return `<button class="dev st-${st}${confirm === d.key ? " confirm" : ""}" data-dev="${d.key}" data-state="${st}"><i class="dot"></i>` +
       `<span class="dev-main"><b>${d.label}</b>${st === "connected" ? linkTag(x.link) : ""}<span class="dev-st">${line}</span>` +
-      `<span class="dev-what">${d.what}</span></span><span class="val">${st === "connected" ? d.value(h) : ""}</span></button>`;
+      `<span class="dev-what">${d.key === "hr" && lock ? `only your ${esc(lock.name || "strap")} · <u class="forget" data-forget="1">use another strap</u>` : d.what}</span>` +
+      `</span><span class="val">${st === "connected" ? d.value(h) : ""}</span></button>`;
   }).join("");
+  for (const u of $("dev-list").querySelectorAll("[data-forget]")) {
+    u.addEventListener("click", (e) => { e.stopPropagation(); act("hr_forget"); });
+  }
   for (const b of $("dev-list").querySelectorAll("button[data-dev]")) {
     b.addEventListener("click", () => {
       const dev = b.dataset.dev;
@@ -76,8 +81,8 @@ function renderHome(s) {
   renderSettings(s);
   if (HOME.mcFor !== s.morning_version || S.prevScreen !== "home") { HOME.mcFor = s.morning_version; loadMorning(s); }
   $("mc-start").disabled = !!s.morning;
-  if (S.prevScreen !== "home" || HOME.progFor !== s.rides_version) {    // on arriving, and after a save / delete
-    HOME.progFor = s.rides_version;
+  if (S.prevScreen !== "home" || HOME.progFor !== s.data_key) {    // on arriving, after a save / delete, a new day, a new FTP
+    HOME.progFor = s.data_key;
     loadOverview();
   }
 }
@@ -91,13 +96,21 @@ async function loadMorning(s) {
   const res = s.morning_result, days = m.days || [], last = days[days.length - 1];
   const v = m.verdict;
   $("mc-verdict").innerHTML = res && !res.ok ? `<b>That check didn't count:</b> ${esc(res.why)}`
-    : v ? esc(v[1]) : "Lie down with the strap on, before getting up, and press Start. Takes 3 minutes.";
+    : v ? esc(v[1]) : "Lie down with the strap on, before getting up, and press Start. Takes 1½ minutes.";
   $("mc-when").textContent = last ? `last ${SHORT_DAY.format(dayOf(last.date))}, ${last.time}` : "";
   $("mc-stats").innerHTML = last ? [
     ovStat("RMSSD", last.rmssd.toFixed(0), "ms"), ovStat("Resting HR", fmt(last.hr), "bpm"),
     ovStat("7-day ln RMSSD", last.ln7.toFixed(2), last.lo != null ? `normal ${last.lo.toFixed(2)}–${last.hi.toFixed(2)}` : ""),
   ].join("") : "";
-  $("mc-note").textContent = days.length ? "ln RMSSD: higher means more recovered. The band is your normal from the 30 days before; it appears after 7 checks." : "";
+  // the ECG's word on the beats the filter left out (morning.py, ecg_beats.py)
+  const o = last && last.odd, n = (k, one, many) => `${k} ${k === 1 ? one : many}`;
+  const odd = !last ? "" : !o ? (last.artifact_pct ? `${fmt(last.artifact_pct, 1)}% of beats left out. ` : "")
+    : o.early.length ? `ECG: ${n(o.early.length, "early beat", "early beats")} (${o.early.map((e) => `${fmt(e.short)} ms then ${fmt(e.long)} ms`).join(", ")}), left out of RMSSD` +
+      `${o.mistimed ? `; ${n(o.mistimed, "strap error", "strap errors")}` : ""}. Single early beats are common; symptoms are for a doctor. `
+    : o.checked ? `ECG: no early beats.${o.real ? ` ${n(o.real, "long or quick beat was", "long or quick beats were")} real and counted.` : ""}` +
+      `${o.mistimed ? ` ${n(o.mistimed, "strap error", "strap errors")} left out.` : ""}${o.unclear ? ` ${o.unclear} too noisy to tell, left out.` : ""} `
+    : "ECG: every beat clean. ";
+  $("mc-note").textContent = days.length ? odd + "ln RMSSD: higher means more recovered. The band is your normal from the 30 days before; it appears after 7 checks." : "";
   drawMorning(m);
 }
 function drawMorning(m) {
@@ -139,9 +152,10 @@ function renderMorningRun(s) {
   const m = s.morning;
   $("mc-run").hidden = !m;
   if (!m) return;
-  $("mc-phase").textContent = m.phase === "settle" ? "Settling" : "Measuring";
-  $("mc-hint").textContent = m.phase === "settle" ? "Lie still and breathe normally. Measuring starts after a minute."
-    : "Keep still, don't talk. Almost there.";
+  $("mc-phase").textContent = m.phase === "settle" ? "Settling" : m.phase === "more" ? "A little longer" : "Measuring";
+  $("mc-hint").textContent = m.phase === "settle" ? "Lie still and breathe normally. Measuring starts in a moment."
+    : m.phase === "more" ? "The strap missed some beats: measuring on for a clean minute. It stops as soon as it has one."
+    : "Keep still, breathe normally. Almost there.";
   $("mc-left").textContent = minsec(m.left);
   const st = (k, v) => `<div><dt>${k}</dt><dd>${v}</dd></div>`;
   $("mc-live").innerHTML = st("Heart rate", m.hr == null ? "--" : `${fmt(m.hr)} bpm`) + st("Beats measured", fmt(m.beats)) +
@@ -386,6 +400,7 @@ async function loadRides() {
     HOME.rides = await (await fetch("/api/rides")).json();
   } catch { return; }
   $("rides-empty").textContent = "No rides yet. They'll show up here once you save one.";
+  renderKneeHistory(HOME.rides);
   const body = $("ride-rows");
   $("rides-count").textContent = HOME.rides.length ? `${HOME.rides.length}` : "";
   $("rides-empty").hidden = HOME.rides.length > 0;
@@ -454,6 +469,7 @@ function renderSummary(d) {
          dec == null ? "needs 20 min" : `EF ${st.ef.toFixed(2)} · ${Math.abs(dec) < 5 ? "well coupled" : "drifting"}`),
     stat("Work", fmt(st.work_kj), "kJ", `${fmt(st.avg_cadence)} rpm avg`),
     stat("Balance", bal == null ? "--" : `${fmt(100 - bal)} · ${fmt(bal)}`, "", st.standing_pct == null ? "" : `standing ${fmt(st.standing_pct)}%`),
+    ...(d.warmup ? [warmupStat(d.warmup, d.warmup_normal)] : []),
   ].join("");
 
   // best powers
@@ -504,6 +520,9 @@ function renderSummary(d) {
   $("card-pc").hidden = !d.poincare.points.length;
   $("sum-c-beats").hidden = !d.beats.t.length && !d.series.a1.some((v) => v != null);
   drawPoincare(d.poincare);
+  renderOddBeats(d);
+  renderKnee(d);
+  renderWbal(d);
   renderVt1(d);
   renderDurability(d);
   renderCheck(d);
@@ -607,11 +626,158 @@ function drawVt1(e, unit) {
   }
 }
 
+// The knee (checks.knee): force per pedal stroke (torque = W / crank speed) per rep, the legs' share
+// and the platform centre offset, and your 0-3 score for the knee after this ride (saved in its meta)
+const KNEE_WORDS = ["nothing", "a niggle", "sore", "flared"];
+function renderKnee(d) {
+  const k = d.knee || { reps: [] }, sc = k.score;
+  $("card-knee").hidden = k.peak_torque == null;
+  for (const b of $("knee-score").querySelectorAll("button")) b.classList.toggle("on", sc != null && +b.dataset.k === sc);
+  const nm = (v) => (v == null ? "--" : v.toFixed(1));
+  $("knee-stats").innerHTML = [
+    ovStat("Hardest rep", k.reps.length ? nm(Math.max(...k.reps.map((r) => r.torque || 0))) : "--", "Nm"),
+    ovStat("Best minute", nm(k.peak_torque), "Nm"),
+    ovStat("Z2", nm(k.torque_z2), "Nm"),
+  ].join("");
+  const sgn = (v) => (v == null ? "--" : `${v > 0 ? "+" : ""}${v.toFixed(1)}`);
+  $("knee-table").innerHTML = k.reps.length
+    ? `<tr><th>Rep</th><th>Time</th><th>Power</th><th>Cadence</th><th>Torque</th><th>L · R</th><th>PCO L · R</th><th>TE L · R</th></tr>` +
+      k.reps.map((r, i) => `<tr><td>#${i + 1}</td><td class="n">${minsec(r.seconds)}</td><td class="n">${fmt(r.power)} W</td>` +
+        `<td class="n">${fmt(r.cadence)}</td><td class="n"><b>${nm(r.torque)}</b> Nm</td>` +
+        `<td class="n">${r.balance_right == null ? "--" : `${fmt(100 - r.balance_right)} · ${fmt(r.balance_right)}`}</td>` +
+        `<td class="n">${sgn(r.pco_left)} · ${sgn(r.pco_right)}</td><td class="n">${fmt(r.te_left)} · ${fmt(r.te_right)}</td></tr>`).join("")
+    : "";
+  $("knee-note").textContent = (sc == null ? "How is the knee after this ride? 0 nothing · 1 a niggle · 2 sore · 3 flared. Change it the next day if it flares later. "
+    : `Knee: ${KNEE_WORDS[sc]}. `) + "Torque is the force on every pedal stroke: the same watts at a lower cadence press harder. " +
+    "Reps are a minute or more over 85% of FTP.";
+}
+for (const b of $("knee-score").querySelectorAll("button")) {
+  b.addEventListener("click", () => {
+    const k = +b.dataset.k, cur = SUM.data?.knee?.score;
+    const v = cur === k ? null : k;                                 // click the chosen one again to clear it
+    act("ride_meta", { knee: v });
+    if (SUM.data) { SUM.data.knee = { ...SUM.data.knee, score: v }; renderKnee(SUM.data); }
+  });
+}
+// Statistics: every ride with reps or a knee score, newest first, to see what goes with a flare-up
+function renderKneeHistory(rides) {
+  const rows = rides.filter((r) => r.knee && (r.knee.reps || r.knee.score != null));
+  $("knee-hist").hidden = !rows.length;
+  const nm = (v) => (v == null ? "--" : `${v.toFixed(1)} Nm`);
+  $("knee-rows").innerHTML = rows.map((r) => {
+    const k = r.knee, d = new Date(r.start_utc);
+    return `<tr data-id="${esc(r.id)}"><td>${DAY.format(d)}</td><td class="wk">${esc(r.name || r.source)}</td><td class="n">${k.reps || "--"}</td>` +
+      `<td class="n">${k.rep_cadence == null ? "--" : fmt(k.rep_cadence)}</td><td class="n">${nm(k.rep_torque)}</td><td class="n">${nm(k.peak_torque)}</td>` +
+      `<td class="n">${k.score == null ? "–" : `${k.score} · ${KNEE_WORDS[k.score]}`}</td></tr>`;
+  }).join("");
+  for (const tr of $("knee-rows").querySelectorAll("tr")) tr.addEventListener("click", () => act("open", tr.dataset.id));
+  const scored = rows.filter((r) => r.knee.score != null).length;
+  $("knee-hist-note").textContent = scored < 5 ? `Score the knee on each ride's summary (0–3): after about 5–10 scored rides the pattern shows here (${scored} so far).`
+    : "Look for what the flare-ups share: the hardest rep's torque, low rep cadence.";
+}
+
+// Readiness from the warm-up (checks.warmup): heart rate at 125 W in minutes 6-15 against the median
+// of your earlier rides; above it = tired or run down
+function warmupStat(w, n) {
+  const up = n ? w.hr - n.hr : null;
+  const word = up == null ? "normal after 3 rides" : up >= 8 ? "well above normal: tired?" : up >= 4 ? "a little above normal" : up <= -4 ? "below normal: fresh" : "normal";
+  return stat("Warm-up HR", fmt(w.hr), "bpm", `@125 W · ${n ? `normal ${fmt(n.hr)} · ` : ""}${word}` +
+    (w.a1 != null ? ` · α1 ${w.a1.toFixed(2)}` : ""));
+}
+
+// The beats the filter set aside, checked against the strap's ECG (ecg_beats.py): real early beats
+// (with the pause after them and how alike their QRS is to your normal ones) or the strap's errors
+function renderOddBeats(d) {
+  const o = d.odd_beats, el = $("pc-odd");
+  el.hidden = !o || !o.checked;
+  if (el.hidden) return;
+  const shape = (x) => x == null ? "" : `, QRS shape ${x.toFixed(2)}${x >= 0.9 ? " (like your normal beats)" : x < 0.7 ? " (unlike your normal beats)" : ""}`;
+  const early = o.early.map((e) => `<b>${minsec(e.t)}</b> at ${fmt(e.hr)} bpm: ${fmt(e.short)} ms then a ${fmt(e.long)} ms pause` +
+    ` (usual ${fmt(e.usual)})${shape(e.shape)}`);
+  const rest = [[o.mistimed, "strap errors"], [o.real, "real quick swings"], [o.unclear, "too noisy to tell"]]
+    .filter(([n]) => n).map(([n, k]) => `${n} ${k}`).join(", ");
+  el.innerHTML = `ECG check of the ${o.checked} beats the filter set aside: ` +
+    (o.early.length ? `${o.early.length} early beat${o.early.length > 1 ? "s" : ""}: ${early.join("; ")}` : "no early beats") +
+    (rest ? `. ${rest}.` : ".") +
+    (o.early.length ? " Single early beats are common; this is a sports strap, not a medical ECG, so any symptoms are for a doctor." : "");
+}
+
+// The reserve above CP (W' balance, wbal.py): how much of W' was left, second by second, and what
+// each effort above CP cost. W' is from the newest ramp test, with CP = FTP.
+let WB_LAST = null;
+window.addEventListener("resize", () => { if (!$("scr-summary").hidden && WB_LAST) drawWbal(WB_LAST); });
+function renderWbal(d) {
+  const w = d.wbal;
+  WB_LAST = w ? d : null;
+  $("card-wbal").hidden = !w;
+  if (!w) return;
+  const kj = (j) => (j / 1000).toFixed(1);
+  const low = w.low, lowPct = (100 * low) / w.w_prime;
+  $("wbal-head").textContent = `W′ ${kj(w.w_prime)} kJ · CP ${fmt(w.cp)} W`;
+  $("wbal-table").innerHTML = w.efforts.length
+    ? `<tr><th>Effort</th><th>At</th><th>Time</th><th>Power</th><th>Spent</th><th>Left at end</th></tr>` +
+      w.efforts.map((e, i) => `<tr><td>#${i + 1}</td><td class="n">${minsec(e.start)}</td><td class="n">${minsec(e.end - e.start)}</td>` +
+        `<td class="n">${fmt(e.power)} W</td><td class="n">${kj(e.spent)} kJ</td>` +
+        `<td class="n">${kj(e.low)} kJ · ${fmt((100 * e.low) / w.w_prime)}%</td></tr>`).join("")
+    : "";
+  $("wbal-note").innerHTML = `Lowest <b>${kj(low)} kJ</b> (${fmt(lowPct)}% left) at ${minsec(w.low_s)} · ` +
+    `${minsec(w.above_cp_s)} above CP, ${w.above_cp_kj.toFixed(1)} kJ of work above it. ` +
+    `W′ is the work you can do above CP before you can't hold anything over it; it refills below CP. ` +
+    `From your ramp test: a guide to compare sessions, good to perhaps 10–20%.`;
+  drawWbal(d);
+}
+function drawWbal(d) {
+  const w = d.wbal, cv = $("wbal-chart"), dpr = devicePixelRatio || 1;
+  const W = cv.clientWidth, H = cv.clientHeight;
+  if (!W || !H) return;
+  cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, W, H);
+  const lcd = THEME === "lcd", ser = w.series, n = ser.length;
+  const m = { l: 40, r: 8, t: 8, b: 22 }, pw = W - m.l - m.r, ph = H - m.t - m.b;
+  const X = (i) => m.l + (i / Math.max(1, n - 1)) * pw, Y = (pct) => m.t + ph - (Math.max(0, Math.min(100, pct)) / 100) * ph;
+  ctx.font = "11px Bahnschrift, 'Segoe UI', sans-serif";
+  ctx.lineWidth = 1;
+  for (const v of [0, 25, 50, 75, 100]) {
+    ctx.strokeStyle = C.grid; ctx.beginPath(); ctx.moveTo(m.l, Y(v) + 0.5); ctx.lineTo(m.l + pw, Y(v) + 0.5); ctx.stroke();
+    ctx.fillStyle = C.dim; ctx.textAlign = "right"; ctx.fillText(`${v}%`, m.l - 6, Y(v) + 4);
+  }
+  ctx.textAlign = "center";
+  const step = [300, 600, 900, 1800, 3600].find((s) => n / s <= 8) || 7200;
+  for (let t = step; t < n; t += step) ctx.fillText(`${Math.round(t / 60)} min`, X(t), H - 6);
+  // the line, every pixel's lowest value (an effort's dip must not vanish when the ride is long)
+  const per = Math.max(1, Math.floor(n / pw)), pts = [];
+  for (let i = 0; i < n; i += per) {
+    let lo = Infinity;
+    for (let k = i; k < Math.min(n, i + per); k++) lo = Math.min(lo, ser[k]);
+    pts.push([X(i), Y((100 * lo) / w.w_prime)]);
+  }
+  ctx.beginPath(); ctx.moveTo(pts[0][0], Y(0));
+  for (const [x, y] of pts) ctx.lineTo(x, y);
+  ctx.lineTo(pts[pts.length - 1][0], Y(0)); ctx.closePath();
+  ctx.fillStyle = lcd ? "rgba(27,30,25,0.18)" : blend(C.power, C.panel, 0.78); ctx.fill();
+  ctx.beginPath(); pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+  ctx.strokeStyle = C.power; ctx.lineWidth = 2; ctx.stroke();
+  // each effort's low point
+  ctx.fillStyle = C.fg; ctx.textAlign = "center";
+  w.efforts.forEach((e, i) => {
+    const x = X(e.end - 1), y = Y((100 * e.low) / w.w_prime);
+    ctx.beginPath(); ctx.arc(x, y, 3, 0, 2 * Math.PI); ctx.fill();
+    ctx.fillText(`#${i + 1}`, x, Math.min(H - m.b - 4, y + 15));
+  });
+}
+
 // Poincaré plot: each interval against the next. The cloud's width across the diagonal (SD1) is
 // beat-to-beat variability, its length along it (SD2) the slower swings.
+let PC_LAST = null;
+window.addEventListener("resize", () => { if (!$("scr-summary").hidden && PC_LAST) drawPoincare(PC_LAST); });
 function drawPoincare(p) {
+  PC_LAST = p;
   const cv = $("poincare"), dpr = devicePixelRatio || 1;
-  const size = Math.min(cv.parentElement.clientWidth, 340);
+  // square (both axes in ms, so the cloud's shape means something) and the card's full width: as
+  // tall as that takes, the page scrolls
+  const size = Math.max(200, cv.parentElement.clientWidth);
   cv.style.width = cv.style.height = size + "px";
   cv.width = cv.height = Math.round(size * dpr);
   const ctx = cv.getContext("2d");
@@ -636,7 +802,14 @@ function drawPoincare(p) {
   ctx.strokeStyle = blend(ink, C.panel, 0.6);                      // the identity line
   ctx.setLineDash([3, 3]); ctx.beginPath(); ctx.moveTo(X(lo), Y(lo)); ctx.lineTo(X(hi), Y(hi)); ctx.stroke(); ctx.setLineDash([]);
   ctx.fillStyle = THEME === "lcd" ? "rgba(27,30,25,0.22)" : "rgba(45,212,191,0.22)";
-  for (const [a, b] of p.points) ctx.fillRect(X(a) - 1, Y(b) - 1, 2, 2);
+  const dot = size > 700 ? 4 : size > 420 ? 3 : 2;
+  // the strap times beats in steps of 1/1024 s (0.977 ms): drawn exactly, a big plot shows that grid
+  // as rows and columns of dots. Each dot is spread evenly within its step (the true interval is
+  // somewhere in it), the same every time (a fixed pseudo-random sequence), so the cloud reads as one
+  const STEP_MS = 1000 / 1024;
+  let seed = 12345;
+  const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff - 0.5) * STEP_MS;
+  for (const [a, b] of p.points) ctx.fillRect(X(a + rnd()) - dot / 2, Y(b + rnd()) - dot / 2, dot, dot);
   // the SD1/SD2 ellipse, centred on the mean interval, along the diagonal
   const cx = X(p.mean), cy = Y(p.mean), k = w / (hi - lo);
   ctx.save(); ctx.translate(cx, cy); ctx.rotate(-Math.PI / 4);

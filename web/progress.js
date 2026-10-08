@@ -12,13 +12,13 @@ const isoOf = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, 
 
 async function showStats(s) {
   if (PROG.data && HOME.efFtp !== s.config.ftp) { HOME.efFtp = s.config.ftp; drawEftp(PROG.data, s); }   // FTP changed
-  if (S.prevScreen !== "stats" || HOME.loadedFor !== s.rides_version) {     // the history
-    HOME.loadedFor = s.rides_version;
+  if (S.prevScreen !== "stats" || HOME.loadedFor !== s.data_key) {     // the history
+    HOME.loadedFor = s.data_key;
     loadRides();
   }
-  // (re)load on arriving here, and when a ride was saved or deleted meanwhile; one fetch at a time
-  if (PROG.loading || (PROG.data && S.prevScreen === "stats" && PROG.version === s.rides_version)) return;
-  PROG.version = s.rides_version;
+  // (re)load on arriving here, and when a ride was saved or deleted, the day or the FTP changed meanwhile
+  if (PROG.loading || (PROG.data && S.prevScreen === "stats" && PROG.version === s.data_key)) return;
+  PROG.version = s.data_key;
   PROG.loading = true;
   try {
     PROG.data = await (await fetch("/api/progress")).json();
@@ -54,12 +54,15 @@ function formWord(tsb) {
 function renderNow(p) {
   const n = p.days.length;
   if (!n) { $("pmc-now").innerHTML = `<p class="empty-note">No rides yet.</p>`; return; }
-  const i = n - 1, ctl = p.ctl[i], atl = p.atl[i], tsb = ctl - atl;       // form going into tomorrow
+  // form as everywhere else (Home, Plan, training.pmc): today's, from yesterday's fitness and fatigue;
+  // after a ride today, where it leaves you tomorrow beside it
+  const i = n - 1, ctl = p.ctl[i], atl = p.atl[i], tsb = p.tsb[i], next = ctl - atl;
   const since = p.days.length < 42 ? `<p class="note">Fitness builds over about six weeks of riding, so it reads low for now (${n} ${n === 1 ? "day" : "days"} of history).</p>` : "";
   $("pmc-now").innerHTML =
     `<div class="now"><span class="lab">Fitness</span><span class="num">${fmt(ctl)}</span></div>` +
     `<div class="now"><span class="lab">Fatigue</span><span class="num">${fmt(atl)}</span></div>` +
-    `<div class="now"><span class="lab">Form</span><span class="num">${tsb > 0 ? "+" : ""}${fmt(tsb)}</span><span class="word">${formWord(tsb)}</span></div>` + since;
+    `<div class="now"><span class="lab">Form</span><span class="num">${tsb > 0 ? "+" : ""}${fmt(tsb)}</span><span class="word">${formWord(tsb)}` +
+    `${p.tss[i] ? ` · ${next > 0 ? "+" : ""}${fmt(next)} tomorrow after today's ride` : ""}</span></div>` + since;
 }
 
 // ---- the fitness / fatigue / form chart

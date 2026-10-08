@@ -183,6 +183,10 @@ class AntHrWorker(threading.Thread):
         self.device: Optional[int] = None         # the strap's ANT+ device number
         self.enabled = True                       # the strap is wanted (Connections pane): else nothing is sent
         self.maker: Optional[str] = None          # from data page 2, e.g. "Garmin", "Polar"
+        # your strap's device number: the channel pairs with it only, never a neighbour's strap
+        # (7 Oct: the Bluetooth side connected to an Amazfit and a Galaxy Fit nearby). None = any
+        self.device_lock: Optional[int] = None
+        self._opened_lock: Optional[int] = None
         self.log = lambda text: None
         self._halt = threading.Event()
         self._dev = None
@@ -239,17 +243,21 @@ class AntHrWorker(threading.Thread):
         time.sleep(0.6)
         self._drain()                             # whatever the stick still held from before
         for msg_id, data in ((NETWORK_KEY, [0, *ANTPLUS_KEY]), (ASSIGN, [0, RECEIVE_ONLY, 0]),
-                             (CHANNEL_ID, [0, 0, 0, HR_TYPE, 0]), (PERIOD, [0, HR_PERIOD & 0xFF, HR_PERIOD >> 8]),
+                             (CHANNEL_ID, [0, (self.device_lock or 0) & 0xFF, (self.device_lock or 0) >> 8, HR_TYPE, 0]),
+                             (PERIOD, [0, HR_PERIOD & 0xFF, HR_PERIOD >> 8]),
                              (RF_FREQ, [0, ANTPLUS_FREQ]), (SEARCH_TIMEOUT, [0, 0xFF]),
                              (LIB_CONFIG, [0, 0x80])):            # extended data: the strap's device number
             self._send(msg_id, data)
             time.sleep(0.05)
         self._send(OPEN, [0])
+        self._opened_lock = self.device_lock
         self.stick, self.opened = True, time.monotonic()
         self.status = "searching for the strap (ANT+)…"
         self.log("ANT+: stick open, searching")
         beats, bpm, last_sent = Beats(), 0, 0.0
         while not self._halt.is_set():
+            if self.device_lock != self._opened_lock:
+                return "pairing again (strap lock changed)"
             try:
                 buf += bytes(self._in.read(64, timeout=500))
             except usb.core.USBTimeoutError:
@@ -259,6 +267,8 @@ class AntHrWorker(threading.Thread):
                     page = data[1:9]
                     if len(data) >= 14 and data[9] & 0x80:
                         dev_no = data[10] | data[11] << 8
+                        if self.device_lock and dev_no != self.device_lock:
+                            continue                       # not your strap
                         if dev_no != self.device:
                             self.device = dev_no
                             self.log(f"ANT+: strap #{dev_no}")

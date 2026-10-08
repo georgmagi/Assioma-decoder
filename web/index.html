@@ -103,21 +103,21 @@
     <div class="value split"><span class="num" id="bal-l">--</span><i class="divider"></i><span class="num" id="bal-r">--</span></div>
     <div class="sub split"><span id="bal-l-sub"></span><i></i><span id="bal-r-sub"></span></div>
   </div>
-  <div class="tile hr" id="t-hr">
+  <div class="tile hr hrx" id="t-hr">
     <canvas id="beats"></canvas>
-    <div class="label">Heart rate</div>
-    <div class="value"><span class="num" id="hr">--</span><span class="unit">bpm</span></div>
-    <div class="sub" id="hr-sub"></div>
-  </div>
-  <div class="tile" id="t-a1">
-    <div class="label"><span>DFA <span class="greek">α</span>1</span></div>
-    <div class="value"><span class="num" id="a1">--</span></div>
-    <div class="sub" id="a1-sub"></div>
+    <div class="hx-nums" id="hx-nums">
+      <div class="label">Heart rate</div>
+      <div class="value"><span class="num" id="hr">--</span><span class="unit">bpm</span></div>
+      <div class="sub" id="hr-sub"></div>
+      <div class="hx-a1"><span class="label"><span>DFA&nbsp;<span class="greek">α</span>1</span></span><span class="num" id="a1">--</span></div>
+      <div class="sub" id="a1-sub"></div>
+    </div>
   </div>
   <div class="tile" id="t-time">
-    <div class="label">Ride time</div>
+    <div class="label"><span>Ride time</span><span class="wb-lab" id="wb-lab" title="Your reserve above CP (W′ balance)"></span></div>
     <div class="value"><span class="num" id="clock">0:00:00</span></div>
     <div class="sub" id="clock-sub">not started</div>
+    <i class="wb-bar" id="wb-bar" hidden><b></b></i>
   </div>
 </header>
 
@@ -190,6 +190,17 @@
       </div>
       <div class="plot" id="c-beats">
         <div class="cap"><span class="key"><i class="rr"></i>beat intervals, ms</span><span class="key"><i class="dot"></i>artifact</span><span class="key"><i class="a1"></i><span>DFA <span class="greek">α</span>1</span></span><span class="key"><i class="vt1"></i>0.75 ≈ VT1</span><span class="key"><i class="vt2"></i>0.5 ≈ VT2</span></div>
+      </div>
+      <div class="plot strap-row" id="c-strap" hidden>
+        <div class="strap-cell">
+          <div class="cap"><span>chest movement, G</span><span class="key"><i></i>x</span><span class="key"><i class="rr"></i>y</span><span class="key"><i class="a1"></i>z</span></div>
+          <canvas id="acc"></canvas>
+        </div>
+        <div class="strap-cell mv-cell">
+          <div class="cap"><span>chest path, mm</span><span id="mv-scale"></span></div>
+          <div class="mv-views"><canvas id="mv-front"></canvas><canvas id="mv-side"></canvas></div>
+          <div class="mv-sub" id="mv-sub"></div>
+        </div>
       </div>
       <p class="empty" id="chart-empty">Waiting for the pedals. Pedal once to wake them.</p>
     </div>
@@ -268,10 +279,27 @@
       <div class="table-wrap"><table class="leg-table" id="wsteps-table"></table></div>
       <p class="pc" id="wsteps-note"></p>
     </section>
+    <section class="panel" id="card-knee">
+      <div class="panel-head"><h2>Knee</h2>
+        <div class="seg" id="knee-score" role="group" aria-label="Knee after this ride">
+          <button data-k="0" title="Nothing">0</button><button data-k="1" title="A niggle">1</button><button data-k="2" title="Sore">2</button><button data-k="3" title="Flared">3</button>
+        </div>
+      </div>
+      <dl class="ov-stats" id="knee-stats"></dl>
+      <div class="table-wrap"><table class="leg-table" id="knee-table"></table></div>
+      <p class="pc" id="knee-note"></p>
+    </section>
+    <section class="panel" id="card-wbal">
+      <div class="panel-head"><h2>Reserve above CP</h2><em class="link" id="wbal-head"></em></div>
+      <div class="wbal-wrap"><canvas id="wbal-chart"></canvas></div>
+      <div class="table-wrap"><table class="leg-table" id="wbal-table"></table></div>
+      <p class="pc" id="wbal-note"></p>
+    </section>
     <section class="panel" id="card-pc">
       <div class="panel-head"><h2>Beat to beat</h2></div>
       <div class="pc-wrap"><canvas id="poincare"></canvas></div>
       <p class="pc" id="pc-stats"></p>
+      <p class="pc" id="pc-odd" hidden></p>
     </section>
   </div>
 </div>
@@ -348,6 +376,16 @@
     </div>
     <div class="vt1t-wrap"><canvas id="eff-chart"></canvas></div>
     <p class="wk-note" id="eff-note"></p>
+  </section>
+  <section class="panel" id="knee-hist">
+    <div class="panel-head"><h2>Knee and pedal force</h2></div>
+    <div class="table-wrap">
+      <table class="ride-table">
+        <thead><tr><th>Day</th><th>Workout</th><th class="n">Reps</th><th class="n">Rep cadence</th><th class="n">Hardest rep</th><th class="n">Best minute</th><th class="n">Knee</th></tr></thead>
+        <tbody id="knee-rows"></tbody>
+      </table>
+    </div>
+    <p class="wk-note" id="knee-hist-note"></p>
   </section>
   <section class="panel rides">
     <div class="panel-head"><h2>History</h2><span class="count" id="rides-count"></span></div>

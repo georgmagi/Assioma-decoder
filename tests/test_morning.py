@@ -15,8 +15,8 @@ def _beats(check, rr_ms, start, artifacts=0):
     t = start
     for k, rr in enumerate(rr_ms):
         t += timedelta(milliseconds=rr)
-        bad = k % 3 == 0 and k < 3 * artifacts                 # scattered single bad beats, as a loose strap gives
-        check.feed(t, 60000 / rr, [rr * (1.6 if bad else 1.0)])
+        bad = k % 3 == 0 and k < 3 * artifacts                 # scattered missed beats, as a loose strap gives
+        check.feed(t, 60000 / rr, [rr * (2.0 if bad else 1.0)])
     return t
 
 
@@ -32,13 +32,12 @@ def test_a_good_check_gives_resting_hr_and_ln_rmssd():
 
 def test_too_few_beats_or_too_many_artifacts_say_why():
     c = mo.Check(T0)
-    _beats(c, [1000] * 70, T0)                                              # 10 s after settling
+    _beats(c, [1000] * 50, T0)                                              # 20 s after settling
     assert not c.result(T0)["ok"] and "beats" in c.result(T0)["why"]
     c = mo.Check(T0)
-    rr = [1000 + 30 * (-1) ** k for k in range(200)]
-    t = _beats(c, rr[:60], T0)
-    _beats(c, rr[60:], t, artifacts=40)
-    assert not c.result(T0)["ok"] and "artifact" in c.result(T0)["why"]
+    rr = [1000 + 30 * (-1) ** k for k in range(160)]
+    _beats(c, rr, T0, artifacts=60)                                         # every 3rd beat doubled, throughout
+    assert not c.result(T0)["ok"] and "missed or doubled" in c.result(T0)["why"]
 
 
 def _hist(values, hr=55, start=date(2026, 9, 1)):
@@ -72,6 +71,100 @@ def test_engine_runs_a_check_and_keeps_it(tmp_path):
     e._morning_tick(app.utcnow())
     assert e.mcheck is None and e.mresult["ok"] and e.morning_version == 1
     saved = mo.load(str(tmp_path / "morning.json"))
-    assert len(saved) == 1 and saved[0]["hr"] == 63
+    assert len(saved) == 1 and abs(saved[0]["hr"] - 63.2) < 0.3          # from the beats: 60000 / 950 ms
     e._do("morning_start"); e._do("morning_cancel")
     assert e.mcheck is None
+
+
+def _breathing(amp, period_s, seconds=100, seed=1):
+    """Resting beats swung by breathing: amp ms either way, one breath every period_s."""
+    rnd, rr, t = random.Random(seed), [], 0.0
+    while t < seconds:
+        x = 1000 + amp * math.sin(2 * math.pi * t / period_s) + rnd.gauss(0, 10)
+        rr.append(x)
+        t += x / 1000
+    return rr
+
+
+def test_big_calm_breathing_swings_are_not_artifacts():
+    # slow deep breaths at rest swing beats +-250 ms: the ride's 20 % rule threw out ~40 % of them
+    rr = _breathing(250, 10)
+    c = mo.Check(T0)
+    _beats(c, rr, T0)
+    r = c.result(T0)
+    measured = r["rr"]
+    true = math.sqrt(sum((b - a) ** 2 for a, b in zip(measured, measured[1:])) / (len(measured) - 1))
+    assert r["ok"] and r["artifact_pct"] == 0 and abs(r["rmssd"] - true) < 0.5
+
+
+def test_missed_and_extra_beats_are_still_caught():
+    rr = _breathing(150, 6)
+    rr[60] = rr[60] + rr[61]; del rr[61]                                   # a missed beat
+    rr[80:81] = [rr[80] * 0.45, rr[80] * 0.55]                             # an extra beat (a split)
+    bad = mo.rest_artifacts(rr)
+    assert bad[60] and bad[80] and bad[81] and sum(bad) <= 4
+
+
+def test_a_noisy_first_minute_measures_on_for_a_clean_one():
+    rr = [1000 + 30 * (-1) ** k for k in range(200)]
+    c = mo.Check(T0)
+    start = T0
+    t = _beats(c, rr[:80], start, artifacts=27)                           # settle + a noisy first minute
+    assert c.phase(T0 + timedelta(seconds=SETTLE + 61)) == "more"
+    _beats(c, rr[80:], t)                                                  # then a clean one
+    assert c.phase(T0 + timedelta(seconds=SETTLE + 121)) == "done"
+    r = c.result(T0)
+    assert r["ok"] and r["artifact_pct"] < 5
+
+
+def test_the_time_saved_is_local_time():
+    c = mo.Check(datetime(2026, 10, 7, 6, 0))                              # 06:00 UTC
+    _beats(c, [1000 + 30 * (-1) ** k for k in range(120)], c.started)
+    r = c.result(c.started)
+    local = datetime(2026, 10, 7, 6, 0, tzinfo=timezone.utc).astimezone()
+    assert r["time"] == local.strftime("%H:%M") and r["date"] == local.date().isoformat()
+
+
+SETTLE = mo.SETTLE_S
+
+
+def test_with_the_ecg_an_early_beat_is_named_and_the_minute_kept(tmp_path):
+    from test_wbal_ecg import _ecg
+    rr = [1000 + 40 * math.sin(k / 2) for k in range(100)]
+    rr[70], rr[71] = 640, 1360                                            # an early beat and its pause
+    c = mo.Check(T0)
+    _beats(c, rr, T0)
+    r_times = [sum(rr[:k + 1]) / 1000 for k in range(len(rr))]
+    ts, vs = _ecg(r_times, r_times[-1] + 1)
+    c.add_ecg([(T0 + timedelta(seconds=t), v) for t, v in zip(ts, vs)])
+    r = c.result(T0)
+    assert r["ok"] and len(r["odd"]["early"]) == 1 and r["odd"]["early"][0]["short"] == 640
+    assert r["artifact_pct"] > 0 and r["_ecg"] and abs(r["rmssd"] - mo.rest_rmssd(r["rr"], mo.rest_artifacts(r["rr"]))) < 0.1
+    saved = mo.add([], r)
+    assert "_ecg" not in saved[0] and saved[0]["odd"]["early"]
+    path = str(tmp_path / "morning.json")
+    mo.save_ecg(path, r["date"], r["_ecg"])
+    lines = open(tmp_path / "mornings" / f"{r['date']}_ecg.csv").read().splitlines()
+    assert lines[0] == "s,uV" and len(lines) > 60 * 130
+
+
+def test_without_the_ecg_it_still_works():
+    c = mo.Check(T0)
+    _beats(c, [1000 + 30 * (-1) ** k for k in range(120)], T0)
+    r = c.result(T0)
+    assert r["ok"] and r["odd"] is None and r["_ecg"] is None
+
+
+def test_a_long_pause_the_ecg_shows_is_real_counts():
+    from test_wbal_ecg import _ecg
+    rr = [850 + 40 * math.sin(k / 2) for k in range(100)]
+    rr[70] = 1550                                                         # a long vagal pause: 1.8x, no hidden beat
+    c = mo.Check(T0)
+    _beats(c, rr, T0)
+    assert mo.rest_artifacts(c.result(T0)["rr"])[c.result(T0)["rr"].index(1550)]   # by timing alone: "missed"
+    r_times = [sum(rr[:k + 1]) / 1000 for k in range(len(rr))]
+    ts, vs = _ecg(r_times, r_times[-1] + 1)
+    c.add_ecg([(T0 + timedelta(seconds=t), v) for t, v in zip(ts, vs)])
+    r = c.result(T0)
+    assert r["odd"]["real"] == 1 and r["artifact_pct"] == 0
+    assert abs(r["rmssd"] - mo.rest_rmssd(r["rr"], [False] * len(r["rr"]))) < 0.1
