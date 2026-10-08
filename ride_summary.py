@@ -20,6 +20,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+import breathing
 import checks
 import ecg_beats
 import eftp
@@ -33,7 +34,7 @@ ZONES = [(0.55, "Z1"), (0.75, "Z2"), (0.90, "Z3"), (1.05, "Z4"), (1.20, "Z5"), (
 # Z4 95-105 %, Z5 106 % and up
 HR_ZONES = [(0.685, "Z1"), (0.835, "Z2"), (0.945, "Z3"), (1.055, "Z4"), (float("inf"), "Z5")]
 TEXT = {"time", "rider_position", "rr_ms"}
-SUMMARY_VERSION = 11                    # bump when the cached short summary changes
+SUMMARY_VERSION = 12                    # bump when the cached short summary changes
 
 
 def load(path: str) -> list[dict]:
@@ -238,6 +239,7 @@ def summarize(rows: list[dict], ftp: Optional[float] = None, lthr: Optional[floa
         "env": {"temp_c": (meta or {}).get("temp_c"), "rh_pct": (meta or {}).get("rh_pct")},
         "durability": checks.durability(rows),
         "warmup": checks.warmup(rows),                         # heart rate at 125 W early on (checks.py)
+        "hr_model": checks.hr_model(rows),                     # HR at 150 W, its time constant (checks.py)
         "knee": {**checks.knee(rows, ftp), "score": (meta or {}).get("knee")},   # torque per rep + your 0-3
         "check": _no_a1(checks.fitness_check(rows, meta), meta),
         "workout_steps": _workout_steps(rows, meta),
@@ -317,6 +319,7 @@ def short(s: dict) -> dict:
             "vt2_hr": brief(v2.get("hr")), "vt2_power": brief(v2.get("power")),
             "temp_c": s["env"]["temp_c"], "rh_pct": s["env"]["rh_pct"],
             "warmup": s["warmup"],
+            "hr_model": s["hr_model"] and {k: s["hr_model"][k] for k in ("hr150", "tau", "gain", "drift")},
             "knee": {"score": s["knee"]["score"], "peak_torque": s["knee"]["peak_torque"],
                      "rep_torque": max((r["torque"] or 0 for r in s["knee"]["reps"]), default=None) or None,
                      "rep_cadence": checks._mean([r["cadence"] for r in s["knee"]["reps"]]),
@@ -409,6 +412,11 @@ def summarize_file(folder: str, ride_id: str, ftp=None, lthr=None, w_prime=None)
         return None
     meta = load_meta(folder, ride_id)
     s = summarize(rows, ftp, lthr, meta, w_prime, os.path.join(folder, ride_id + "_ecg.csv"))
+    # breathing rate from the strap's ECG (breathing.py), cached beside the list's summaries
+    try:
+        s["breathing"] = breathing.for_ride(folder, ride_id, rows[0]["time"], os.path.dirname(cache_path(folder, ride_id)))
+    except (OSError, ValueError, IndexError):
+        s["breathing"] = None
     raw = os.path.join(folder, ride_id + "_raw.csv")
     if os.path.exists(raw):                                  # recorded over ANT+ and Bluetooth at once
         import linkcheck

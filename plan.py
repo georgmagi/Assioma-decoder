@@ -235,6 +235,9 @@ def status_text(progress: dict, rides: list, settings: dict, over: Optional[dict
         lines.append("- Morning HRV (ln RMSSD / resting HR, last checks): " + ", ".join(
             f"{x['date']} {x['ln_rmssd']:.2f} / {f(x['hr'])}" for x in last)
             + (f"; reading: {morning['verdict'][1]}" if morning.get("verdict") else ""))
+    ready = (over or {}).get("readiness")
+    if ready:
+        lines.append(f"- Readiness today: {ready['level']} (" + "; ".join(x["text"] for x in ready["reasons"]) + ")")
     eff = [x for x in progress.get("efficiency") or [] if x.get("ef")]
     if eff:
         lines.append("- Z2 efficiency (W per bpm, last rides): " + ", ".join(f"{x['day']} {x['ef']:.2f}" for x in eff[-5:]))

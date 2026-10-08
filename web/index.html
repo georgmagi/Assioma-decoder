@@ -23,6 +23,10 @@
 </nav>
 
 <div class="screen home" id="scr-home" hidden>
+  <section class="panel ready" id="ready">
+    <div class="rd-level"><span class="rd-lab">Today</span><span class="rd-word" id="rd-word">--</span></div>
+    <ul class="rd-reasons" id="rd-reasons"></ul>
+  </section>
   <section class="panel hero">
     <div class="hero-weeks">
       <div class="panel-head">
@@ -279,6 +283,11 @@
       <div class="table-wrap"><table class="leg-table" id="wsteps-table"></table></div>
       <p class="pc" id="wsteps-note"></p>
     </section>
+    <section class="panel" id="card-breath">
+      <div class="panel-head"><h2>Breathing</h2><em class="link" id="breath-head"></em></div>
+      <div class="wbal-wrap"><canvas id="breath-chart"></canvas></div>
+      <p class="pc" id="breath-note"></p>
+    </section>
     <section class="panel" id="card-knee">
       <div class="panel-head"><h2>Knee</h2>
         <div class="seg" id="knee-score" role="group" aria-label="Knee after this ride">
@@ -376,6 +385,11 @@
     </div>
     <div class="vt1t-wrap"><canvas id="eff-chart"></canvas></div>
     <p class="wk-note" id="eff-note"></p>
+  </section>
+  <section class="panel" id="hrfit">
+    <div class="panel-head"><h2>Heart rate at 150 W</h2><output class="readout" id="hrfit-readout"></output></div>
+    <div class="vt1t-wrap"><canvas id="hrfit-chart"></canvas></div>
+    <p class="wk-note" id="hrfit-note"></p>
   </section>
   <section class="panel" id="knee-hist">
     <div class="panel-head"><h2>Knee and pedal force</h2></div>

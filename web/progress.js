@@ -41,6 +41,7 @@ function renderProgress() {
   drawEftp(d, S.snap);
   HOME.efFtp = S.snap?.config.ftp;
   drawEfficiency();
+  drawHrFitness();
 }
 
 // ---- today's fitness, fatigue and form, and what the form means
@@ -414,6 +415,54 @@ function drawEfficiency() {
     ctx.beginPath(); ctx.arc(x, y, 4.5, 0, 2 * Math.PI);
     ctx.fillStyle = lcd ? C.fg : C.good; ctx.fill();
     EFF.marks.push({ x, y, id: r.id, html: tip(r) });
+  }
+}
+
+// ---- heart rate against power, every ride (checks.hr_model): HR at 150 W read at minute 10 (lower
+// = fitter, or fresher, or a cooler room) and how fast heart rate answers a change of power (tau;
+// only rides whose power varied: intervals, steps)
+const HRF = { marks: [] };
+chartTips($("hrfit-chart"), () => HRF.marks);
+function drawHrFitness() {
+  const d = PROG.data, all = (d && d.hr_fitness) || [];
+  $("hrfit").hidden = !all.length;
+  if (!all.length) return;
+  const lcd = THEME === "lcd", taus = all.filter((r) => r.tau != null);
+  const last5 = all.slice(-5), first5 = all.slice(0, 5), avg = (xs, k) => xs.reduce((a, r) => a + r[k], 0) / xs.length;
+  $("hrfit-readout").innerHTML = `last 5: <b>${fmt(avg(last5, "hr150"))}</b> bpm` +
+    (all.length >= 8 ? ` · first 5: ${fmt(avg(first5, "hr150"))}` : "") + (taus.length ? ` · τ <b>${fmt(avg(taus.slice(-5), "tau"))}</b> s` : "");
+  $("hrfit-note").textContent = "Every ride read as a test: heart rate modelled as a lagged answer to power, with drift, and read at 150 W " +
+    "in minute 10. Lower over the weeks = fitter; a single high ride usually means tired, ill or a warm room. " +
+    "Bottom: how fast heart rate answers a change of power (τ, only rides with intervals or steps); shorter = fitter.";
+  HRF.marks = [];
+  const first = Math.min(...all.map((r) => dayOf(r.day).getTime()));
+  const t1 = dayOf(d.today).getTime(), t0 = Math.min(first, t1 - 28 * 86400e3) - 2 * 86400e3;
+  const [h0, h1] = niceRange(all.map((r) => r.hr150), 5, 3);
+  const tv = taus.map((r) => r.tau), [u0, u1] = tv.length ? niceRange(tv, 10, 5) : [40, 100];
+  const ch = laneChart($("hrfit-chart"), 280, [
+    { label: "HR at 150 W, bpm", weight: 1.6, y0: h0, y1: h1, step: h1 - h0 > 30 ? 10 : 5, fmt: (v) => `${Math.round(v)}` },
+    { label: "τ, s", weight: 1, y0: u0, y1: u1, step: u1 - u0 > 60 ? 20 : 10, fmt: (v) => `${Math.round(v)}` },
+  ], t0, t1);
+  if (!ch) return;
+  const { ctx, X } = ch, [L1, L2] = ch.lanes;
+  const tip = (r) => `<b>${SHORT_DAY.format(dayOf(r.day))}</b>${r.name ? ` · ${esc(r.name)}` : ""}<br>${fmt(r.hr150)} bpm at 150 W` +
+    (r.tau != null ? `<br>τ ${fmt(r.tau)} s · ${r.gain.toFixed(2)} bpm per W` : "") +
+    (r.drift != null ? `<br>drift ${r.drift > 0 ? "+" : ""}${fmt(r.drift)} bpm per hour` : "") + (r.temp_c != null ? `<br>room ${r.temp_c} °C` : "");
+  ctx.strokeStyle = lcd ? C.fg : blend(C.hr, C.panel, 0.35); ctx.lineWidth = 2; ctx.beginPath();
+  all.forEach((r, i) => {                                         // the 5-ride trend
+    const win = all.slice(Math.max(0, i - 4), i + 1), m = avg(win, "hr150"), x = X(dayOf(r.day).getTime() + 43200e3);
+    i ? ctx.lineTo(x, L1.Y(m)) : ctx.moveTo(x, L1.Y(m));
+  });
+  ctx.stroke();
+  for (const r of all) {
+    const x = X(dayOf(r.day).getTime() + 43200e3), y = L1.Y(r.hr150);
+    ctx.beginPath(); ctx.arc(x, y, 4.5, 0, 2 * Math.PI); ctx.fillStyle = lcd ? C.fg : C.hr; ctx.fill();
+    HRF.marks.push({ x, y, id: r.id, html: tip(r) });
+  }
+  for (const r of taus) {
+    const x = X(dayOf(r.day).getTime() + 43200e3), y = L2.Y(r.tau);
+    ctx.beginPath(); ctx.arc(x, y, 4, 0, 2 * Math.PI); ctx.fillStyle = lcd ? C.fg : C.power; ctx.fill();
+    HRF.marks.push({ x, y, id: r.id, html: tip(r) });
   }
 }
 

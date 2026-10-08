@@ -79,7 +79,10 @@ function renderConnections(s) {
 function renderHome(s) {
   renderConnections(s);
   renderSettings(s);
-  if (HOME.mcFor !== s.morning_version || S.prevScreen !== "home") { HOME.mcFor = s.morning_version; loadMorning(s); }
+  if (HOME.mcFor !== s.morning_version || S.prevScreen !== "home") {
+    if (HOME.mcFor !== undefined && HOME.mcFor !== s.morning_version) loadReadiness();   // a new check: a new answer
+    HOME.mcFor = s.morning_version; loadMorning(s);
+  }
   $("mc-start").disabled = !!s.morning;
   if (S.prevScreen !== "home" || HOME.progFor !== s.data_key) {    // on arriving, after a save / delete, a new day, a new FTP
     HOME.progFor = s.data_key;
@@ -164,6 +167,16 @@ function renderMorningRun(s) {
 $("mc-start").addEventListener("click", (e) => { e.currentTarget.blur(); act("morning_start"); });
 $("mc-cancel").addEventListener("click", (e) => { e.currentTarget.blur(); act("morning_cancel"); });
 
+// Today: go / easy / rest from the morning check, today's warm-up, form and the knee (readiness.py)
+const RD_WORDS = { go: "Go: train as planned", easy: "Easy: Z2 or rest today", rest: "Rest from intensity" };
+async function loadReadiness() {
+  let r;
+  try { r = await (await fetch("/api/readiness")).json(); } catch { return; }
+  $("rd-word").textContent = RD_WORDS[r.level];
+  $("ready").dataset.level = r.level;
+  const icon = { go: "✓", note: "•", easy: "!", rest: "!!" };
+  $("rd-reasons").innerHTML = r.reasons.map((x) => `<li class="${x.level}"><i>${icon[x.level]}</i>${esc(x.text)}</li>`).join("");
+}
 async function loadOverview() {
   let rides, prog;
   try {
@@ -171,6 +184,7 @@ async function loadOverview() {
   } catch { return; }
   HOME.rides = rides;
   HOME.prog = prog;
+  loadReadiness();
   drawHero();
   vt1Home().draw(prog);
   // last ride
@@ -470,6 +484,9 @@ function renderSummary(d) {
     stat("Work", fmt(st.work_kj), "kJ", `${fmt(st.avg_cadence)} rpm avg`),
     stat("Balance", bal == null ? "--" : `${fmt(100 - bal)} · ${fmt(bal)}`, "", st.standing_pct == null ? "" : `standing ${fmt(st.standing_pct)}%`),
     ...(d.warmup ? [warmupStat(d.warmup, d.warmup_normal)] : []),
+    ...(d.hr_model && d.hr_model.hr150 != null ? [stat("HR at 150 W", fmt(d.hr_model.hr150), "bpm",
+      d.hr_model.tau != null ? `τ ${fmt(d.hr_model.tau)} s · ${d.hr_model.gain.toFixed(2)} bpm/W · drift ${fmt(d.hr_model.drift)}/h`
+        : `steady ride · drift ${fmt(d.hr_model.drift)} bpm/h`)] : []),
   ].join("");
 
   // best powers
@@ -522,6 +539,7 @@ function renderSummary(d) {
   drawPoincare(d.poincare);
   renderOddBeats(d);
   renderKnee(d);
+  renderBreathing(d);
   renderWbal(d);
   renderVt1(d);
   renderDurability(d);
@@ -624,6 +642,66 @@ function drawVt1(e, unit) {
     ctx.fillStyle = lcd ? C.fg : C.fg;
     ctx.beginPath(); ctx.arc(X(e.value), Y(0.75), 4.5, 0, 2 * Math.PI); ctx.fill();
   }
+}
+
+// Breathing rate from the ECG (breathing.py): breaths/min every 30 s over the ride's power, the line a
+// 3-point median (a single odd minute doesn't bend it); per rep, the rate at its end
+let BR_LAST = null;
+window.addEventListener("resize", () => { if (!$("scr-summary").hidden && BR_LAST) drawBreathing(BR_LAST); });
+function renderBreathing(d) {
+  const b = d.breathing, ok = b && b.rate.filter((v) => v != null).length >= 4;
+  BR_LAST = ok ? d : null;
+  $("card-breath").hidden = !ok;
+  if (!ok) return;
+  const at = (a, z) => { const v = b.t.map((t, i) => (t >= a && t < z ? b.rate[i] : null)).filter((v) => v != null).sort((x, y) => x - y);
+                         return v.length ? v[Math.floor(v.length / 2)] : null; };
+  const ftp = d.stats.ftp, ser = d.series;
+  const z2 = ftp ? b.t.map((t, i) => { const p = ser.power[t]; return p != null && p >= 0.56 * ftp && p <= 0.75 * ftp ? b.rate[i] : null; }).filter((v) => v != null).sort((x, y) => x - y) : [];
+  const reps = (d.knee?.reps || []).map((r) => at(r.start + r.seconds - 90, r.start + r.seconds + 15)).filter((v) => v != null);
+  $("breath-head").textContent = z2.length >= 4 ? `Z2 ${fmt(z2[Math.floor(z2.length / 2)])}/min` : "";
+  $("breath-note").innerHTML = (reps.length ? `Reps end at <b>${reps.map((v) => fmt(v)).join(", ")}</b> breaths/min. ` : "") +
+    "From the ECG: each breath moves the heart against the strap, so the R peaks rise and fall with it. " +
+    "Breathing tracks effort closely, and its sharp rise on a step test marks your second threshold.";
+  drawBreathing(d);
+}
+function drawBreathing(d) {
+  const b = d.breathing, cv = $("breath-chart"), dpr = devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
+  if (!W || !H) return;
+  cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+  const ctx = cv.getContext("2d"), lcd = THEME === "lcd";
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, W, H);
+  const n = d.series.t.length, m = { l: 40, r: 8, t: 8, b: 22 }, pw = W - m.l - m.r, ph = H - m.t - m.b;
+  const vals = b.rate.filter((v) => v != null), top = Math.max(40, Math.ceil(Math.max(...vals) / 10) * 10 + 5), bot = 10;
+  const X = (t) => m.l + (t / Math.max(1, n - 1)) * pw, Y = (v) => m.t + ph - ((v - bot) / (top - bot)) * ph;
+  // the ride's power, faint, behind
+  const pmax = Math.max(1, ...d.series.power.filter((v) => v != null));
+  ctx.fillStyle = lcd ? "rgba(27,30,25,0.10)" : blend(C.power, C.panel, 0.86);
+  ctx.beginPath(); ctx.moveTo(m.l, m.t + ph);
+  for (let t = 0; t < n; t += 15) {
+    let s = 0, k = 0; for (let j = Math.max(0, t - 15); j < Math.min(n, t + 15); j++) if (d.series.power[j] != null) { s += d.series.power[j]; k++; }
+    ctx.lineTo(X(t), m.t + ph - (k ? s / k / pmax : 0) * ph * 0.9);
+  }
+  ctx.lineTo(X(n - 1), m.t + ph); ctx.closePath(); ctx.fill();
+  ctx.font = "11px Bahnschrift, 'Segoe UI', sans-serif"; ctx.lineWidth = 1;
+  for (let v = 10; v <= top; v += 10) {
+    ctx.strokeStyle = C.grid; ctx.beginPath(); ctx.moveTo(m.l, Y(v) + 0.5); ctx.lineTo(m.l + pw, Y(v) + 0.5); ctx.stroke();
+    ctx.fillStyle = C.dim; ctx.textAlign = "right"; ctx.fillText(`${v}`, m.l - 6, Y(v) + 4);
+  }
+  ctx.textAlign = "center";
+  const step = [300, 600, 900, 1800, 3600].find((s) => n / s <= 8) || 7200;
+  for (let t = step; t < n; t += step) ctx.fillText(`${Math.round(t / 60)} min`, X(t), H - 6);
+  // the dots, then the 3-point median line through them
+  ctx.fillStyle = lcd ? C.fg : blend(C.rr, C.panel, 0.35);
+  b.t.forEach((t, i) => { if (b.rate[i] != null) { ctx.beginPath(); ctx.arc(X(t), Y(b.rate[i]), 2.5, 0, 2 * Math.PI); ctx.fill(); } });
+  ctx.strokeStyle = lcd ? C.fg : C.rr; ctx.lineWidth = 2; ctx.beginPath();
+  let started = false;
+  b.t.forEach((t, i) => {
+    const w = [b.rate[i - 1], b.rate[i], b.rate[i + 1]].filter((v) => v != null).sort((x, y) => x - y);
+    if (!w.length || b.rate[i] == null) { started = false; return; }
+    const v = w[Math.floor(w.length / 2)];
+    started ? ctx.lineTo(X(t), Y(v)) : ctx.moveTo(X(t), Y(v)); started = true;
+  });
+  ctx.stroke();
 }
 
 // The knee (checks.knee): force per pedal stroke (torque = W / crank speed) per rep, the legs' share

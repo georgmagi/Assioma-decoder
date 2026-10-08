@@ -127,6 +127,12 @@ def progress(rides: list[dict], today: Optional[date] = None) -> dict:
                         "power": r.get("ef_z2_power"), "minutes": r.get("ef_z2_min"),
                         "decoupling": r.get("decoupling_pct")}
                        for r in sorted(rides, key=lambda r: r["start_utc"]) if r.get("ef_z2") or r.get("decoupling_pct") is not None],
+        # heart rate against power, ride by ride (checks.hr_model): HR at 150 W (lower = fitter), tau
+        # (faster = fitter); only the recorder's own rides, one strap, the same pedals
+        "hr_fitness": [{"id": r.get("id"), "day": local_day(r["start_utc"]).isoformat(), "name": r.get("name"),
+                        "temp_c": r.get("temp_c"), **(r.get("hr_model") or {})}
+                       for r in sorted(rides, key=lambda r: r["start_utc"])
+                       if r.get("source") == "Assioma" and (r.get("hr_model") or {}).get("hr150") is not None],
         "weeks": weeks(rides, today),
         "pmc": pmc(rides, today),
         "totals": {"rides": len(rides), "time_s": sum(r.get("ride_s") or 0 for r in rides),

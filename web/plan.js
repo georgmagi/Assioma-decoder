@@ -101,11 +101,11 @@ function renderPlanGrid(d) {
   d.days.forEach((x, i) => {
     const dd = dayOf(x.day), isToday = x.day === today, past = x.day < today;
     const st = { done: `done ${fmt(x.done_tss)}`, missed: "missed", extra: `extra ${fmt(x.done_tss)}`, today: "today" }[x.status] || "";
-    cells.push(`<button class="pl-d${isToday ? " today" : ""}${past ? " past" : ""}" data-day="${x.day}">` +
+    cells.push(`<button class="pl-d${isToday ? " today" : ""}${past ? " past" : ""}${x.warn ? " warn" : ""}" data-day="${x.day}"${x.warn ? ` title="${esc(x.warn)}"` : ""}>` +
       `<span class="dn">${dd.getDate()} ${SHORT_DAY.format(dd).split(" ")[1] || ""}</span>` +
       `<span class="nm${x.entry && x.entry.rest ? " rest" : ""}">${x.name ? esc(x.name) : x.entry && x.entry.rest ? "rest" : ""}</span>` +
       `${x.steps ? "<canvas></canvas>" : "<span></span>"}` +
-      `<span class="mt"><span>${x.minutes ? `${x.minutes} min` : ""}${x.tss != null ? ` · ${fmt(x.tss)}` : ""}</span><span class="st ${x.status}">${st}</span></span></button>`);
+      `<span class="mt"><span>${x.minutes ? `${x.minutes} min` : ""}${x.tss != null ? ` · ${fmt(x.tss)}` : ""}</span><span class="st ${x.status}">${x.warn ? "⚠ " : ""}${st}</span></span></button>`);
     if (i % 7 === 6) {
       const w = d.weeks[Math.floor(i / 7)], tot = w.split.easy + w.split.moderate + w.split.hard;
       const seg = (k, cls) => (w.split[k] ? `<i class="${cls}" style="flex:${w.split[k]}"></i>` : "");

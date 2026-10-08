@@ -271,3 +271,74 @@ def knee(rows: list, ftp: Optional[float]) -> dict:
                              "te_left": m("te_left_pct"), "te_right": m("te_right_pct")})
             i = j
     return {"reps": reps, "peak_torque": peak, "torque_z2": sum(z2) / len(z2) if len(z2) >= 300 else None}
+
+
+# --------------------------------------------------------------------------- heart rate against power
+# Every ride is a fitness test if heart rate is read as a lagged response to power: the heart
+# follows the power a first-order system would, HR(t) = base + gain * P_f(t), where P_f is the
+# power smoothed with a time constant tau (Mazzoleni et al. 2016 and later "HR kinetics" work).
+# Fitted per ride (tau by grid, base and gain by least squares) it gives
+#   - HR at 150 W (your Z2): base + gain * 150. Lower over the weeks = fitter (or a cooler room)
+#   - tau: how fast heart rate answers a change of power. Faster = better aerobic fitness
+#   - gain: bpm per W (only on rides whose power varied enough to tell gain from base)
+# The first 3 minutes are left out (the heart is still waking up). 6 Oct VO2 ride: tau 70 s,
+# 0.38 bpm/W; 29 Sep: 85 s, 0.42 bpm/W.
+HRM_FROM_S, HRM_MIN_S = 180, 900
+HRM_TAUS = range(10, 181, 5)
+HRM_REF_W = 150
+HRM_REF_T = 600              # s: HR at 150 W is read at minute 10
+
+
+def hr_model(rows: list) -> Optional[dict]:
+    """{hr150, tau, gain, drift, base, rmse, power_span, seconds} or None (under 15 min of heart
+    rate, or 150 W far outside what was ridden). The model has a drift term too, heart rate creeping
+    up with time at the same power (heat, fatigue), so HR at 150 W is read at minute 10 and long or
+    interval rides compare with short steady ones."""
+    p = [r.get("power_w") or 0.0 for r in rows]
+    h = [r.get("heart_rate_bpm") for r in rows]
+    idx = [i for i in range(HRM_FROM_S, len(rows)) if h[i]]
+    if len(idx) < HRM_MIN_S:
+        return None
+    ys = [h[i] for i in idx]
+    ts = [(i - HRM_REF_T) / 3600 for i in idx]                   # hours from minute 10
+    n = len(idx)
+    my, mt = sum(ys) / n, sum(ts) / n
+    stt = sum((t - mt) ** 2 for t in ts)
+    best = None
+    for tau in HRM_TAUS:
+        a, f, pf = 1.0 / tau, 0.0, []
+        for x in p:
+            f += a * (x - f)
+            pf.append(f)
+        xs = [pf[i] for i in idx]
+        mx = sum(xs) / n
+        sxx = sum((x - mx) ** 2 for x in xs)
+        sxt = sum((x - mx) * (t - mt) for x, t in zip(xs, ts))
+        sxy = sum((x - mx) * (y - my) for x, y in zip(xs, ys))
+        sty = sum((t - mt) * (y - my) for t, y in zip(ts, ys))
+        det = sxx * stt - sxt * sxt
+        if sxx <= 0 or det <= 1e-9 * sxx * stt:
+            continue
+        gain, drift = (sxy * stt - sty * sxt) / det, (sty * sxx - sxy * sxt) / det
+        base = my - gain * mx - drift * mt                       # HR at 0 W at minute 10
+        rmse = (sum((y - base - gain * x - drift * t) ** 2 for x, t, y in zip(xs, ts, ys)) / n) ** 0.5
+        if best is None or rmse < best["rmse"]:
+            srt = sorted(xs)
+            best = {"tau": tau, "gain": gain, "drift": drift, "base": base, "rmse": rmse,
+                    "p_lo": srt[int(0.05 * (n - 1))], "p_hi": srt[int(0.95 * (n - 1))]}
+    if best is None:
+        return None
+    b = best
+    span = b["p_hi"] - b["p_lo"]
+    # a steady ride can't tell gain from base, nor tau: then HR at 150 W is its mean heart rate put
+    # on 150 W with your typical gain, and tau and gain are left out
+    varied = span >= 60
+    near = b["p_lo"] - 30 <= HRM_REF_W <= b["p_hi"] + 30
+    if varied:
+        hr150 = b["base"] + b["gain"] * HRM_REF_W
+    else:
+        xs_mean = sum(p[i] for i in idx) / n
+        hr150 = my - b["drift"] * mt + READY_SLOPE * (HRM_REF_W - xs_mean)
+    return {"hr150": hr150 if near else None, "tau": b["tau"] if varied else None,
+            "gain": b["gain"] if varied else None, "drift": b["drift"], "base": b["base"],
+            "rmse": b["rmse"], "power_span": span, "seconds": n}

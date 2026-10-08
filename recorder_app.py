@@ -42,6 +42,7 @@ import plan as pl
 import ride_summary as rs
 import workout as wk
 import checks
+import readiness as rd
 import training
 import wbal
 from assioma_recorder import (EVENT, HERE, STRAP_FILES, BleWorker, ReplayWorker, Session, local_utc_offset_h,
@@ -916,6 +917,13 @@ class Engine(threading.Thread):
         }
 
 
+def today_readiness(engine: "Engine", rides: list, pmc: dict) -> dict:
+    """readiness.today with the morning trend and your normal warm-up from the rides before today."""
+    today = date.today()
+    earlier = [r for r in rides if r.get("source") == "Assioma" and training.local_day(r["start_utc"]) < today]
+    return rd.today(mo.trend(engine.mornings), rides, pmc, checks.warmup_normal([r.get("warmup") for r in earlier]), today)
+
+
 def pedal_silhouette() -> dict:
     """The left pedal's top view as one flat shape (every layer's outline, with the body's see-through
     holes), in units of the pedal length: x across (+ = towards the crank), y front to back."""
@@ -981,10 +989,21 @@ def make_server(engine: Engine, app_mode: dict) -> ThreadingHTTPServer:
                 self._json({"name": w["name"], "text": wk.to_text(w["steps"])} if w else {"error": "no such workout"})
             elif u.path == "/api/morning":
                 self._json(mo.trend(engine.mornings))
+            elif u.path == "/api/readiness":
+                rides = rs.ride_list(engine.out_dir, engine.settings.get("ftp"))
+                self._json(today_readiness(engine, rides, training.pmc(rides)))
             elif u.path == "/api/plan":
                 rides = rs.ride_list(engine.out_dir, engine.settings.get("ftp"))
                 over = pl.overview(engine.plan, engine.workouts(), rides, engine.settings.get("ftp"), date.today())
                 prog = training.progress(rides)
+                ready = today_readiness(engine, rides, prog["pmc"])
+                over["readiness"] = ready
+                if ready["level"] != "go":                   # flag the next hard day, today or tomorrow
+                    soon = (date.today() + timedelta(days=1)).isoformat()
+                    for d in over["days"]:
+                        if date.today().isoformat() <= d["day"] <= soon and d["status"] in ("today", "upcoming") and rd.is_hard(d):
+                            d["warn"] = ("Your body says " + ready["level"] + " today: swap this for Z2?") if d["day"] == date.today().isoformat()                                 else "Check how you feel tomorrow before this one."
+                            break
                 self._json({**over, "status_text": pl.status_text(prog, rides, engine.settings, over, mo.trend(engine.mornings)),
                             "pmc_now": prog["pmc"]})
             elif u.path == "/api/progress":
