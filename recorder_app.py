@@ -1166,7 +1166,17 @@ def main() -> None:
                 engine.quit.wait()
                 win.destroy()
             threading.Thread(target=closer, daemon=True).start()
-            webview.start()
+            # Linux: render with Chromium (Qt WebEngine, pip install PyQt6 PyQt6-WebEngine qtpy), like
+            # WebView2 on Windows. WebKitGTK, pywebview's Linux default, draws the canvases on the CPU
+            # and stutters (~53 fps with 4-5 long frames a second vs a steady 60 with Qt).
+            gui = None
+            if sys.platform.startswith("linux"):
+                try:
+                    import PyQt6.QtWebEngineWidgets  # noqa: F401
+                    gui = "qt"
+                except ImportError:
+                    pass
+            webview.start(gui=gui)
     except KeyboardInterrupt:
         pass
     finally:

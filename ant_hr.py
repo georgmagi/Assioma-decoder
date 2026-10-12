@@ -229,6 +229,11 @@ class AntHrWorker(threading.Thread):
         if dev is None:
             self.status = "no ANT+ stick"
             return "no stick"
+        try:                                      # Linux: usb_serial_simple claims the stick as a tty; take it back
+            if dev.is_kernel_driver_active(0):
+                dev.detach_kernel_driver(0)
+        except (NotImplementedError, usb.core.USBError):
+            pass                                  # Windows/macOS: no kernel driver to detach
         try:
             dev.set_configuration()
         except usb.core.USBError:

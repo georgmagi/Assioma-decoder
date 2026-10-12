@@ -59,7 +59,8 @@ const serverNow = () => (S.offset == null ? null : performance.now() / 1000 + S.
 // the strap's raw streams (a Polar H10): ECG [s, uV] and accelerometer [s, x, y, z mG], the last
 // 12 s, with the counts the server has sent so far; drawn a little behind real time (the strap
 // sends ECG in ~0.5 s blocks), the delay learnt from how late the newest sample arrives
-const SD = { ecg: [], acc: [], e: 0, x: 0, lag: { ecg: [], acc: [] }, delay: { ecg: 1, acc: 0.5 }, range: {} };
+const SD = { ecg: [], acc: [], e: 0, x: 0, lag: { ecg: [], acc: [] }, blk: { ecg: [], acc: [] }, lastT: { ecg: null, acc: null },
+             delay: { ecg: 1, acc: 0.5 }, range: {} };
 
 // --------------------------------------------------------------------------- numbers that roll
 const tweens = {};                      // id -> {from, to, t0}
@@ -805,10 +806,14 @@ function takeStrap(st) {
     for (const r of rows) SD[k].push(r);
     const last = rows[rows.length - 1][0], now = serverNow();
     if (now != null) {
-      const L = SD.lag[k];
+      // the delay must cover how late a block arrives PLUS the block's length (~0.55 s of ECG,
+      // ~0.18 s of ACC): the trace has to last until the next block, or it stalls and jumps
+      const L = SD.lag[k], B = (SD.blk[k] ||= []), prev = SD.lastT[k];
       L.push(now - last);
       if (L.length > 12) L.shift();
-      SD.delay[k] = Math.min(3, Math.max(0.15, Math.max(...L) + 0.08));
+      if (prev != null && last > prev && last - prev < 3) { B.push(last - prev); if (B.length > 12) B.shift(); }
+      SD.lastT[k] = last;
+      SD.delay[k] = Math.min(3, Math.max(0.15, Math.max(...L) + (B.length ? Math.max(...B) : 0.6) + 0.05));
     }
     let i = 0;
     while (i < SD[k].length && SD[k][i][0] < last - 12) i++;
