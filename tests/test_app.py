@@ -315,6 +315,16 @@ def test_vt1_reference_comes_from_your_latest_crossing(tmp_path, monkeypatch):
     assert e.settings["vt1_hr"] == 155
 
 
+def test_max_heart_rate_setting(tmp_path):
+    e = _engine(tmp_path)
+    e._do("settings", {"max_hr": 198})
+    assert e.settings["max_hr"] == 198
+    e._do("settings", {"max_hr": 300})                         # out of range: ignored
+    assert e.settings["max_hr"] == 198
+    e._do("settings", {"ftp": 240})                            # other settings leave it alone
+    assert e.settings["max_hr"] == 198 and e.settings["ftp"] == 240
+
+
 class _Trainer:
     want = None
     controlled, error, power_w = True, "", None

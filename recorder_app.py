@@ -66,7 +66,7 @@ def hms(n: int) -> str:
 PAGES = ("home", "plan", "workouts", "stats")   # the app's pages (top bar); plus "ride" and "summary"
 # ftp, plan and strap are set on the home screen; theme, graph span and the power tile's 3 s mode are
 # remembered from the page (its own browser storage is lost: the port changes every run)
-SETTINGS_DEFAULTS = {"ftp": None, "lthr": None, "vt1_hr": None, "room_temp": None, "room_rh": None,
+SETTINGS_DEFAULTS = {"ftp": None, "max_hr": None, "vt1_hr": None, "room_temp": None, "room_rh": None,
                      "plan_min": 60, "hr": True, "trainer": False, "theme": "dark", "span": 300,
                      "power3s": False, "hr_lock": None}
 PREFS = {"theme": ("dark", "lcd"), "span": (300, 1800, 0), "power3s": (True, False)}
@@ -632,14 +632,14 @@ class Engine(threading.Thread):
 
     def _settings(self, new: dict) -> None:
         ftp, plan, hr = new.get("ftp", self.settings.get("ftp")), new.get("plan_min"), new.get("hr")
-        lthr = new.get("lthr", self.settings.get("lthr"))
+        max_hr = new.get("max_hr", self.settings.get("max_hr"))
         vt1_hr = new.get("vt1_hr", self.settings.get("vt1_hr"))     # None: from your rides (vt1.py)
         if vt1_hr is None or (isinstance(vt1_hr, (int, float)) and 90 <= vt1_hr <= 210):
             self.settings["vt1_hr"] = vt1_hr
         if ftp is None or (isinstance(ftp, (int, float)) and 50 <= ftp <= 600):
             self.settings["ftp"] = ftp
-        if lthr is None or (isinstance(lthr, (int, float)) and 100 <= lthr <= 220):
-            self.settings["lthr"] = lthr
+        if max_hr is None or (isinstance(max_hr, (int, float)) and 120 <= max_hr <= 230):
+            self.settings["max_hr"] = max_hr
         for key, lo, hi in (("room_temp", 5, 40), ("room_rh", 5, 100)):     # the room, from your hygrometer
             if key in new and (new[key] is None or (isinstance(new[key], (int, float)) and lo <= new[key] <= hi)):
                 self.settings[key] = new[key]
@@ -1013,7 +1013,7 @@ def make_server(engine: Engine, app_mode: dict) -> ThreadingHTTPServer:
                 wp = next((r["ramp_w_prime"] for r in rs.ride_list(engine.out_dir, ftp) if r.get("ramp_w_prime")), None)
                 rid = q.get("id", [""])[0]
                 rides = rs.ride_list(engine.out_dir, ftp)
-                s = rs.summarize_file(engine.out_dir, rid, ftp, engine.settings.get("lthr"), wp)
+                s = rs.summarize_file(engine.out_dir, rid, ftp, engine.settings.get("max_hr"), wp)
                 if s is not None:                            # your normal warm-up from the rides before this one
                     s["warmup_normal"] = checks.warmup_normal([r.get("warmup") for r in rides if r.get("source") == "Assioma"
                                                               and r["start_utc"] < s["start_utc"] and r["id"] != rid])

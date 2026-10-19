@@ -381,7 +381,7 @@ function renderSettings(s) {
   if (key !== HOME.settingsKey && !document.activeElement?.closest?.("#set-form")) {
     HOME.settingsKey = key;
     $("set-ftp").value = s.settings.ftp ?? "";
-    $("set-lthr").value = s.settings.lthr ?? "";
+    $("set-maxhr").value = s.settings.max_hr ?? "";
     $("set-vt1").value = s.settings.vt1_hr ?? "";
     $("set-plan").value = s.settings.plan_min ?? "";
     $("set-temp").value = s.settings.room_temp ?? "";
@@ -396,10 +396,10 @@ function renderSettings(s) {
 function sendSettings() {
   const num = (id) => { const v = parseFloat($(id).value); return Number.isFinite(v) ? v : null; };
   const plan = num("set-plan");
-  act("settings", { ftp: num("set-ftp"), lthr: num("set-lthr"), vt1_hr: num("set-vt1"), plan_min: plan ?? undefined,
+  act("settings", { ftp: num("set-ftp"), max_hr: num("set-maxhr"), vt1_hr: num("set-vt1"), plan_min: plan ?? undefined,
                     room_temp: num("set-temp"), room_rh: num("set-rh") });
 }
-for (const id of ["set-ftp", "set-lthr", "set-vt1", "set-plan", "set-temp", "set-rh"]) {
+for (const id of ["set-ftp", "set-maxhr", "set-vt1", "set-plan", "set-temp", "set-rh"]) {
   $(id).addEventListener("change", sendSettings);
   $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") e.target.blur(); e.stopPropagation(); });
 }
@@ -508,7 +508,7 @@ function renderSummary(d) {
   const hc = THEME === "lcd" ? {} : { Z1: "#9aa3ad", Z2: "#5b9dff", Z3: "#3ddc97", Z4: "#ffd166", Z5: "#ff5c5c" };
   $("sum-hrzones").innerHTML = htotal
     ? Object.entries(hz).map(([z, sec]) => bar(z, sec, htotal, hc[z])).join("")
-    : `<p class="empty-note">${d.stats.lthr ? "No heart rate in this ride." : "Set your threshold heart rate on the home screen to see heart-rate zones."}</p>`;
+    : `<p class="empty-note">${d.stats.zone_max_hr ? "No heart rate in this ride." : "Set your max heart rate on the home screen to see heart-rate zones."}</p>`;
   const ab = d.a1_bands, aall = ab["above_0.75"] + ab["0.5_to_0.75"] + ab["below_0.5"];
   $("sum-a1bands").innerHTML = aall ? [
     bar("> 0.75", ab["above_0.75"], aall, THEME === "lcd" ? null : C.good),

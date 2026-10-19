@@ -211,7 +211,7 @@ def status_text(progress: dict, rides: list, settings: dict, over: Optional[dict
     lines = ["# Training status (from my Assioma Recorder)", ""]
     if p["days"]:
         lines.append(f"- Fitness (CTL, 42 d) {f(p['ctl'][-1])}, fatigue (ATL, 7 d) {f(p['atl'][-1])}, form (TSB) {f(p['tsb'][-1])}")
-    lines.append(f"- FTP setting {f(settings.get('ftp'))} W; threshold HR {f(settings.get('lthr'))}; VT1 HR setting {f(settings.get('vt1_hr'))}")
+    lines.append(f"- FTP setting {f(settings.get('ftp'))} W; max HR {f(settings.get('max_hr'))}; VT1 HR setting {f(settings.get('vt1_hr'))}")
     e = (progress.get("eftp") or {}).get("current")
     if e:
         lines.append(f"- eFTP {f(e['ftp'])} W from {e['method']}; evidence: " + "; ".join(

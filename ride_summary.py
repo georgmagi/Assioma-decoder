@@ -30,9 +30,9 @@ import wbal
 
 SUFFIX = "_per_second.csv"
 ZONES = [(0.55, "Z1"), (0.75, "Z2"), (0.90, "Z3"), (1.05, "Z4"), (1.20, "Z5"), (float("inf"), "Z6")]  # Coggan
-# Coggan heart-rate zones, share of threshold heart rate (LTHR): Z1 up to 68 %, Z2 69-83 %, Z3 84-94 %,
-# Z4 95-105 %, Z5 106 % and up
-HR_ZONES = [(0.685, "Z1"), (0.835, "Z2"), (0.945, "Z3"), (1.055, "Z4"), (float("inf"), "Z5")]
+# heart-rate zones, share of your max heart rate: Z1 up to 60 %, Z2 60-70 %, Z3 70-80 %, Z4 80-90 %,
+# Z5 above 90 %
+HR_ZONES = [(0.60, "Z1"), (0.70, "Z2"), (0.80, "Z3"), (0.90, "Z4"), (float("inf"), "Z5")]
 TEXT = {"time", "rider_position", "rr_ms"}
 SUMMARY_VERSION = 12                    # bump when the cached short summary changes
 
@@ -156,7 +156,7 @@ def _workout_steps(rows: list, meta: dict) -> Optional[list]:
     return out or None
 
 
-def summarize(rows: list[dict], ftp: Optional[float] = None, lthr: Optional[float] = None,
+def summarize(rows: list[dict], ftp: Optional[float] = None, max_hr: Optional[float] = None,
               meta: Optional[dict] = None, w_prime: Optional[float] = None, ecg_path: Optional[str] = None) -> dict:
     if not rows:
         raise ValueError("no recorded seconds")
@@ -190,10 +190,10 @@ def summarize(rows: list[dict], ftp: Optional[float] = None, lthr: Optional[floa
             if p is not None:
                 zone_s[next(name for top, name in ZONES if p <= top * ftp)] += 1
     hr_zone_s = {name: 0 for _, name in HR_ZONES}
-    if lthr:
+    if max_hr:                                  # your max heart rate setting, not this ride's
         for h in hr:
             if h:
-                hr_zone_s[next(name for top, name in HR_ZONES if h <= top * lthr)] += 1
+                hr_zone_s[next(name for top, name in HR_ZONES if h <= top * max_hr)] += 1
     a1_bands = {"above_0.75": sum(v > 0.75 for v in a1_known), "0.5_to_0.75": sum(0.5 <= v <= 0.75 for v in a1_known),
                 "below_0.5": sum(v < 0.5 for v in a1_known)}
 
@@ -225,7 +225,7 @@ def summarize(rows: list[dict], ftp: Optional[float] = None, lthr: Optional[floa
         "stats": {
             "ride_s": n, "elapsed_s": ts[-1] + 1,
             "avg_power": avg_p, "np": np_, "max_power": max((p for p in power if p is not None), default=None),
-            "if": if_, "tss": tss, "work_kj": sum(p or 0 for p in power) / 1000, "ftp": ftp, "lthr": lthr,
+            "if": if_, "tss": tss, "work_kj": sum(p or 0 for p in power) / 1000, "ftp": ftp, "zone_max_hr": max_hr,
             "avg_hr": _mean(hr), "max_hr": max((h for h in hr if h), default=None),
             "avg_cadence": _mean(at("cadence_rpm")), "balance_right": _mean(at("balance_right_pct")),
             "avg_a1": _mean(a1_known), "rmssd": hrv.rmssd(clean) if len(clean) > 2 else None,
@@ -403,7 +403,7 @@ def ride_name(ride_id: str) -> tuple:
     return (" ".join(rest).strip() or None), source
 
 
-def summarize_file(folder: str, ride_id: str, ftp=None, lthr=None, w_prime=None) -> Optional[dict]:
+def summarize_file(folder: str, ride_id: str, ftp=None, max_hr=None, w_prime=None) -> Optional[dict]:
     path = find_ride(folder, ride_id)
     if path is None:
         return None
@@ -411,7 +411,7 @@ def summarize_file(folder: str, ride_id: str, ftp=None, lthr=None, w_prime=None)
     if not rows:
         return None
     meta = load_meta(folder, ride_id)
-    s = summarize(rows, ftp, lthr, meta, w_prime, os.path.join(folder, ride_id + "_ecg.csv"))
+    s = summarize(rows, ftp, max_hr, meta, w_prime, os.path.join(folder, ride_id + "_ecg.csv"))
     # breathing rate from the strap's ECG (breathing.py), cached beside the list's summaries
     try:
         s["breathing"] = breathing.for_ride(folder, ride_id, rows[0]["time"], os.path.dirname(cache_path(folder, ride_id)))

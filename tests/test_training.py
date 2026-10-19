@@ -39,11 +39,11 @@ def test_weeks_are_monday_to_sunday_and_include_empty_ones():
     assert [x["rides"] for x in w] == [0, 1, 2] and w[-1]["tss"] == 120 and w[-1]["time_s"] == 7200
 
 
-def test_heart_rate_zones_use_threshold_heart_rate():
+def test_heart_rate_zones_use_max_heart_rate():
     t0 = datetime(2026, 9, 28, 6)
     rows = [{"time": t0 + timedelta(seconds=i), "power_w": 150, "heart_rate_bpm": hr, "rr_ms": []}
             for i, hr in enumerate([100] * 10 + [140] * 20 + [160] * 5 + [175] * 5 + [190] * 3)]
-    z = rs.summarize(rows, ftp=200, lthr=170)["hr_zones"]
-    # 170 bpm threshold: Z1 <= 116, Z2 <= 142, Z3 <= 160, Z4 <= 179, Z5 above
+    z = rs.summarize(rows, ftp=200, max_hr=200)["hr_zones"]
+    # 200 bpm max: Z1 <= 120, Z2 <= 140, Z3 <= 160, Z4 <= 180, Z5 above
     assert z == {"Z1": 10, "Z2": 20, "Z3": 5, "Z4": 5, "Z5": 3}
-    assert sum(rs.summarize(rows, ftp=200)["hr_zones"].values()) == 0   # no threshold set: none
+    assert sum(rs.summarize(rows, ftp=200)["hr_zones"].values()) == 0   # no max set: none
