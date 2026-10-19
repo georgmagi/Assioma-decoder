@@ -11,7 +11,7 @@ Out (next to the video, <name>_fit/): report.md (numbers, ranges, a verdict), re
 with the angles drawn on, and stills at the top, 3 o'clock and bottom of a typical stroke.
 
 How it finds you: a pose model (RTMPose, halpe26 keypoints incl. heel and big toe; runs on the CPU)
-in every frame. If you stick bright tape on the bony points (hip: the bump on the side of the hip,
+in every frame. With --markers color (or white), tape on the bony points (hip: the bump on the side of the hip,
 knee: outside of the knee joint, ankle: the bump on the outside of the ankle), each one seen near the
 model's joint replaces it: tape is a few degrees more exact. Everything is averaged over every pedal
 stroke, so one odd frame doesn't move the result.
@@ -47,7 +47,9 @@ RANGES = {
     "hip_rock_mm": (None, 20, "hip going up and down per stroke", "mm"),
     "torso_deg": (30, 60, "back angle to horizontal", "°"),
     "elbow_deg": (145, 170, "elbow angle", "°"),
-    "kops_mm": (-25, 25, "knee ahead (+) / behind (-) the pedal spindle at 3 o'clock (rough)", "mm"),
+    # from the knee joint's centre; the classic "knee over pedal" uses the front of the knee, 3-5 cm
+    # further forward, so neutral reads about 1-7 cm behind
+    "kops_mm": (-70, -10, "knee joint centre ahead (+) / behind (-) the pedal spindle at 3 o'clock (rough)", "mm"),
 }
 DEG_PER_CM = 4.0          # about 4° of knee bend per cm of saddle height (rule of thumb)
 
@@ -137,16 +139,22 @@ def per_turn(theta: np.ndarray, values: np.ndarray, fn) -> list:
 def side_metrics(P: dict, crank_mm: float) -> dict:
     """The side-view numbers from smoothed joint tracks P[joint] = [n, 2] (pixels), near-side leg."""
     hip, knee, ankle = P["hip"], P["knee"], P["ankle"]
-    forward = 1 if np.median(P["shoulder"][:, 0] - hip[:, 0]) > 0 else -1
-    cx, cy, r = fit_circle(ankle)
-    mm = crank_mm / r                                 # mm per pixel
-    theta = crank_angle(ankle, (cx, cy), forward)
+    if "toe" in P and "heel" in P:                    # the foot points the way you ride
+        forward = 1 if np.median(P["toe"][:, 0] - P["heel"][:, 0]) > 0 else -1
+    else:
+        forward = 1 if np.median(P["shoulder"][:, 0] - hip[:, 0]) > 0 else -1
+    foot = "toe" in P and "heel" in P
+    path = P["heel"] + 0.7 * (P["toe"] - P["heel"]) if foot else ankle    # the pedal spindle, about
+    cx, cy, r = fit_circle(path)
+    mm = crank_mm / r                                 # mm per pixel: the spindle goes round the crank's circle
+    theta = crank_angle(path, (cx, cy), forward)
     if theta[-1] < theta[0]:                          # the foot goes forward after the top: wrong way round
         forward = -forward
-        theta = crank_angle(ankle, (cx, cy), forward)
+        theta = crank_angle(path, (cx, cy), forward)
     knee_ang = angle_at(hip, knee, ankle)
     flex = 180 - knee_ang
     hip_ang = angle_at(P["shoulder"], hip, knee)
+    upper = P.get("_upper_ok", True)                  # shoulders in the picture
     out: dict = {"turns": len(per_turn(theta, flex, np.max)), "mm_per_px": mm, "crank_radius_px": r,
                  "facing": "right" if forward > 0 else "left"}
 
@@ -157,7 +165,8 @@ def side_metrics(P: dict, crank_mm: float) -> dict:
     out["knee_flex_bottom"] = summary(per_turn(theta, flex, np.min))     # most straight in a turn
     out["knee_flex_top"] = summary(per_turn(theta, flex, np.max))
     out["knee_flex_at_bdc"] = summary(at_phase(theta, flex, 180))
-    out["hip_angle_min"] = summary(per_turn(theta, hip_ang, np.min))
+    if upper:
+        out["hip_angle_min"] = summary(per_turn(theta, hip_ang, np.min))
     if "toe" in P and "heel" in P:
         foot_dir = P["toe"] - P["heel"]
         ankle_ang = angle_at(knee, ankle, ankle + foot_dir)
@@ -168,6 +177,9 @@ def side_metrics(P: dict, crank_mm: float) -> dict:
         out["kops_mm"] = summary(at_phase(theta, kops, 90))
     out["hip_rock_mm"] = summary(per_turn(theta, hip[:, 1] * mm, np.ptp))
     sh = P["shoulder"] - hip
+    if not upper:
+        out["_theta"] = theta
+        return out
     out["torso_deg"] = {**summary(np.degrees(np.arctan2(-sh[:, 1], np.abs(sh[:, 0])))), "n": None}   # every frame
     if "elbow" in P and "wrist" in P:
         out["elbow_deg"] = {**summary(angle_at(P["shoulder"], P["elbow"], P["wrist"])), "n": None}
@@ -225,14 +237,15 @@ def verdict_side(m: dict) -> list:
     if k:
         v = k["mean"]
         where = "ahead of" if v > 0 else "behind"
-        txt = f"At 3 o'clock the knee is {abs(v):.0f} mm {where} the pedal spindle."
-        if v > 25:
-            txt += (" That is well forward: more load on the front of the knee. Moving the saddle back "
+        txt = f"At 3 o'clock the centre of the knee is {abs(v):.0f} mm {where} the pedal spindle"
+        if v > -10:
+            txt += (": the knee is well forward, more load on the front of the knee. Moving the saddle back "
                     "(5-10 mm at a time, re-checking the height after) usually helps.")
-        elif v < -25:
-            txt += " That is well back: fine for some riders; it shifts work to the hips and hamstrings."
+        elif v < -70:
+            txt += ": the saddle is well back. Fine for some riders; it shifts work to the hips and hamstrings."
         else:
-            txt += " A neutral position (it's a starting point, not a rule)."
+            txt += (", so the front of the knee is roughly over the pedal: a neutral fore-aft position "
+                    "(a starting point, not a rule).")
         out.append(txt)
     h = m.get("hip_angle_min")
     if h and h["mean"] < 45:
@@ -264,8 +277,9 @@ def verdict_front(m: dict) -> list:
 
 
 # --------------------------------------------------------------------------- video and pose
-def detect_markers(frame_bgr, near: np.ndarray, radius: float) -> Optional[np.ndarray]:
-    """A bright, strongly coloured small blob near a joint (tape), or None."""
+def detect_markers(frame_bgr, near: np.ndarray, radius: float, kind: str = "color") -> Optional[np.ndarray]:
+    """A small blob of tape near a joint: bright and strongly coloured (kind "color") or bright white
+    ("white"), or None."""
     import cv2
     x, y = int(near[0]), int(near[1])
     r = int(max(6, radius))
@@ -274,7 +288,10 @@ def detect_markers(frame_bgr, near: np.ndarray, radius: float) -> Optional[np.nd
     if x1 - x0 < 4 or y1 - y0 < 4:
         return None
     hsv = cv2.cvtColor(frame_bgr[y0:y1, x0:x1], cv2.COLOR_BGR2HSV)
-    mask = ((hsv[..., 1] > 150) & (hsv[..., 2] > 140)).astype(np.uint8)
+    if kind == "white":
+        mask = ((hsv[..., 1] < 60) & (hsv[..., 2] > 200)).astype(np.uint8)
+    else:
+        mask = ((hsv[..., 1] > 150) & (hsv[..., 2] > 140)).astype(np.uint8)
     n, lab, stats, cent = cv2.connectedComponentsWithStats(mask)
     best, bd = None, None
     for i in range(1, n):
@@ -288,7 +305,7 @@ def detect_markers(frame_bgr, near: np.ndarray, radius: float) -> Optional[np.nd
     return best
 
 
-def read_frames(video: str, seconds: float):
+def read_frames(video: str, seconds: float, start: float = 0.0):
     """(fps, frames as BGR arrays, at most 1280 px). ffmpeg when it's there (every phone format, HEVC
     included, and the phone's rotation), else OpenCV."""
     import shutil
@@ -308,7 +325,7 @@ def read_frames(video: str, seconds: float):
         img = cv2.imdecode(np.frombuffer(first, np.uint8), cv2.IMREAD_COLOR) if first else None
         if img is not None:
             h, w = img.shape[:2]
-            proc = subprocess.Popen([ffmpeg, "-v", "error", "-i", video, "-t", str(seconds), "-vf", vf,
+            proc = subprocess.Popen([ffmpeg, "-v", "error", "-ss", str(start), "-i", video, "-t", str(seconds), "-vf", vf,
                                      "-f", "rawvideo", "-pix_fmt", "bgr24", "-"], stdout=subprocess.PIPE)
             frames = []
             while True:
@@ -321,6 +338,7 @@ def read_frames(video: str, seconds: float):
                 return fps, frames
     cap = cv2.VideoCapture(video)
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    cap.set(cv2.CAP_PROP_POS_MSEC, start * 1000)
     frames = []
     while len(frames) < seconds * fps:
         ok, f = cap.read()
@@ -336,7 +354,7 @@ def read_frames(video: str, seconds: float):
     return fps, frames
 
 
-def track(video: str, seconds: float, quality: str, log=print) -> dict:
+def track(video: str, seconds: float, quality: str, log=print, start: float = 0.0) -> dict:
     """Keypoints for every frame: {fps, size, kp [n,26,2], score [n,26], markers {joint: [n,2] or nan}}."""
     import cv2
     from rtmlib import RTMPose, YOLOX
@@ -350,7 +368,7 @@ def track(video: str, seconds: float, quality: str, log=print) -> dict:
     base = "https://download.openmmlab.com/mmpose/v1/projects/rtmposev1/onnx_sdk/"
     det = YOLOX(base + det_name + ".zip", model_input_size=det_size, backend="onnxruntime", device="cpu")
     pose = RTMPose(base + pose_name + ".zip", model_input_size=pose_size, backend="onnxruntime", device="cpu")
-    fps, raw = read_frames(video, seconds)
+    fps, raw = read_frames(video, seconds, start)
     log(f"  {len(raw)} frames at {fps:.0f} fps, {raw[0].shape[1]}x{raw[0].shape[0]}")
     frames, kps, scs, box = [], [], [], None
     for i, f in enumerate(raw):
@@ -375,7 +393,7 @@ def track(video: str, seconds: float, quality: str, log=print) -> dict:
     return {"fps": fps, "frames": frames, "kp": kp, "score": sc}
 
 
-def joint_tracks(t: dict, side: str, use_markers: bool) -> tuple:
+def joint_tracks(t: dict, side: str, markers: str = "off") -> tuple:
     """Smoothed tracks of one side's joints, with tape markers where seen. -> (P, marker_share)."""
     j = 0 if side == "left" else 1
     w = max(3, int(round(t["fps"] / 12)) | 1)
@@ -384,15 +402,24 @@ def joint_tracks(t: dict, side: str, use_markers: bool) -> tuple:
     for name in JOINTS:
         i = KP[name][j]
         xy, ok = t["kp"][:, i].copy(), t["score"][:, i] > 0.3
-        if use_markers and name in ("hip", "knee", "ankle"):
-            found = [detect_markers(f, xy[n], 0.18 * thigh) for n, f in enumerate(t["frames"])]
+        # white tape near the ankle can't be told from white shoes and socks: hip and knee only
+        if markers != "off" and name in (("hip", "knee") if markers == "white" else ("hip", "knee", "ankle")):
+            found = [detect_markers(f, xy[n], 0.15 * thigh, markers) for n, f in enumerate(t["frames"])]
             hits = [n for n, m in enumerate(found) if m is not None]
+            if hits:                                       # tape stays put on the joint: a logo or a shoe doesn't
+                off = np.array([found[n] - xy[n] for n in hits])
+                med = np.median(off, 0)
+                spread = np.median(np.hypot(*(off - med).T)) * 1.4826
+                hits = [n for n, o in zip(hits, off) if np.hypot(*(o - med)) <= max(3 * spread, 0.03 * thigh)
+                        ] if spread < 0.08 * thigh else []
             share[name] = len(hits) / len(found)
             if share[name] >= 0.6:                         # tape seen most of the time: use it
                 for n in hits:
                     xy[n], ok[n] = found[n], True
-                ok[[n for n, m in enumerate(found) if m is None]] = False
+                ok[[n for n in range(len(found)) if n not in set(hits)]] = False
         P[name] = smooth(fill_gaps(xy, ok), w)
+    sh = KP["shoulder"][j]
+    P["_upper_ok"] = bool(np.mean(t["score"][:, sh] > 0.5) > 0.7 and np.median(t["kp"][:, sh, 1]) > 0)
     return P, share
 
 
@@ -491,8 +518,10 @@ def main() -> None:
     ap.add_argument("--view", choices=("side", "front"), default="side")
     ap.add_argument("--crank", type=float, default=172.5, help="crank length in mm (sets the scale)")
     ap.add_argument("--seconds", type=float, default=25, help="analyse this much of the video")
+    ap.add_argument("--start", type=float, default=0, help="skip this many seconds first (getting on the bike)")
     ap.add_argument("--quality", choices=("fast", "balanced", "best"), default="balanced")
-    ap.add_argument("--markers", choices=("auto", "off"), default="auto", help="use bright tape on hip/knee/ankle")
+    ap.add_argument("--markers", choices=("off", "color", "white"), default="off",
+                    help="tape on hip/knee/ankle: bright coloured (best) or white (hip and knee only)")
     ap.add_argument("--side", choices=("auto", "left", "right"), default="auto", help="the leg facing the camera")
     ap.add_argument("--compare", help="an earlier report.json")
     ap.add_argument("--out", help="folder for the report (default: next to the video)")
@@ -500,7 +529,7 @@ def main() -> None:
     out_dir = a.out or os.path.splitext(a.video)[0] + "_fit"
     os.makedirs(out_dir, exist_ok=True)
     print(f"reading {a.video} ...")
-    t = track(a.video, a.seconds, a.quality)
+    t = track(a.video, a.seconds, a.quality, start=a.start)
     np.savez_compressed(os.path.join(out_dir, "keypoints.npz"), kp=t["kp"], score=t["score"], fps=t["fps"])
     compare = json.load(open(a.compare)) if a.compare else None
     # a camera that moved: keep the longest steady stretch
@@ -515,18 +544,19 @@ def main() -> None:
         t = {**t, "kp": t["kp"][i0:i1], "score": t["score"][i0:i1], "frames": t["frames"][i0:i1]}
     if a.view == "side":
         side = near_side(t) if a.side == "auto" else a.side
-        P, share = joint_tracks(t, side, a.markers == "auto")
+        P, share = joint_tracks(t, side, a.markers)
         m = side_metrics(P, a.crank)
         if m["turns"] < 3:
             raise SystemExit("fewer than 3 whole pedal strokes found: film 20-30 s of steady pedalling")
         verdict = verdict_side(m)
         used = [k for k, v in share.items() if v >= 0.6]
-        note = f"Leg measured: {side} (facing the camera); rider faces {m['facing']}. " + \
-               (f"Tape markers used for: {', '.join(used)}." if used else "No tape markers found: pose model only (about ±5°).") + steady_note
+        note = f"Leg measured: the one nearest the camera; rider faces {m['facing']}. " + \
+               (f"Tape markers used for: {', '.join(used)}. " if used else "Pose model only (about ±5°). ") + \
+               ("" if P["_upper_ok"] else "Shoulders not in the picture: no back or hip angle (film from further away). ") + steady_note
         draw(out_dir, t, P, m, side)
     else:
-        L, _ = joint_tracks(t, "left", a.markers == "auto")
-        R, _ = joint_tracks(t, "right", a.markers == "auto")
+        L, _ = joint_tracks(t, "left", a.markers)
+        R, _ = joint_tracks(t, "right", a.markers)
         m = front_metrics(L, R, a.crank)
         verdict, note = verdict_front(m), "Left/right as seen by the rider." + steady_note
     path = write_report(out_dir, a.video, a.view, m, verdict, {"crank": a.crank, "note": note}, compare)

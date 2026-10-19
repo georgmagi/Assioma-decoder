@@ -81,7 +81,8 @@ def test_saddle_forward_moves_the_knee_ahead_of_the_spindle():
     back = bf.side_metrics(rider(saddle_fwd_px=-20)[0], 172.5)["kops_mm"]["mean"]
     fwd = bf.side_metrics(rider(saddle_fwd_px=30)[0], 172.5)["kops_mm"]["mean"]
     assert fwd > back + 30 * 1.725 * 0.6
-    assert any("well forward" in v for v in bf.verdict_side({"kops_mm": {"mean": 40, "sd": 2, "n": 6}}))
+    assert any("well forward" in v for v in bf.verdict_side({"kops_mm": {"mean": 5, "sd": 2, "n": 6}}))
+    assert any("neutral" in v for v in bf.verdict_side({"kops_mm": {"mean": -40, "sd": 2, "n": 6}}))
 
 
 def test_noise_is_averaged_out():
@@ -114,3 +115,23 @@ def test_steady_span_skips_camera_moves():
     hip[120:] += np.linspace(0, 400, 180)[:, None]          # the camera pans after 4 s
     i0, i1 = bf.steady_span(hip, 20)
     assert i0 == 0 and 118 <= i1 <= 130
+
+
+def test_white_tape_and_a_moving_logo_is_rejected():
+    cv2 = pytest.importorskip("cv2")
+    img = np.full((200, 200, 3), 40, np.uint8)
+    cv2.circle(img, (100, 100), 5, (250, 250, 250), -1)
+    assert bf.detect_markers(img, np.array([95.0, 98.0]), 30, "white") is not None
+    assert bf.detect_markers(img, np.array([95.0, 98.0]), 30, "color") is None
+    # a coloured logo that wanders relative to the knee is not taken as tape
+    n = 40
+    frames, kp = [], np.zeros((n, 26, 2))
+    for i in range(n):
+        f = np.full((300, 300, 3), 40, np.uint8)
+        cv2.circle(f, (150 + (i * 7) % 40 - 20, 150 + (i * 11) % 40 - 20), 5, (0, 220, 255), -1)
+        frames.append(f)
+    kp[:, :, :] = 150.0
+    kp[:, 11] = [150.0, 50.0]                                  # hip above the knee: thigh 100 px
+    t = {"kp": kp, "score": np.ones((n, 26)), "fps": 30.0, "frames": frames}
+    _, share = bf.joint_tracks(t, "left", "color")
+    assert share["knee"] < 0.6
