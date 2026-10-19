@@ -1,0 +1,9 @@
+[Unit]
+Description=Assioma nightly backup
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

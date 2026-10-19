@@ -1,0 +1,8 @@
+[Unit]
+Description=Assioma nightly backup (a dated snapshot of the synced data)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/assioma-backup
+Nice=10
+IOSchedulingClass=idle

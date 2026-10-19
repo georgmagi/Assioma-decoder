@@ -124,7 +124,7 @@ function renderPlanGrid(d) {
   });
 }
 function editDay(cell, x) {
-  if (cell.querySelector("input")) return;
+  if (cell.querySelector("input") || S.snap?.viewer) return;     // the web view only shows the plan
   if (!WO.list) loadWorkouts();
   const input = document.createElement("input");
   input.value = entryText(x.entry);

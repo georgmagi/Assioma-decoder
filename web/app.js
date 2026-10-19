@@ -756,6 +756,7 @@ function apply(s) {
     S.offset = S.offset == null || Math.abs(cand - S.offset) > 1 ? cand : S.offset + (cand - S.offset) * 0.1;
   }
   syncPrefs(s.settings);
+  document.body.classList.toggle("viewer", !!s.viewer);          // the server's web view: look, don't touch
   S.prevScreen = S.snap?.screen;
   S.snap = s;
   showScreen(s.screen);
@@ -786,13 +787,14 @@ function apply(s) {
 async function poll() {
   try {
     const r = await fetch(`/api/state?p=${S.p}&h=${S.h}&a=${S.a}&b=${S.b}&e=${SD.e}&x=${SD.x}`);
+    if (r.status === 401) { location.href = "/login"; return; }      // the web view: signed out
     apply(await r.json());
     S.fails = 0;
     if (!S.snap.closed) $("offline").hidden = true;
   } catch {
     if (++S.fails >= 3 && !S.snap?.closed) $("offline").hidden = false;
   }
-  if (!S.snap?.closed) setTimeout(poll, POLL_MS);
+  if (!S.snap?.closed) setTimeout(poll, S.snap?.viewer ? 1000 : POLL_MS);
 }
 
 // ---- the strap's streams: ECG and chest movement, swept left to right like a monitor

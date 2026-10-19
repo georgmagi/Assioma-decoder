@@ -13,3 +13,7 @@ plan.json
 workouts/
 morning.json
 mornings/
+# cloud sync: this device's link to your server and its bookkeeping (cloud_sync.py)
+sync.json
+sync_state.json
+sync_conflicts/

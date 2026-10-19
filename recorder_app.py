@@ -36,6 +36,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 import assioma_decoder as dec
+import cloud_sync as cs
 import morning as mo
 import polar_pmd as pmd
 import plan as pl
@@ -157,6 +158,8 @@ class Engine(threading.Thread):
         self.snap: dict = {}
         self.cmds: queue.Queue = queue.Queue()
         self._last_tick = 0.0
+        self.sync: Optional[cs.Background] = None   # cloud sync (cloud_sync.py), when sync.json says where
+        self._sync_key = None                # what a change of starts a sync round: versions and settings
 
     def _new_worker(self):
         w = self.make_worker(self.q, bool(self.settings.get("hr")))
@@ -177,7 +180,12 @@ class Engine(threading.Thread):
 
     def _do(self, name: str, arg=None) -> None:
         s, now = self.session, utcnow()
-        if name == "prefs" and isinstance(arg, dict):
+        if name == "sync_apply" and isinstance(arg, list):      # downloads from the sync thread
+            cs.apply_here(arg)
+            self._sync_reload([rel for rel, _tmp, _dest in arg])
+        elif name == "sync_reload" and isinstance(arg, list):   # files changed under us (the server's web view)
+            self._sync_reload(arg)
+        elif name == "prefs" and isinstance(arg, dict):
             self._prefs(arg)
         elif name == "nav" and self.screen in PAGES + ("summary",) and arg in PAGES and self.dialog is None:
             self.screen, self.summary_id = arg, None
@@ -204,6 +212,8 @@ class Engine(threading.Thread):
                 self._connect(arg["device"], bool(arg.get("on")))
             elif name == "workout":
                 self.workout_id = arg if arg in self.workouts() else None
+            elif name == "sync_code" and isinstance(arg, str):
+                self._sync_code(arg)
             elif name == "hr_forget":                    # a new strap: the next one to connect becomes yours
                 self.settings["hr_lock"] = None
                 if hasattr(self.worker, "set_hr_lock"):
@@ -280,6 +290,90 @@ class Engine(threading.Thread):
                     self.player, self.workout_done = None, True
         if name == "close":
             self.quit.set()
+
+    # ---- cloud sync (cloud_sync.py)
+    def sync_dir(self) -> Optional[str]:
+        return os.path.dirname(self.settings_path) if self.settings_path else None
+
+    def start_sync(self) -> None:
+        """Sync with your server when this folder's sync.json says where (set from the home screen)."""
+        folder = self.sync_dir()
+        cfg = folder and cs.load_json(os.path.join(folder, "sync.json"), None)
+        if not cfg or not cfg.get("url") or not cfg.get("key"):
+            return
+        busy = lambda: os.path.basename(self.session.base) if self.session is not None else None
+        apply = lambda changes: self.command("sync_apply", changes, timeout=30)
+        syncer = cs.Syncer(folder, self.out_dir, cs.Client(cfg["url"], cfg["key"]), apply, busy, self.worker.log)
+        self.sync = cs.Background(syncer)
+        self.sync.start()
+
+    def stop_sync(self) -> None:
+        if self.sync is not None:
+            self.sync.stop()
+            self.sync = None
+
+    def _sync_code(self, code: str) -> None:
+        """The home screen's sync code (<server>#<key>): saved to sync.json and sync starts; empty stops it."""
+        folder = self.sync_dir()
+        if not folder:
+            return
+        path = os.path.join(folder, "sync.json")
+        if not code.strip():
+            self.stop_sync()
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+            self.sync_msg = "Sync off."
+            return
+        cfg = cs.parse_code(code)
+        if cfg is None:
+            self.sync_msg = "That isn't a sync code: it looks like https://...#..."
+            return
+        cs.save_json(path, cfg)
+        self.stop_sync()
+        self.start_sync()
+        self.sync_msg = ""
+
+    def _sync_reload(self, rels: list) -> None:
+        """Files another device changed are in place: read them again and let the page know."""
+        if any(r.startswith("rides/") for r in rels):
+            self.rides_version += 1
+        if "settings.json" in rels and self.settings_path:
+            new = load_settings(self.settings_path)
+            for device in ("hr", "trainer"):          # your sensors: connect or let go like the switch does
+                if new.get(device) != self.settings.get(device) and hasattr(self.worker, "set_want"):
+                    self.worker.set_want({"hr": "hr", "trainer": "trainer"}[device], bool(new.get(device)))
+            self.settings.clear()
+            self.settings.update(new)
+        if "plan.json" in rels and self.plan_path:
+            self.plan = pl.load(self.plan_path)
+            self.plan_version += 1
+            self._plan_day = None
+        if any(r.startswith("workouts/") for r in rels):
+            self.plan_version += 1
+        if ("morning.json" in rels or any(r.startswith("mornings/") for r in rels)) and self.morning_path:
+            self.mornings = mo.load(self.morning_path)
+            self.morning_version += 1
+        self._sync_key = self._sync_state_key()       # these came from the server: nothing to send back
+
+    def _sync_state_key(self):
+        return (self.rides_version, self.plan_version, self.morning_version, json.dumps(self.settings, sort_keys=True))
+
+    def _sync_poke(self) -> None:
+        """Something of yours changed (a ride saved or deleted, a morning check, the plan, a setting):
+        a sync round soon."""
+        key = self._sync_state_key()
+        if key != self._sync_key:
+            first = self._sync_key is None
+            self._sync_key = key
+            if self.sync is not None and not first:
+                self.sync.poke()
+
+    def _sync_view(self) -> dict:
+        if self.sync is None:
+            return {"on": False, "msg": getattr(self, "sync_msg", "")}
+        return {"on": True, **self.sync.syncer.status, "msg": getattr(self, "sync_msg", "") or self.sync.syncer.status.get("msg", "")}
 
     # ---- the Z2 guard: where you are against your own VT1
     def vt1_ref(self) -> Optional[dict]:
@@ -798,6 +892,7 @@ class Engine(threading.Thread):
             if self.settings_path:
                 save_settings(self.settings_path, self.settings)
         self._morning_tick(now)
+        self._sync_poke()
         if self.screen in PAGES:
             self._plan_today()
         self._log_step()
@@ -867,6 +962,7 @@ class Engine(threading.Thread):
                 "phase": self.mcheck.phase(utcnow()), "left": self.mcheck.left_s(utcnow()),
                 "beats": sum(len(x[1]) for x in self.mcheck.rr), "hr": self._home_value("hr", utcnow())},
             "config": {"ftp": self.settings.get("ftp"), "plan_min": self.settings.get("plan_min")},
+            "sync": self._sync_view(),
         }
         s = self.session
         if s is None:
@@ -944,6 +1040,11 @@ def _r(x):
 # HTTP: the page, its files, the snapshot, the rides and the buttons (127.0.0.1 only)
 # --------------------------------------------------------------------------- #
 def make_server(engine: Engine, app_mode: dict) -> ThreadingHTTPServer:
+    return ThreadingHTTPServer(("127.0.0.1", 0), make_handler(engine, app_mode))
+
+
+def make_handler(engine: Engine, app_mode: dict):
+    """The request handler (also the web view's on the server, sync_server.py)."""
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_a) -> None:        # quiet
@@ -1045,13 +1146,13 @@ def make_server(engine: Engine, app_mode: dict) -> ThreadingHTTPServer:
                 engine.command(name, body.get("arg"))
             self._json(engine.snap)
 
-    return ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    return Handler
 
 
 def state(engine: Engine, app_mode: dict, p: int, h: int, a: int, b: int, e: int = 0, x: int = 0) -> dict:
     """The snapshot plus the graph points of the current ride that arrived since the page's counts
     (no ride: zero counts, which tells the page to clear its graphs)."""
-    out = {**engine.snap, "app": app_mode["app"], "closed": engine.quit.is_set()}
+    out = {**engine.snap, "app": app_mode["app"], "viewer": bool(app_mode.get("viewer")), "closed": engine.quit.is_set()}
     session = engine.session                       # may end while we read: keep this one
     if session is None or session.t0 is None:
         return {**out, "pn": 0, "hn": 0, "an": 0, "bn": 0, "power": [], "hr": [], "a1": [], "beats_rr": [], "strap": None}
@@ -1142,6 +1243,7 @@ def main() -> None:
     engine = Engine(args.out, settings, make_worker, settings_path, log)
     engine.worker.log(f"app started, {sys.version.split()[0]}")
     engine.start()
+    engine.start_sync()                             # your server, when sync.json says where
     app_mode: dict = {"app": not args.browser, "window": None}
     server = make_server(engine, app_mode)
     threading.Thread(target=server.serve_forever, daemon=True).start()
@@ -1182,6 +1284,7 @@ def main() -> None:
     finally:
         engine.quit.set()
         engine.join(timeout=2)
+        engine.stop_sync()
         server.shutdown()
         worker = engine.worker
         worker.stop()

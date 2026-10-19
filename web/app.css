@@ -1121,3 +1121,24 @@ code { font: 12px Consolas, "Cascadia Mono", monospace; background: color-mix(in
 .rd-reasons li.rest i { color: var(--bad); }
 .pl-d.warn { outline: 2px solid color-mix(in srgb, var(--warn) 70%, transparent); outline-offset: -2px; }
 @media (max-width: 760px) { .panel.ready { grid-template-columns: 1fr; } }
+
+/* ---- sync with your server (Home > Your numbers) */
+.sync-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-top); }
+.sync-row .sync-lab { font-weight: 600; }
+.sync-row .sync-state { flex: 1; opacity: .75; font-size: .92em; }
+.sync-row .sync-state.ok { color: var(--good); opacity: 1; }
+.sync-row .sync-state.bad { color: var(--warn); opacity: 1; }
+.sync-form { display: flex; gap: 8px; margin-top: 8px; }
+.sync-form input { flex: 1; min-width: 0; }
+
+/* ---- the server's web view (sync_server.py): view only, no sensors */
+body.viewer #b-start, body.viewer #nav-wo, body.viewer .panel.conn, body.viewer #mc-start,
+body.viewer .set-hint, body.viewer .sync-row, body.viewer .sync-form, body.viewer #sync-msg,
+body.viewer .pl-new, body.viewer #pl-paste, body.viewer #wo-new, body.viewer #wd-edit, body.viewer #wd-del,
+body.viewer .row-del, body.viewer td.del, body.viewer #sum-delete, body.viewer #sum-file,
+body.viewer #knee-score, body.viewer .pl-cal .wk-note { display: none !important; }
+body.viewer .home-row.three { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+@media (max-width: 760px) {
+  body.viewer .home-row.three { grid-template-columns: minmax(0, 1fr); }
+  body.viewer .topnav { padding-top: env(safe-area-inset-top); }
+}

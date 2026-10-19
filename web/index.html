@@ -3,6 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Assioma">
+<meta name="theme-color" content="#0b0d10">
+<link rel="apple-touch-icon" href="icon-180.png">
 <title>Assioma Recorder</title>
 <link rel="stylesheet" href="vendor/uPlot.min.css">
 <link rel="stylesheet" href="app.css">
@@ -83,6 +89,15 @@
         <label><span>Humidity</span><input id="set-rh" type="number" min="5" max="100" step="1" inputmode="numeric"><span class="u">%</span></label>
       </form>
       <p class="hint set-hint">Room temperature and humidity are saved with each ride (heat raises heart rate at the same power): update them from your hygrometer before you ride.</p>
+      <div class="sync-row" id="sync-row">
+        <span class="sync-lab">Sync</span><span class="sync-state" id="sync-state">off</span>
+        <button class="btn" id="sync-setup">Set up</button>
+      </div>
+      <form class="sync-form" id="sync-form" hidden onsubmit="return false">
+        <input id="sync-code" type="password" placeholder="Paste your sync code" autocomplete="off" spellcheck="false">
+        <button class="btn primary" id="sync-save">Save</button>
+      </form>
+      <p class="hint" id="sync-msg" hidden></p>
     </section>
   </div>
 </div>

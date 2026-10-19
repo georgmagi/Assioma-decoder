@@ -1,0 +1,31 @@
+# The Assioma server (sync_server.py): your devices' sync and the web view, behind Caddy.
+[Unit]
+Description=Assioma sync and web view
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=assioma
+Group=assioma
+WorkingDirectory=/srv/assioma/app
+EnvironmentFile=/etc/assioma/secrets.env
+Environment=ASSIOMA_DATA=/var/lib/assioma/data ASSIOMA_VAR=/var/lib/assioma ASSIOMA_PORT=8100
+Environment=TZ=Europe/Tallinn PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+ExecStart=/srv/assioma/venv/bin/python sync_server.py
+Restart=on-failure
+RestartSec=5
+# share the small server politely with the Dilution Tracker
+MemoryMax=700M
+CPUWeight=50
+Nice=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+ReadWritePaths=/var/lib/assioma
+
+[Install]
+WantedBy=multi-user.target

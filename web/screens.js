@@ -376,6 +376,8 @@ $("nav-wo").addEventListener("click", (e) => { act("nav", "workouts"); e.current
 
 // --------------------------------------------------------------------------- your numbers (on Home)
 function renderSettings(s) {
+  renderSync(s);
+  for (const el of document.querySelectorAll("#set-form input, #sum-env input")) el.readOnly = !!s.viewer;
   // fill the fields when they change on the Python side, never while you type in them
   const key = JSON.stringify(s.settings);
   if (key !== HOME.settingsKey && !document.activeElement?.closest?.("#set-form")) {
@@ -399,6 +401,34 @@ function sendSettings() {
   act("settings", { ftp: num("set-ftp"), max_hr: num("set-maxhr"), vt1_hr: num("set-vt1"), plan_min: plan ?? undefined,
                     room_temp: num("set-temp"), room_rh: num("set-rh") });
 }
+// ---- sync with your server (cloud_sync.py): the state, and pasting the code once per device
+function renderSync(s) {
+  const y = s.sync || {};
+  const ago = (iso) => {
+    const m = Math.round((Date.now() - Date.parse(iso)) / 60000);
+    return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`;
+  };
+  const txt = !y.on ? "off" : y.state === "error" ? "offline, retrying"
+    : y.state === "syncing" && !y.last ? "syncing…" : y.last ? `synced ${ago(y.last)}` : "starting…";
+  $("sync-state").textContent = txt;
+  $("sync-state").className = "sync-state " + (!y.on ? "" : y.state === "error" ? "bad" : "ok");
+  $("sync-state").title = y.msg || "";
+  $("sync-setup").textContent = y.on ? "Change" : "Set up";
+  $("sync-msg").hidden = !y.msg || y.state === "error";
+  $("sync-msg").textContent = y.msg || "";
+}
+$("sync-setup").addEventListener("click", (e) => {
+  e.currentTarget.blur();
+  $("sync-form").hidden = !$("sync-form").hidden;
+  if (!$("sync-form").hidden) $("sync-code").focus();
+});
+$("sync-save").addEventListener("click", () => {
+  act("sync_code", $("sync-code").value.trim());
+  $("sync-code").value = "";
+  $("sync-form").hidden = true;
+});
+$("sync-code").addEventListener("keydown", (e) => { if (e.key === "Enter") $("sync-save").click(); e.stopPropagation(); });
+
 for (const id of ["set-ftp", "set-maxhr", "set-vt1", "set-plan", "set-temp", "set-rh"]) {
   $(id).addEventListener("change", sendSettings);
   $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") e.target.blur(); e.stopPropagation(); });
