@@ -56,3 +56,18 @@ Read-only by design: the code only subscribes to notifications and never writes 
 Not affiliated with or endorsed by Favero Electronics. Assioma is a trademark of Favero Electronics.
 
 MIT licence, see [`LICENSE`](LICENSE).
+
+## Bike fit from a phone video (bikefit.py)
+
+Film 20-30 s of steady pedalling from the side (phone on something solid, level, at hip height,
+whole body and both wheels in the picture), then:
+
+    pip install -r requirements-bikefit.txt          (once; ffmpeg on the PATH reads every phone format)
+    python bikefit.py side.mp4 --crank 172.5         -> side_fit/report.md, video.mp4, stills
+    python bikefit.py front.mp4 --view front         knee tracking, left vs right
+    python bikefit.py side2.mp4 --compare side_fit/report.json     before / after a change
+
+Knee bend at the bottom and top of the stroke, hip and ankle angles, hip rock, back and elbow
+angles and where the knee is against the pedal at 3 o'clock, averaged over every stroke, against
+the usual ranges, with a plain verdict. Bright tape on the hip, knee and ankle bones is used when
+seen (a few degrees more exact than the pose model alone).

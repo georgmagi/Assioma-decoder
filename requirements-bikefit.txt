@@ -1,0 +1,5 @@
+# bikefit.py (video bike fit); not needed by the recorder app
+numpy
+opencv-python-headless
+onnxruntime
+rtmlib
