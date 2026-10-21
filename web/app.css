@@ -1142,3 +1142,19 @@ body.viewer .home-row.three { grid-template-columns: minmax(0, 1fr) minmax(0, 1f
   body.viewer .home-row.three { grid-template-columns: minmax(0, 1fr); }
   body.viewer .topnav { padding-top: env(safe-area-inset-top); }
 }
+
+/* ---- phones (the web view): one column, compact top bar, tables scroll sideways */
+@media (max-width: 700px) {
+  body { padding: 10px 10px 8px; padding-top: max(10px, env(safe-area-inset-top)); gap: 10px; user-select: text; -webkit-user-select: text; }
+  .topnav { gap: 8px; margin-top: 0; }
+  .topnav .brand { display: none; }
+  .topnav .tabs { flex: 1; justify-content: space-between; }
+  .topnav .tabs button { padding: 8px 8px; font-size: 13px; }
+  .panel.hero, .home-row, .home-row.three, .prog-row, .screen.workouts { grid-template-columns: minmax(0, 1fr) !important; }
+  .screen.home .panel { padding: 12px 12px; }
+  .sum-cards { grid-template-columns: minmax(0, 1fr); }
+  .ov-last .ov-stats, .home-row.three .ov-last .ov-stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .stats { grid-template-columns: repeat(2, 1fr); }
+  .table-wrap, .screen.progress .panel.rides .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  .screen.summary, .screen.plan, .screen.progress, .screen.workouts { overflow-x: hidden; }
+}
