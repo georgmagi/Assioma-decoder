@@ -39,7 +39,7 @@ function renderConnections(s) {
   const h = s.home || {};
   const confirm = DISC.until > performance.now() ? DISC.key : null;
   const lock = s.settings.hr_lock;
-  const key = JSON.stringify([s.devices, s.sensors, h.power_w, h.hr, h.trainer_w, s.settings.hr, s.settings.trainer, confirm, lock]);
+  const key = JSON.stringify([s.devices, s.sensors, h.power_w, h.hr, h.trainer_w, s.settings.hr, s.settings.trainer, confirm, lock, s.awake]);
   if (key === HOME.connKey) return;
   HOME.connKey = key;
   $("dev-list").innerHTML = DEVICES.map((d) => {
@@ -48,7 +48,8 @@ function renderConnections(s) {
     const line = confirm === d.key ? "Click again to disconnect"
       : st === "connected" ? `Connected${name ? ` · ${esc(name)}` : ""}`
       : st === "failed" ? esc(x.note || STATE_TEXT.failed)
-      : st === "searching" && d.key === "pedals" ? "Searching… turn the cranks to wake them"
+      : st === "searching" && d.key === "pedals" ? (s.awake === false ? "Waiting · turn the cranks and everything connects" : "Searching… turn the cranks to wake them")
+      : st === "off" && s.awake === false && s.settings[d.key] ? "Connects when you turn the cranks · click to connect now"
       : STATE_TEXT[st] || esc(x.status);
     return `<button class="dev st-${st}${confirm === d.key ? " confirm" : ""}" data-dev="${d.key}" data-state="${st}"><i class="dot"></i>` +
       `<span class="dev-main"><b>${d.label}</b>${st === "connected" ? linkTag(x.link) : ""}<span class="dev-st">${line}</span>` +

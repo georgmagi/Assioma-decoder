@@ -205,6 +205,10 @@ class AntHrWorker(threading.Thread):
             return
         reported = None
         while not self._halt.is_set():
+            if not self.enabled:                  # the strap isn't wanted (asleep, or switched off): stick closed
+                self.status = ""
+                self._halt.wait(0.5)
+                continue
             try:
                 why = self._session()
             except Exception as e:                # unplugged, driver missing, ...
@@ -261,6 +265,8 @@ class AntHrWorker(threading.Thread):
         self.log("ANT+: stick open, searching")
         beats, bpm, last_sent = Beats(), 0, 0.0
         while not self._halt.is_set():
+            if not self.enabled:
+                return None                       # let go: closed until it's wanted again
             if self.device_lock != self._opened_lock:
                 return "pairing again (strap lock changed)"
             try:

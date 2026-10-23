@@ -103,6 +103,13 @@ class Engine(threading.Thread):
         self.out_dir, self.settings, self.settings_path = out_dir, settings, settings_path
         self.make_worker, self.log_file = make_worker, log_file
         self.q: queue.Queue = queue.Queue()
+        # sensors wake with the pedals (a worker with a lifecycle, BleWorker): at launch only the
+        # pedals are listened for, quietly; turning the cranks, a ride or the morning check
+        # connects the strap and trainer (as set in settings), and IDLE_S with none of that lets
+        # them go again. Looking at your fitness never touches a sensor.
+        self.awake = False
+        self._active = time.monotonic()      # last time something needed the sensors
+        self._pedal_was = False              # the pedals were connected at the last tick
         self.worker = self._new_worker()
         self.session: Optional[Session] = None
         self.screen = "home"                 # a page (PAGES) | ride | summary
@@ -166,8 +173,11 @@ class Engine(threading.Thread):
 
     def _new_worker(self):
         w = self.make_worker(self.q, bool(self.settings.get("hr")))
+        asleep = hasattr(w, "set_want") and not self.awake
+        if asleep:                                   # before it starts: the strap (and ANT+) stay off
+            w.want["hr"], w.state["hr"], w.status["hr"] = False, "off", ""
         if hasattr(w, "want_trainer"):
-            w.want_trainer = bool(self.settings.get("trainer"))
+            w.want_trainer = bool(self.settings.get("trainer")) and not asleep
         if hasattr(w, "set_hr_lock"):
             w.set_hr_lock(self.settings.get("hr_lock"))
         w.log_file = self.log_file
@@ -224,6 +234,7 @@ class Engine(threading.Thread):
                 if self.settings_path:
                     save_settings(self.settings_path, self.settings)
             elif name == "morning_start" and self.mcheck is None:
+                self._wake("morning check")
                 if hasattr(self.worker, "set_want") and not self.worker.want.get("hr"):
                     self._connect("hr", True)              # the check needs the strap
                 self.mcheck, self.mresult = mo.Check(now), None
@@ -702,6 +713,7 @@ class Engine(threading.Thread):
             self.step_log.append([len(s.seconds), a["index"], p.intensity])
 
     def _start_ride(self, now) -> None:
+        self._wake("ride")
         self._a1_low_since = None
         self.step_log, self._wo_meta = [], None
         self.cap, self._cap_t = 1.0, 0.0                 # (the ceiling toggle itself stays as you left it)
@@ -814,10 +826,51 @@ class Engine(threading.Thread):
         if self.settings_path:
             save_settings(self.settings_path, self.settings)
 
+    IDLE_S = 600             # awake with no ride, no morning check and no pedalling this long: let go
+
+    def _wake(self, why: str) -> None:
+        """Connect the strap and trainer you use (settings hr / trainer), searching quietly."""
+        self._active = time.monotonic()
+        w = self.worker
+        if self.awake or not hasattr(w, "set_want"):
+            return
+        self.awake = True
+        for dev in ("hr", "trainer"):
+            if self.settings.get(dev) and not w.want.get(dev):
+                w.set_want(dev, True)
+                w.attempt[dev] = None                  # no 20-s "couldn't find it": it's not a click
+                w.state[dev] = "searching"
+        w.log(f"sensors: awake ({why})")
+
+    def _sleep(self) -> None:
+        """Let the strap and trainer go; the pedals are listened for again."""
+        w = self.worker
+        self.awake = False
+        for dev in ("hr", "trainer"):
+            if w.want.get(dev):
+                w.set_want(dev, False)
+        w.log(f"sensors: let go after {self.IDLE_S // 60} min idle")
+
+    def _sensor_tick(self, now) -> None:
+        w = self.worker
+        if not hasattr(w, "set_want"):
+            return
+        pedal = w.state.get("pedal") == "connected"
+        woke, self._pedal_was = pedal and not self._pedal_was, pedal
+        busy = self.session is not None or self.mcheck is not None
+        if busy or (pedal and self._home_value("power", now, 3)):
+            self._wake("ride" if self.session is not None else "morning check" if self.mcheck is not None else "pedalling")
+        elif woke:
+            self._wake("pedals")
+        elif self.awake and time.monotonic() - self._active > self.IDLE_S:
+            self._sleep()
+
     def _connect(self, device: str, on: bool) -> None:
         """The Connections pane: connect (an attempt that says when it can't find the sensor) or let
         go, without touching the other sensors. The strap and trainer choice is remembered."""
         kind = {"pedals": "pedal"}.get(device, device)
+        if on:
+            self._wake("click")
         if hasattr(self.worker, "set_want"):
             self.worker.set_want(kind, on)
             if device in ("hr", "trainer") and self.settings.get(device) != on:
@@ -954,6 +1007,7 @@ class Engine(threading.Thread):
             if self.settings_path:
                 save_settings(self.settings_path, self.settings)
         self._morning_tick(now)
+        self._sensor_tick(now)
         self._sync_poke()
         if self.screen in PAGES:
             self._plan_today()
@@ -1014,6 +1068,7 @@ class Engine(threading.Thread):
                        + ([{"label": "Trainer", "status": trainer, "link": trainer_link}] if trainer else []),
             "devices": {k: sensor(kind) for k, kind in (("pedals", "pedal"), ("hr", "hr"), ("trainer", "trainer"))}
                        if sensor else None,
+            "awake": self.awake or not hasattr(w, "set_want"),     # False: waiting for the pedals (_wake)
             "error": self.error, "dialog": self.dialog, "rides_version": self.rides_version,
             # what the pages' numbers depend on: the rides, the day (form, "this week" roll over at
             # midnight with the app open) and the FTP (every TSS): a change reloads them

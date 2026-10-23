@@ -471,7 +471,7 @@ class BleWorker(threading.Thread):
         self.want["trainer"] = self.want["trainer"] or self.want_trainer
         if self.want["trainer"]:
             self.state["trainer"] = "searching"
-        if True:                                      # the stick is opened even with the strap off: connecting it later is instant
+        if True:                                      # the stick opens its channel only while the strap is wanted (ant_hr)
             try:
                 import ant_hr
                 self.ant = ant_hr.AntHrWorker(self.q)

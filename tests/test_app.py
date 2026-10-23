@@ -507,3 +507,44 @@ def test_files_changed_on_disk_are_read_again_before_a_click_saves_over_them(tmp
     os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 10_000_000))
     e._watch_files(every=0)
     assert e.settings["ftp"] == 250
+
+
+class LifeWorker(FakeWorker):
+    """A worker with the per-sensor lifecycle (BleWorker.set_want)."""
+    def __init__(self, q, want_hr):
+        super().__init__(q, want_hr)
+        self.want = {"pedal": True, "hr": want_hr, "trainer": False}
+        self.state = {"pedal": "searching", "hr": "searching" if want_hr else "off", "trainer": "off"}
+        self.attempt = {"pedal": None, "hr": None, "trainer": None}
+        self.want_trainer = False
+
+    def set_want(self, kind, on):
+        self.want[kind] = on
+        self.state[kind] = "connecting" if on else "off"
+
+
+def test_sensors_wait_for_the_pedals_and_let_go_when_idle(tmp_path):
+    e = app.Engine(str(tmp_path), {**app.SETTINGS_DEFAULTS, "ftp": 200, "hr": True, "trainer": True}, LifeWorker)
+    w, now = e.worker, app.utcnow()
+    assert not e.awake and w.want == {"pedal": True, "hr": False, "trainer": False} and not w.want_trainer
+    assert e._snapshot()["awake"] is False
+    e._sensor_tick(now)                                          # looking at the pages: still asleep
+    assert not w.want["hr"]
+    w.state["pedal"] = "connected"                               # the cranks turned
+    e._sensor_tick(now)
+    assert e.awake and w.want["hr"] and w.want["trainer"] and w.state["hr"] == "searching"
+    e._active -= e.IDLE_S + 1                                    # 10 min of nothing
+    e._sensor_tick(now)
+    assert not e.awake and not w.want["hr"] and not w.want["trainer"] and w.want["pedal"]
+    e._sensor_tick(now)                                          # pedals still connected: no new wake-up
+    assert not e.awake
+    e._do("morning_start")                                       # the check wakes the strap
+    assert e.awake and w.want["hr"]
+    assert e.settings["hr"] is True and e.settings["trainer"] is True   # your choices are untouched
+
+
+def test_a_strap_you_dont_use_stays_off_when_the_sensors_wake(tmp_path):
+    e = app.Engine(str(tmp_path), {**app.SETTINGS_DEFAULTS, "ftp": 200, "hr": False, "trainer": False}, LifeWorker)
+    e.worker.state["pedal"] = "connected"
+    e._sensor_tick(app.utcnow())
+    assert e.awake and not e.worker.want["hr"] and not e.worker.want["trainer"]
