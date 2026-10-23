@@ -283,11 +283,8 @@ class Engine(threading.Thread):
                 self.dialog = "discard"
             elif name == "discard_confirm":
                 self._drain()
-                s.discard()
-                try:
-                    os.remove(rs.meta_path(self.out_dir, os.path.basename(s.base)))
-                except OSError:
-                    pass
+                kept = s.discard()                     # moved to rides/discarded/, its meta with it
+                self.worker.log(f"ride discarded: kept in {kept}" if kept else "ride discarded: nothing recorded")
                 self._leave_ride("home")
             elif name == "save":
                 self._save()

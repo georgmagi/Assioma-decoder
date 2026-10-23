@@ -70,7 +70,7 @@ def test_start_stop_save_goes_to_the_summary_and_home(tmp_path):
     assert s2 is not s and e.screen == "ride"
 
 
-def test_discard_needs_a_second_yes_and_deletes_the_files(tmp_path):
+def test_discard_needs_a_second_yes_and_keeps_the_files_aside(tmp_path):
     e = _engine(tmp_path)
     s = _ride(e, 10)
     e._do("stop")
@@ -81,6 +81,21 @@ def test_discard_needs_a_second_yes_and_deletes_the_files(tmp_path):
     e._do("discard")
     e._do("discard_confirm")
     assert e.screen == "home" and not os.path.exists(s.base + "_raw.csv") and not os.path.exists(s.base + ".fit")
+    kept = os.path.join(str(tmp_path), "discarded", os.path.basename(s.base))
+    for ext in ("_raw.csv", "_per_second.csv", ".fit", "_meta.json"):         # all of it, out of the ride list
+        assert os.path.isfile(kept + ext), ext
+    assert rs.ride_list(str(tmp_path), 200) == []
+    for f in os.listdir(os.path.dirname(kept)):                              # moved back: a ride again
+        os.replace(os.path.join(os.path.dirname(kept), f), os.path.join(str(tmp_path), f))
+    assert [r["id"] for r in rs.ride_list(str(tmp_path), 200)] == [os.path.basename(s.base)]
+
+
+def test_discarding_an_empty_ride_leaves_nothing(tmp_path):
+    e = _engine(tmp_path)
+    s = _ride(e, 0)
+    e._do("stop"); e._do("discard"); e._do("discard_confirm")
+    assert not os.path.exists(os.path.join(str(tmp_path), "discarded", os.path.basename(s.base) + "_raw.csv"))
+    assert not os.path.exists(s.base + "_raw.csv")
 
 
 def test_space_does_nothing_while_a_dialog_is_open(tmp_path):

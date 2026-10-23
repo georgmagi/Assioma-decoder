@@ -264,17 +264,40 @@ class Session:
     def live(self, now: datetime) -> dict:
         return self.ps.values_at(now)
 
-    def discard(self) -> None:
-        """Throw the ride away: close and delete its files."""
+    DISCARDED = "discarded"      # rides/discarded/: discarded rides, kept whole (not listed, not synced)
+
+    def discard(self) -> Optional[str]:
+        """Take the ride out of your rides, but never lose it: a Discard clicked by mistake after a
+        long session costs nothing. Its files go to rides/discarded/ complete (FIT and strap streams
+        too); to bring it back, move them into rides/. A ride with no seconds is just deleted.
+        Returns the new base path (None when there was nothing to keep)."""
+        if self.state in ("recording", "paused"):
+            for s in self.ps.finish():               # the seconds still being put together
+                self._second(s)
         self.state = "finished"
         for fh in (self._raw, self._sec):
             if not fh.closed:
                 fh.close()
-        for ext in ("_raw.csv", "_per_second.csv", ".fit") + STRAP_FILES:
-            try:
-                os.remove(self.base + ext)
-            except OSError:
-                pass
+        exts = ("_raw.csv", "_per_second.csv", ".fit", "_meta.json") + STRAP_FILES
+        if not self.seconds:
+            for ext in exts:
+                try:
+                    os.remove(self.base + ext)
+                except OSError:
+                    pass
+            return None
+        folder = os.path.join(os.path.dirname(self.base), self.DISCARDED)
+        os.makedirs(folder, exist_ok=True)
+        dest = os.path.join(folder, os.path.basename(self.base))
+        for ext in exts:
+            if os.path.exists(self.base + ext):
+                os.replace(self.base + ext, dest + ext)
+        try:
+            fit_writer.write_activity(self.seconds, dest + ".fit", self.pedal_name, self.battery)
+        except Exception as e:                        # the CSVs are what matters
+            print(f"discarded ride FIT: {type(e).__name__}: {e}", file=sys.stderr)
+        threading.Thread(target=export_strap_streams, args=(dest,), daemon=True).start()
+        return dest
 
     def finish(self) -> Optional[tuple]:
         now = utcnow()

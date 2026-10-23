@@ -677,7 +677,7 @@ function dialogText(s) {
              [["Delete", "danger", "delete_confirm"], ["Back", "", "back"]]],
     finish: ["Finish ride?", `${clock} recorded. The ride is paused while you decide.`,
              [["Discard", "danger-text", "discard"], ["Resume", "", "resume"], ["Save ride", "primary", "save"]]],
-    discard: ["Discard this ride?", `The ${clock} recording and its files will be deleted. This can't be undone.`,
+    discard: ["Discard this ride?", `The ${clock} recording leaves your rides. Its files are kept in rides/discarded, in case it was a mistake.`,
               [["Discard", "danger", "discard_confirm"], ["Back", "", "back"]]],
   };
 }
