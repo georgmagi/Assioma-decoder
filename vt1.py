@@ -6,7 +6,10 @@ line through that fall; an ordinary ride is messier, so:
 
 1. Samples: alpha 1 every 5 s, each paired with the mean power and heart rate over the same 2-min
    window it was computed from. Only steady windows count (10-s powers within 20 % of each other,
-   no coasting), never the first 10 minutes (alpha 1 is unreliable while warming up), never windows
+   no coasting) and only settled ones: the window's first and last 30 s within 5 % in power and
+   4 bpm in heart rate. alpha 1 lags a change by its whole 2-min window, so a window that spans a
+   step up or an interval's start pairs a falling alpha 1 with a heart rate still on its way up:
+   that put VT1 "crossings" into interval rides that weren't there. Never the first 10 minutes (alpha 1 is unreliable while warming up), never windows
    with more than 5 % artifacts.
 2. Curve: the samples are binned by power (10 W) or heart rate (3 bpm); alpha 1 must fall with
    intensity, so the bin medians get a decreasing isotonic fit (pool adjacent violators, weighted
@@ -14,7 +17,10 @@ line through that fall; an ordinary ride is messier, so:
    assumption.
 3. VT1 = where the curve crosses 0.75 (interpolated between bins). A ride that never gets there
    gives a bound instead: "VT1 above 160 W" (or below, if alpha 1 was under 0.75 throughout).
-4. Uncertainty: a moving-block bootstrap (2-min blocks, so the overlap of neighbouring windows is
+4. Usable ("ok"): a crossing whose 80 % interval is narrow (8 bpm / 30 W) and that most resampled
+   rides also cross (70 %). Anything else (a bound, a range, a shaky crossing) is shown as what it
+   is but never taken as your VT1.
+5. Uncertainty: a moving-block bootstrap (2-min blocks, so the overlap of neighbouring windows is
    respected) gives an 80 % interval and how often a resampled ride crosses at all. Seeded: the
    same ride always gives the same numbers.
 
@@ -38,6 +44,11 @@ MIN_BIN = 6                    # samples (30 s of alpha 1) for a bin to count
 MIN_SAMPLES = 120              # 10 min of usable alpha 1 in all
 BOOTS = 200
 BINS = {"hr": 3.0, "power": 10.0}
+SETTLE_S = 30                  # settled: the window's first and last 30 s ...
+SETTLE_POWER = 0.05            # ... within 5 % in power
+SETTLE_HR = 4.0                # ... and 4 bpm in heart rate
+OK_WIDTH = {"hr": 8.0, "power": 30.0}   # a usable crossing's 80 % interval at most this wide
+OK_P_CROSS = 0.7
 
 
 def samples(rows: list[dict]) -> list[dict]:
@@ -59,6 +70,12 @@ def samples(rows: list[dict]) -> list[dict]:
         tens = [sum(p[k: k + 10]) / 10 for k in range(0, WINDOW_S, 10)]
         if mean_p < MIN_POWER or max(abs(t - mean_p) for t in tens) > STEADY * mean_p:
             continue
+        p0, p1 = sum(p[:SETTLE_S]) / SETTLE_S, sum(p[-SETTLE_S:]) / SETTLE_S
+        h0 = [x.get("heart_rate_bpm") for x in win[:SETTLE_S] if x.get("heart_rate_bpm")]
+        h1 = [x.get("heart_rate_bpm") for x in win[-SETTLE_S:] if x.get("heart_rate_bpm")]
+        if (not h0 or not h1 or abs(p1 - p0) > SETTLE_POWER * mean_p
+                or abs(sum(h1) / len(h1) - sum(h0) / len(h0)) > SETTLE_HR):
+            continue                               # still settling after a change
         out.append({"i": i, "a1": float(a1), "power": mean_p, "hr": sum(h) / len(h),
                     "coverage": r.get("rr_coverage_pct")})
     return out
@@ -107,6 +124,12 @@ def crossing(points: list[tuple], width: float, level: float = A1_VT1) -> Option
     return {"kind": "above", "x": xs[-1], "curve": curve}
 
 
+def usable(e: Optional[dict], key: str = "hr") -> bool:
+    """A crossing good enough to call your VT1 (or VT2): narrow and repeatable (see 4. above)."""
+    return bool(e and e.get("kind") == "cross" and e.get("lo") is not None
+                and e["hi"] - e["lo"] <= OK_WIDTH[key] and e.get("p_cross", 0) >= OK_P_CROSS)
+
+
 def _percentile(v: list, q: float) -> float:
     v = sorted(v)
     k = (len(v) - 1) * q
@@ -150,5 +173,6 @@ def estimate(rows: list[dict], seed: int = 1, level: float = A1_VT1, s: Optional
                 "curve": [[round(x, 1), round(f, 3), round(m, 3), c] for x, f, m, c in res["curve"]]}
         if res["kind"] == "cross" and len(xs) >= 20:
             item["lo"], item["hi"] = round(_percentile(xs, 0.1), 1), round(_percentile(xs, 0.9), 1)
+        item["ok"] = usable(item, key)
         out[key] = item
     return out

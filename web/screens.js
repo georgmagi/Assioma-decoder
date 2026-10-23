@@ -197,7 +197,7 @@ async function loadOverview() {
     ovStat("TSS", fmt(r.tss)), ovStat("Heart rate", fmt(r.avg_hr), "bpm"),
     ovStat("Pw:HR", r.decoupling_pct == null ? "--" : `${r.decoupling_pct > 0 ? "+" : ""}${r.decoupling_pct.toFixed(1)}`, r.decoupling_pct == null ? "" : "%"),
     ovStat('<span class="greek">α</span>1', fmt(r.avg_a1, 2)),
-    ovStat("VT1", r.vt1_hr?.kind === "cross" ? fmt(r.vt1_hr.value) : r.vt1_hr?.kind === "above" ? `>${fmt(r.vt1_hr.value)}` : "--", r.vt1_hr ? "bpm" : ""),
+    ovStat("VT1", r.vt1_hr?.ok ? fmt(r.vt1_hr.value) : "--", r.vt1_hr?.ok ? "bpm" : ""),
   ].join("") : "";
   $("b-last").onclick = () => r && act("open", r.id);
 }
@@ -336,7 +336,7 @@ function drawForm(prog, ramp = 0) {
   $("hf-num").textContent = `${tsb > 0 ? "+" : ""}${fmt(tsb)}`;
   $("hf-word").textContent = formWord(tsb);
   $("hf-gauge").innerHTML = formGauge(tsb);
-  const cross = (prog.vt1 || []).filter((v) => v.hr?.kind === "cross"), vt = cross[cross.length - 1];
+  const cross = (prog.vt1 || []).filter((v) => v.hr?.ok), vt = cross[cross.length - 1];
   $("hf-stats").innerHTML = [ovStat("Fitness", fmt(p.ctl[n - 1]), `${ramp >= 0 ? "+" : "−"}${Math.abs(ramp).toFixed(1)} /wk`),
     ovStat("Fatigue", fmt(p.atl[n - 1])),
     ovStat("VT1", vt ? fmt(vt.hr.value) : "--", vt ? "bpm" : "")].join("");
@@ -595,8 +595,9 @@ for (const b of $("vt1-by").querySelectorAll("button")) {
 function vt1Text(e, unit) {
   const u = `<span class="unit">${unit}</span>`;
   if (!e) return { big: "--", sub: "" };
-  if (e.kind === "cross") return { big: `<span class="num">${fmt(e.value)}</span>${u}`,
-    sub: e.lo == null ? "uncertain: too few resamples cross" : `${fmt(e.lo)}–${fmt(e.hi)} ${unit} (80 %) · crossed in ${fmt(100 * e.p_cross)}% of resamples` };
+  if (e.kind === "cross") return { big: `${e.ok ? "" : '<span class="pre">roughly</span>'}<span class="num">${fmt(e.value)}</span>${u}`,
+    sub: (e.ok ? "" : "too uncertain to count as your VT1 · ") + (e.lo == null ? "too few resamples cross"
+      : `${fmt(e.lo)}–${fmt(e.hi)} ${unit} (80 %) · crossed in ${fmt(100 * e.p_cross)}% of resamples`) };
   if (e.kind === "between") return { big: `<span class="pre">between</span><span class="num">${fmt(e.value)}</span>–<span class="num">${fmt(e.value2)}</span>${u}`,
     sub: "it crosses where this ride had no steady riding" };
   if (e.kind === "above") return { big: `<span class="pre">above</span><span class="num">${fmt(e.value)}</span>${u}`,

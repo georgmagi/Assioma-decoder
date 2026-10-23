@@ -112,10 +112,14 @@ def progress(rides: list[dict], today: Optional[date] = None) -> dict:
         by_day.setdefault(local_day(r["start_utc"]).isoformat(), []).append(
             {k: r.get(k) for k in ("id", "start_utc", "ride_s", "tss", "np", "avg_hr", "work_kj", "zones")})
     # VT1 ride by ride (vt1.py): crossings and bounds, oldest first
-    vt1 = [{"id": r.get("id"), "day": local_day(r["start_utc"]).isoformat(), "hr": r.get("vt1_hr"),
-            "power": r.get("vt1_power"), "beats_pct": r.get("vt1_beats_pct"),
-            "vt2": {"hr": r.get("vt2_hr"), "power": r.get("vt2_power")}}         # alpha 1 = 0.5
-           for r in sorted(rides, key=lambda r: r["start_utc"]) if r.get("vt1_hr") or r.get("vt1_power")]
+    # only what a ride can say: a usable crossing (vt1.usable) or a bound; a shaky crossing or a
+    # "somewhere in this gap" range would just be noise on the trend
+    keep = lambda e: e if e and (e.get("ok") or e.get("kind") in ("above", "below")) else None
+    vt1 = [{"id": r.get("id"), "day": local_day(r["start_utc"]).isoformat(), "hr": keep(r.get("vt1_hr")),
+            "power": keep(r.get("vt1_power")), "beats_pct": r.get("vt1_beats_pct"),
+            "vt2": {"hr": keep(r.get("vt2_hr")), "power": keep(r.get("vt2_power"))}}         # alpha 1 = 0.5
+           for r in sorted(rides, key=lambda r: r["start_utc"])]
+    vt1 = [v for v in vt1 if v["hr"] or v["power"] or v["vt2"]["hr"] or v["vt2"]["power"]]
     return {
         "fitness_checks": fitness_checks(rides),
         "today": today.isoformat(),

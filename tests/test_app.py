@@ -6,9 +6,10 @@ import os
 import threading
 import urllib.error
 import urllib.request
-from datetime import timedelta
+from datetime import date, timedelta
 
 import recorder_app as app
+import plan as pl
 import ride_summary as rs
 
 
@@ -297,10 +298,12 @@ def test_z2_guard_against_your_vt1(tmp_path):
 
 
 def test_vt1_reference_comes_from_your_latest_crossing(tmp_path, monkeypatch):
-    rides = [{"start_utc": "2026-10-02T07:00:00+00:00", "vt1_hr": {"kind": "above", "value": 150}},
-             {"start_utc": "2026-10-01T07:00:00+00:00", "vt1_hr": {"kind": "cross", "value": 158.4, "lo": 156, "hi": 161}},
-             {"start_utc": "2026-09-20T07:00:00+00:00", "vt1_hr": {"kind": "cross", "value": 163}}]
-    monkeypatch.setattr(rs, "ride_list", lambda folder, ftp=None: rides)
+    # only a usable crossing counts (vt1.usable): not a bound, not a shaky crossing
+    rides = [{"start_utc": "2026-10-03T07:00:00+00:00", "vt1_hr": {"kind": "cross", "value": 165, "lo": 158, "hi": 172, "ok": False}},
+             {"start_utc": "2026-10-02T07:00:00+00:00", "vt1_hr": {"kind": "above", "value": 150}},
+             {"start_utc": "2026-10-01T07:00:00+00:00", "vt1_hr": {"kind": "cross", "value": 158.4, "lo": 156, "hi": 161, "ok": True}},
+             {"start_utc": "2026-09-20T07:00:00+00:00", "vt1_hr": {"kind": "cross", "value": 163, "ok": True}}]
+    monkeypatch.setattr(rs, "ride_list", lambda folder, ftp=None, history=None: rides)
     e = _engine(tmp_path)
     e.vt1_ref()                                              # found in the background
     for _ in range(100):
@@ -468,3 +471,39 @@ def test_plan_puts_todays_workout_up_and_the_builder_saves_files(tmp_path, monke
     e._do("wo_delete", "zwo:../settings")                       # only workout files
     e._do("wo_delete", "zwo:3x15-threshold")
     assert "zwo:3x15-threshold" not in e.workouts()
+
+
+def test_an_ftp_change_is_remembered_by_day(tmp_path):
+    e = _engine(tmp_path, ftp=199)
+    e._do("settings", {"ftp": 240})
+    today = date.today().isoformat()
+    assert e.settings["ftp_history"] == [["0001-01-01", 199], [today, 240]]
+    e._do("settings", {"ftp": 235})                              # the same day again: one entry a day
+    assert e.settings["ftp_history"] == [["0001-01-01", 199], [today, 235]]
+    e._do("settings", {"max_hr": 198})                           # other settings leave it alone
+    assert e.settings["ftp_history"][-1] == [today, 235]
+
+
+def test_files_changed_on_disk_are_read_again_before_a_click_saves_over_them(tmp_path):
+    path = str(tmp_path / "settings.json")
+    app.save_settings(path, {**app.SETTINGS_DEFAULTS, "ftp": 200})
+    e = app.Engine(str(tmp_path), app.load_settings(path), FakeWorker, path)
+    e._do("plan_new", {"start": date.today().isoformat(), "weeks": 4})
+    e._watch_files(every=0)                                      # our own save: nothing to read
+    v = e.plan_version
+    e._watch_files(every=0)
+    assert e.plan_version == v
+    plan = pl.load(e.plan_path)                                  # an edit from outside the app
+    plan["days"][date.today().isoformat()] = {"ref": "vt1-steps"}
+    pl.save(e.plan_path, plan)
+    st = os.stat(e.plan_path)
+    os.utime(e.plan_path, ns=(st.st_atime_ns, st.st_mtime_ns + 10_000_000))
+    e._watch_files(every=0)
+    assert e.plan["days"][date.today().isoformat()] == {"ref": "vt1-steps"} and e.plan_version == v + 1
+    s = app.load_settings(path)
+    s["ftp"] = 250
+    app.save_settings(path, s)
+    st = os.stat(path)
+    os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns + 10_000_000))
+    e._watch_files(every=0)
+    assert e.settings["ftp"] == 250

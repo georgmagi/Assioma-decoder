@@ -17,6 +17,7 @@ import glob
 import json
 import math
 import os
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -34,7 +35,7 @@ ZONES = [(0.55, "Z1"), (0.75, "Z2"), (0.90, "Z3"), (1.05, "Z4"), (1.20, "Z5"), (
 # Z5 above 90 %
 HR_ZONES = [(0.60, "Z1"), (0.70, "Z2"), (0.80, "Z3"), (0.90, "Z4"), (float("inf"), "Z5")]
 TEXT = {"time", "rider_position", "rr_ms"}
-SUMMARY_VERSION = 12                    # bump when the cached short summary changes
+SUMMARY_VERSION = 13                    # bump when the cached short summary changes
 
 
 def load(path: str) -> list[dict]:
@@ -311,7 +312,7 @@ def _thresholds(rows: list) -> dict:
 def short(s: dict) -> dict:
     """The few numbers the ride list shows."""
     st, v, v2 = s["stats"], s.get("vt1") or {}, s.get("vt2") or {}
-    brief = lambda e: e and {k: e[k] for k in ("kind", "value", "value2", "lo", "hi") if k in e}
+    brief = lambda e: e and {k: e[k] for k in ("kind", "value", "value2", "lo", "hi", "ok") if k in e}
     return {"v": SUMMARY_VERSION, "start_utc": s["start_utc"], **{k: st[k] for k in
             ("ride_s", "elapsed_s", "avg_power", "np", "avg_hr", "avg_a1", "tss", "if", "ftp", "work_kj",
              "decoupling_pct", "ef_z2", "ef_z2_power", "ef_z2_min")}, "vt1_hr": brief(v.get("hr")), "vt1_power": brief(v.get("power")),
@@ -471,12 +472,42 @@ def cache_path(folder: str, ride_id: str) -> str:
     return os.path.join(d, ride_id + ".json")
 
 
-def ride_list(folder: str, ftp: Optional[float] = None) -> list[dict]:
+_DAY = re.compile(r"(\d{4}-\d{2}-\d{2})")
+
+
+def ftp_at(history: Optional[list], day: Optional[str], default: Optional[float] = None) -> Optional[float]:
+    """The FTP that was set on a day. history = [[from_day, ftp], ...] (the app adds an entry each
+    time you change FTP); before the first entry, the first entry's FTP. No history: default."""
+    h = sorted(history or [])
+    if not h or not day:
+        return default
+    value = h[0][1]
+    for d, f in h:
+        if d > day:
+            break
+        value = f
+    return value
+
+
+def ride_ftp(meta: dict, ride_id: str, history: Optional[list], default: Optional[float] = None) -> Optional[float]:
+    """The FTP a ride was ridden at: the one its workout was set to (saved with the ride), else the
+    FTP setting on its day (ftp_at), else default (today's)."""
+    wo = (meta.get("workout") or {}).get("ftp")
+    if wo:
+        return wo
+    m = _DAY.search(ride_id)
+    return ftp_at(history, m and m.group(1), default)
+
+
+def ride_list(folder: str, ftp: Optional[float] = None, history: Optional[list] = None) -> list[dict]:
     """Every ride in folder, newest first: {id, name, source, fit, ...short summary}. The recorder's
     rides and other apps' FIT files. A FIT ride
     recorded at the same time as one of the recorder's (both apps running) is left out: the
     recorder's own recording has the pedals' full data, and counting both would double the load.
-    Short summaries are cached in the folder's hidden .cache folder."""
+    Short summaries are cached in the folder's hidden .cache folder.
+    ftp is today's FTP. With history (the app's FTP changes, ftp_at) each ride is scored at the FTP
+    it was ridden at (ride_ftp): a new FTP doesn't rewrite your past TSS. Without, all at ftp. A
+    ramp test's W' is always worked out against today's FTP (it's the reserve the app rides with)."""
     sources = [p[: -len(SUFFIX)] for p in glob.glob(os.path.join(folder, "*" + SUFFIX))]
     sources += [p[:-4] for p in glob.glob(os.path.join(folder, "*.fit")) if not _is_own_fit(p)]
     out = []
@@ -488,13 +519,16 @@ def ride_list(folder: str, ftp: Optional[float] = None) -> list[dict]:
         cache = cache_path(folder, ride_id)
         meta = load_meta(folder, ride_id)
         mp = meta_path(folder, ride_id)
+        rftp = ride_ftp(meta, ride_id, history, ftp) if history is not None else ftp
+        ramp = eftp.is_ramp({"id": ride_id, "name": (meta.get("workout") or {}).get("name")})
         info = None
         try:
             with open(cache) as fh:
                 info = json.load(fh)
             if (info.get("v") != SUMMARY_VERSION or os.path.getmtime(cache) < os.path.getmtime(path)
                     or (os.path.exists(mp) and os.path.getmtime(cache) < os.path.getmtime(mp))
-                    or (ftp and info.get("ftp") != ftp)):          # FTP set or changed since: its TSS is redone
+                    or (rftp and info.get("ftp") != rftp)          # FTP set or changed since: its TSS is redone
+                    or (ramp and ftp and info.get("ramp_cp") != ftp)):
                 info = None
         except (OSError, ValueError):
             pass
@@ -503,9 +537,10 @@ def ride_list(folder: str, ftp: Optional[float] = None) -> list[dict]:
                 rows = load_ride(path)
             except Exception:                                     # a file we can't read: not a ride
                 continue
-            info = short(summarize(rows, ftp, None, meta)) if rows else {"v": SUMMARY_VERSION, "empty": True}
-            if rows and eftp.is_ramp({"id": ride_id, "name": (meta.get("workout") or {}).get("name")}):
+            info = short(summarize(rows, rftp, None, meta)) if rows else {"v": SUMMARY_VERSION, "empty": True}
+            if rows and ramp:
                 info["ramp_w_prime"] = wbal.ramp_w_prime([r.get("power_w") for r in rows], ftp)
+                info["ramp_cp"] = ftp
             try:
                 with open(cache, "w") as fh:
                     json.dump(info, fh)

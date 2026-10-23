@@ -59,3 +59,19 @@ def test_too_little_alpha_1_gives_nothing_and_results_repeat():
     assert vt1.estimate(_ride([(900, 150)], linear(160))) is None           # 5 min after warm-up
     rows = _ride([(600, 100)] + [(300, w) for w in range(120, 241, 10)], linear(160))
     assert vt1.estimate(rows) == vt1.estimate(rows)                         # seeded bootstrap
+
+
+def test_an_interval_ride_has_no_crossing_from_heart_rate_lag():
+    # 4-min hard reps: alpha 1 follows the (lagging) heart rate, which never settles in a rep;
+    # windows that span a rep's start mustn't make a VT1 out of the lag
+    blocks = [(900, 120)] + [(240, 260), (180, 100)] * 6
+    e = vt1.estimate(_ride(blocks, linear(165)))
+    assert e is None or not any(vt1.usable(e[k], k) for k in ("hr", "power"))
+
+
+def test_a_clear_crossing_is_usable_a_bound_is_not():
+    e = vt1.estimate(_ride([(600, 100)] + [(300, w) for w in range(120, 241, 10)], linear(160)))
+    assert e["hr"]["ok"] and vt1.usable(e["hr"], "hr")
+    easy = vt1.estimate(_ride([(3600, 140)], linear(170)))
+    assert not easy["hr"]["ok"]
+    assert not vt1.usable({"kind": "cross", "value": 160, "lo": 150, "hi": 170, "p_cross": 0.9}, "hr")

@@ -69,7 +69,8 @@ PAGES = ("home", "plan", "workouts", "stats")   # the app's pages (top bar); plu
 # remembered from the page (its own browser storage is lost: the port changes every run)
 SETTINGS_DEFAULTS = {"ftp": None, "max_hr": None, "vt1_hr": None, "room_temp": None, "room_rh": None,
                      "plan_min": 60, "hr": True, "trainer": False, "theme": "dark", "span": 300,
-                     "power3s": False, "hr_lock": None}
+                     "power3s": False, "hr_lock": None,
+                     "ftp_history": None}     # [[from_day, ftp], ...]: each FTP change, so past rides keep theirs
 PREFS = {"theme": ("dark", "lcd"), "span": (300, 1800, 0), "power3s": (True, False)}
 
 
@@ -160,6 +161,8 @@ class Engine(threading.Thread):
         self._last_tick = 0.0
         self.sync: Optional[cs.Background] = None   # cloud sync (cloud_sync.py), when sync.json says where
         self._sync_key = None                # what a change of starts a sync round: versions and settings
+        self._disk: dict = {}                # settings / plan / morning file -> mtime last looked at (_watch_files)
+        self._watch_t = 0.0
 
     def _new_worker(self):
         w = self.make_worker(self.q, bool(self.settings.get("hr")))
@@ -357,6 +360,43 @@ class Engine(threading.Thread):
             self.morning_version += 1
         self._sync_key = self._sync_state_key()       # these came from the server: nothing to send back
 
+    def _watch_files(self, every: float = 1.0) -> None:
+        """settings.json, plan.json and morning.json changed on disk by something else (an editor,
+        a script, another copy of the app): read them again, before a click here saves the old copy
+        over them. A file that reads the same as what's in memory was our own save."""
+        t = time.monotonic()
+        if t - self._watch_t < every:
+            return
+        self._watch_t = t
+        changed = []
+        for rel, path, load, now in (("settings.json", self.settings_path, load_settings, lambda: self.settings),
+                                     ("plan.json", self.plan_path, pl.load, lambda: self.plan),
+                                     ("morning.json", self.morning_path, mo.load, lambda: self.mornings)):
+            if not path:
+                continue
+            try:
+                m = os.stat(path).st_mtime_ns
+            except OSError:
+                continue
+            if self._disk.get(path, m) == m:          # unchanged (or first look: what we loaded at start)
+                self._disk[path] = m
+                continue
+            try:
+                with open(path, encoding="utf-8") as fh:  # the loaders forgive a broken file (defaults,
+                    raw = json.load(fh)                    # an empty plan): never take that for an edit
+                if not isinstance(raw, list if rel == "morning.json" else dict) or (rel == "plan.json" and "days" not in raw):
+                    raise ValueError(rel)
+                if load(path) != now():
+                    changed.append(rel)
+                self._disk[path] = m
+            except Exception:                        # half written: look again next time
+                self._disk[path] = None
+        if changed:
+            key = self._sync_key
+            self._sync_reload(changed)
+            self._sync_key = key                      # changed here, not by the server: sync sends it on
+            self.worker.log(f"reloaded {', '.join(changed)}: changed on disk")
+
     def _sync_state_key(self):
         return (self.rides_version, self.plan_version, self.morning_version, json.dumps(self.settings, sort_keys=True))
 
@@ -378,7 +418,7 @@ class Engine(threading.Thread):
     # ---- the Z2 guard: where you are against your own VT1
     def vt1_ref(self) -> Optional[dict]:
         """VT1 heart rate to ride against: the setting if you gave one, else the latest ride whose alpha 1
-        crossed 0.75 ({hr, lo, hi, day, source}). The ride list is read in the background."""
+        crossed 0.75 clearly (vt1.usable; {hr, lo, hi, day, source}). The ride list is read in the background."""
         self._find_refs()
         if self.settings.get("vt1_hr"):
             return {"hr": self.settings["vt1_hr"], "source": "setting"}
@@ -397,11 +437,11 @@ class Engine(threading.Thread):
             def find(version=self.rides_version):
                 found = wp = warm = None
                 try:
-                    rides = rs.ride_list(self.out_dir, self.settings.get("ftp"))       # newest first
+                    rides = self.rides()                                                # newest first
                     warm = checks.warmup_normal([r.get("warmup") for r in rides if r.get("source") == "Assioma"])
                     for r in rides:
                         e = r.get("vt1_hr")
-                        if found is None and e and e.get("kind") == "cross":
+                        if found is None and e and e.get("ok"):           # a usable crossing (vt1.usable)
                             found = {"hr": e["value"], "lo": e.get("lo"), "hi": e.get("hi"), "source": "ride",
                                      "day": r["start_utc"][:10], "beats_pct": r.get("vt1_beats_pct")}
                         if wp is None and r.get("ramp_w_prime"):
@@ -463,6 +503,20 @@ class Engine(threading.Thread):
             state = "above"
         return {"ref": ref, "hr30": hr30, "headroom": None if hr30 is None else ref["hr"] - hr30,
                 "state": state, "a1_low_s": a1_low_s, "above_s": scan[1]}
+
+    def rides(self) -> list[dict]:
+        """The ride list, each ride scored at the FTP it was ridden at (ride_summary.ride_ftp)."""
+        return rs.ride_list(self.out_dir, self.settings.get("ftp"), self.settings.get("ftp_history") or [])
+
+    def w_prime_at(self, cp: Optional[float]) -> Optional[float]:
+        """W' from your newest ramp test against a given CP (a past ride's FTP): wbal.ramp_w_prime."""
+        ref = self.w_prime_ref()
+        if not cp or not ref:
+            return None
+        if cp == self.settings.get("ftp"):
+            return ref["w_prime"]
+        path = rs.find_ride(self.out_dir, ref["ride"])
+        return path and wbal.ramp_w_prime([r.get("power_w") for r in rs.load_ride(path)], cp)
 
     # ---- workouts on the trainer
     def workouts(self) -> dict:
@@ -731,6 +785,13 @@ class Engine(threading.Thread):
         if vt1_hr is None or (isinstance(vt1_hr, (int, float)) and 90 <= vt1_hr <= 210):
             self.settings["vt1_hr"] = vt1_hr
         if ftp is None or (isinstance(ftp, (int, float)) and 50 <= ftp <= 600):
+            old = self.settings.get("ftp")
+            if ftp and ftp != old:                  # remembered by day: past rides keep the FTP they were ridden at
+                today = date.today().isoformat()
+                hist = [h for h in (self.settings.get("ftp_history") or []) if h[0] != today]
+                if not hist and old:
+                    hist = [["0001-01-01", old]]   # everything before the first change
+                self.settings["ftp_history"] = sorted(hist + [[today, ftp]])
             self.settings["ftp"] = ftp
         if max_hr is None or (isinstance(max_hr, (int, float)) and 120 <= max_hr <= 230):
             self.settings["max_hr"] = max_hr
@@ -847,6 +908,7 @@ class Engine(threading.Thread):
         while not self.quit.is_set():
             try:
                 self._drain()
+                self._watch_files()
                 while True:
                     try:
                         name, arg, done = self.cmds.get_nowait()
@@ -1067,7 +1129,7 @@ def make_handler(engine: Engine, app_mode: dict):
             if u.path == "/api/pedal":
                 self._json(pedal_silhouette())
             elif u.path == "/api/rides":
-                self._json(rs.ride_list(engine.out_dir, engine.settings.get("ftp")))
+                self._json(engine.rides())
             elif u.path == "/api/workouts":
                 ftp = engine.settings.get("ftp")
                 self._json([{"id": k, "name": w["name"], "description": w.get("description", ""),
@@ -1091,10 +1153,10 @@ def make_handler(engine: Engine, app_mode: dict):
             elif u.path == "/api/morning":
                 self._json(mo.trend(engine.mornings))
             elif u.path == "/api/readiness":
-                rides = rs.ride_list(engine.out_dir, engine.settings.get("ftp"))
+                rides = engine.rides()
                 self._json(today_readiness(engine, rides, training.pmc(rides)))
             elif u.path == "/api/plan":
-                rides = rs.ride_list(engine.out_dir, engine.settings.get("ftp"))
+                rides = engine.rides()
                 over = pl.overview(engine.plan, engine.workouts(), rides, engine.settings.get("ftp"), date.today())
                 prog = training.progress(rides)
                 ready = today_readiness(engine, rides, prog["pmc"])
@@ -1108,13 +1170,12 @@ def make_handler(engine: Engine, app_mode: dict):
                 self._json({**over, "status_text": pl.status_text(prog, rides, engine.settings, over, mo.trend(engine.mornings)),
                             "pmc_now": prog["pmc"]})
             elif u.path == "/api/progress":
-                self._json(training.progress(rs.ride_list(engine.out_dir, engine.settings.get("ftp"))))
+                self._json(training.progress(engine.rides()))
             elif u.path == "/api/ride":
-                ftp = engine.settings.get("ftp")
-                wp = next((r["ramp_w_prime"] for r in rs.ride_list(engine.out_dir, ftp) if r.get("ramp_w_prime")), None)
                 rid = q.get("id", [""])[0]
-                rides = rs.ride_list(engine.out_dir, ftp)
-                s = rs.summarize_file(engine.out_dir, rid, ftp, engine.settings.get("max_hr"), wp)
+                rides = engine.rides()
+                ftp = next((r.get("ftp") for r in rides if r["id"] == rid), None) or engine.settings.get("ftp")
+                s = rs.summarize_file(engine.out_dir, rid, ftp, engine.settings.get("max_hr"), engine.w_prime_at(ftp))
                 if s is not None:                            # your normal warm-up from the rides before this one
                     s["warmup_normal"] = checks.warmup_normal([r.get("warmup") for r in rides if r.get("source") == "Assioma"
                                                               and r["start_utc"] < s["start_utc"] and r["id"] != rid])

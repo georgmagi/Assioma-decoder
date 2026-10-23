@@ -165,9 +165,33 @@ def targets(w: dict) -> list:
     return out
 
 
+RAMP_END = 1 / 0.75      # a ramp test ends where its last minute is your FTP / 0.75 (eftp.py)
+
+
+def as_ridden(w: dict) -> dict:
+    """The workout the way it will really go. Same as written, except a ramp test (by its name, as
+    eftp.is_ramp): nobody rides one to its last step. With FTP right, the best minute is FTP / 0.75,
+    about 133 %: the 130 % step held, half a minute into the next, then the cool-down. (As written,
+    Oct 19's plan counted it as 59 TSS; ridden, it was 27.)"""
+    if "ramp" not in (w.get("name") or "").lower():
+        return w
+    out, over = [], False
+    for s in w["steps"]:
+        short = s["lo"] is not None and s["lo"] == s["hi"] and s["dur"] <= 120
+        if over and short:
+            continue                                  # the steps you won't reach
+        if short and s["lo"] > RAMP_END and not over:
+            over = True
+            out.append({**s, "dur": min(30, s["dur"])})
+            continue
+        out.append(s)
+    return {**w, "steps": out}
+
+
 def estimate(w: dict, ftp: float) -> dict:
-    """What the workout will be if ridden as written: average and normalized power, IF, TSS, kJ."""
-    f = targets(w)
+    """What the workout will be: average and normalized power, IF, TSS, kJ. As written, except a
+    ramp test, which ends where you will (as_ridden)."""
+    f = targets(as_ridden(w))
     n = len(f)
     if not n:
         return {}

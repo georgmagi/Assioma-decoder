@@ -74,3 +74,16 @@ def test_shorthand_and_zwift_round_trip():
     assert wk.to_text(st) == text
     back = wk.parse_zwo(wk.to_zwo("3x12", "test & <check>", st))
     assert back["name"] == "3x12" and [(s["dur"], s["lo"], s["hi"]) for s in back["steps"]] == [(s["dur"], s["lo"], s["hi"]) for s in st]
+
+
+def test_a_ramp_test_is_estimated_as_ridden_not_to_its_last_step():
+    w = wk.BUILT_IN["ramp-test"]
+    ridden = wk.as_ridden(w)
+    tops = [s["lo"] for s in ridden["steps"] if s["dur"] <= 60 and s["lo"] == s["hi"]]
+    assert max(tops) == pytest.approx(1.4) and ridden["steps"][-1]["label"] == "cool down"
+    assert [s for s in ridden["steps"] if s["lo"] == pytest.approx(1.4)][0]["dur"] == 30
+    est, written = wk.estimate(w, 240), wk.targets(w)
+    assert est["duration_s"] == 5 * 60 + 9 * 60 + 30 + 600 < len(written)
+    assert 20 < est["tss"] < 35                                    # Oct 19, ridden: 27
+    other = wk.BUILT_IN["sweet-spot-3x12"]
+    assert wk.as_ridden(other) is other

@@ -1,6 +1,6 @@
 """The ride summary, computed from the per-second CSV the recorder writes."""
 import os
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 
 import assioma_recorder as ar
 import ride_summary as rs
@@ -53,6 +53,20 @@ def test_ride_list_caches_short_summaries_newest_first(tmp_path):
     # a new FTP redoes every TSS (Plan's planned TSS uses the new one: the two must agree)
     again = rs.ride_list(str(tmp_path), ftp=250)
     assert again[0]["ftp"] == 250 and abs(again[0]["tss"] - rides[0]["tss"] * (200 / 250) ** 2) < 1e-6
+
+
+def test_a_new_ftp_leaves_past_rides_at_the_ftp_they_were_ridden_at(tmp_path):
+    _ride(tmp_path, 3600, lambda i: {"power_w": 150})                          # a ride today (its id)
+    later = (date.today() + timedelta(days=1)).isoformat()
+    hist = [["0001-01-01", 200], [later, 240]]
+    r = rs.ride_list(str(tmp_path), 240, hist)[0]
+    assert r["ftp"] == 200 and abs(r["tss"] - 56.25) < 1e-6                     # 1 h at IF 0.75, as it was
+    assert rs.ride_list(str(tmp_path), 260, hist + [["2099-01-01", 260]])[0]["tss"] == r["tss"]
+    rs.save_meta(str(tmp_path), r["id"], {"workout": {"name": "Z2", "ftp": 150}})   # the workout's own FTP wins
+    assert rs.ride_list(str(tmp_path), 240, hist)[0]["ftp"] == 150
+    h = [["0001-01-01", 200], ["2026-10-19", 240]]
+    assert rs.ftp_at(h, "2026-10-18") == 200 and rs.ftp_at(h, "2026-10-19") == 240
+    assert rs.ftp_at([["2026-09-12", 199]], "2026-08-01") == 199 and rs.ftp_at([], "2026-08-01", 240) == 240
 
 
 def _fit_copy(tmp_path, name, seconds, start):
