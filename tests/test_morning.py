@@ -168,3 +168,20 @@ def test_a_long_pause_the_ecg_shows_is_real_counts():
     r = c.result(T0)
     assert r["odd"]["real"] == 1 and r["artifact_pct"] == 0
     assert abs(r["rmssd"] - mo.rest_rmssd(r["rr"], [False] * len(r["rr"]))) < 0.1
+
+
+def test_the_watchs_nights_join_the_morning_and_speak_on_days_without_a_check():
+    nights = {"days": {f"2026-09-{d:02d}": {"resting_hr": 50, "sleep_hr": {"low30": 50 + (d % 2), "avg": 54}}
+                       for d in range(1, 11)}}
+    nights["days"]["2026-09-11"] = {"resting_hr": 58, "sleep_hr": {"low30": 57, "avg": 61}}
+    t = mo.trend([], date(2026, 9, 11), nights)
+    assert t["night"]["base"] == 50.5 and t["night"]["up"] == 6.5
+    assert t["verdict"][0] == "below" and "Sleeping heart rate 57" in t["verdict"][1]
+    calm = mo.trend(_hist([4.0 + 0.1 * (-1) ** k for k in range(11)]), date(2026, 9, 11),
+                    {"days": {**nights["days"], "2026-09-11": {"sleep_hr": {"low30": 51}}}})
+    assert calm["verdict"][0] == "normal" and calm["today"] is not None      # strap and watch agree
+    assert mo.trend(_hist([4.0] * 3), date(2026, 9, 3), {"days": {}})["verdict"][0] == "learning"
+    import readiness as rd
+    r = rd.today(t, [], {}, None, date(2026, 9, 11))
+    assert r["level"] == "easy" and any("Sleeping heart rate 57" in x["text"] for x in r["reasons"])
+    assert not any("No morning check" in x["text"] for x in r["reasons"])

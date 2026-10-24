@@ -225,11 +225,71 @@ def add(checks: list, result: dict) -> list:
                   key=lambda c: c["date"])
 
 
-def trend(checks: list, today: Optional[date] = None) -> dict:
-    """Each day: ln RMSSD, its 7-day mean, the 30-day baseline and normal range (mean +- 0.5 SD over
-    the 30 days before), resting HR and its baseline; and today's reading of it. Needs 7 checks in
-    the baseline before it judges anything."""
+SLEEP_UP = 5          # bpm: the night's lowest 30 min this far over your normal = not recovered
+SLEEP_NOTE = 3        # ... this far: worth a look
+SLEEP_BASE_N = 5      # nights in the 30 before a night, for a normal
+
+
+def nights(garmin: Optional[dict]) -> list:
+    """The watch's nights (garmin.json, from garmin_pull.py on the server), oldest first: {date (the
+    morning), low30 (lowest 30-min mean while asleep, the steadiest resting number), avg, rhr
+    (Garmin's resting HR), base (the mean low30 of the 30 nights before, from 5 nights), up}."""
+    out = []
+    days = sorted(((garmin or {}).get("days") or {}).items())
+    for d, r in days:
+        s = r.get("sleep_hr") or {}
+        low = s.get("low30") or s.get("min")
+        if low is None:
+            continue
+        out.append({"date": d, "low30": low, "avg": s.get("avg"), "rhr": r.get("resting_hr"),
+                    "sleep_start": r.get("sleep_start"), "sleep_end": r.get("sleep_end")})
+    for n in out:
+        d = date.fromisoformat(n["date"])
+        before = [x["low30"] for x in out if d - timedelta(days=30) <= date.fromisoformat(x["date"]) < d]
+        if len(before) >= SLEEP_BASE_N:
+            n["base"] = round(mean(before), 1)
+            n["up"] = round(n["low30"] - n["base"], 1)
+    return out
+
+
+def _sleep_verdict(n: dict) -> tuple:
+    if "base" not in n:
+        return ("learning", f"Asleep your heart rate got down to {n['low30']:.0f}; learning your normal from the watch's nights.")
+    if n["up"] >= SLEEP_UP:
+        return ("below", f"Sleeping heart rate {n['low30']:.0f}, {n['up']:.0f} over your normal {n['base']:.0f}: "
+                         "not recovered. Keep today easy, or move the hard session.")
+    if n["up"] >= SLEEP_NOTE:
+        return ("normal", f"Sleeping heart rate {n['low30']:.0f}, a little over your normal {n['base']:.0f}: "
+                          "fine, go by how the warm-up feels.")
+    return ("normal", f"Sleeping heart rate {n['low30']:.0f}, within your normal ({n['base']:.0f}): train as planned.")
+
+
+def trend(checks: list, today: Optional[date] = None, garmin: Optional[dict] = None) -> dict:
+    """The morning: the strap's checks and the watch's nights read together.
+    days: each check's ln RMSSD, its 7-day mean, the 30-day baseline and normal range (mean +- 0.5
+    SD over the 30 days before), resting HR and its baseline (7 checks before it judges). nights:
+    the watch's sleeping heart rate against its own normal (nights()). verdict: today's word, the
+    worse of the two: the strap's when you checked today (or no night came in), the night's when
+    only the watch spoke; "below" from either wins."""
     today = today or date.today()
+    out = _strap_trend(checks, today)
+    ns = nights(garmin)
+    night = next((n for n in ns if n["date"] == today.isoformat()), None)
+    out["nights"], out["night"] = ns, night
+    if night is not None:
+        sv = _sleep_verdict(night)
+        v = out["verdict"]
+        checked_today = out["today"] is not None
+        if v is None or not checked_today or v[0] == "learning":
+            out["verdict"] = sv if not (checked_today and v and v[0] == "below") else v
+        elif sv[0] == "below" and v[0] != "below":
+            out["verdict"] = ("below", sv[1])
+        elif sv[0] == "below":
+            out["verdict"] = ("below", v[1] + " " + sv[1].split(":")[0] + " too.")
+    return out
+
+
+def _strap_trend(checks: list, today: date) -> dict:
     days = []
     by = {c["date"]: c for c in checks}
     for c in checks:

@@ -98,14 +98,20 @@ async function loadMorning(s) {
   try { m = await (await fetch("/api/morning")).json(); } catch { return; }
   HOME.morning = m;
   const res = s.morning_result, days = m.days || [], last = days[days.length - 1];
+  const ns = m.nights || [], night = ns[ns.length - 1];
   const v = m.verdict;
   $("mc-verdict").innerHTML = res && !res.ok ? `<b>That check didn't count:</b> ${esc(res.why)}`
-    : v ? esc(v[1]) : "Lie down with the strap on, before getting up, and press Start. Takes 1½ minutes.";
-  $("mc-when").textContent = last ? `last ${SHORT_DAY.format(dayOf(last.date))}, ${last.time}` : "";
-  $("mc-stats").innerHTML = last ? [
-    ovStat("RMSSD", last.rmssd.toFixed(0), "ms"), ovStat("Resting HR", fmt(last.hr), "bpm"),
-    ovStat("7-day ln RMSSD", last.ln7.toFixed(2), last.lo != null ? `normal ${last.lo.toFixed(2)}–${last.hi.toFixed(2)}` : ""),
-  ].join("") : "";
+    : v ? esc(v[1]) : "Wear the watch to bed, or lie down with the strap on before getting up and press Start (1½ minutes).";
+  $("mc-when").textContent = [night && `night to ${SHORT_DAY.format(dayOf(night.date))}`,
+    last && `check ${SHORT_DAY.format(dayOf(last.date))}, ${last.time}`].filter(Boolean).join(" · ");
+  // the strap's numbers only while they're recent: the watch speaks every night
+  const recent = last && (Date.now() - dayOf(last.date).getTime()) < 7 * 86400e3;
+  $("mc-stats").innerHTML = [
+    night && ovStat("Asleep, lowest 30 min", fmt(night.low30), night.base != null ? `bpm · normal ${fmt(night.base)}` : "bpm"),
+    night && night.rhr && ovStat("Resting HR (watch)", fmt(night.rhr), "bpm"),
+    recent && ovStat("RMSSD", last.rmssd.toFixed(0), "ms"),
+    recent && ovStat("7-day ln RMSSD", last.ln7.toFixed(2), last.lo != null ? `normal ${last.lo.toFixed(2)}–${last.hi.toFixed(2)}` : ""),
+  ].filter(Boolean).join("");
   // the ECG's word on the beats the filter left out (morning.py, ecg_beats.py)
   const o = last && last.odd, n = (k, one, many) => `${k} ${k === 1 ? one : many}`;
   const odd = !last ? "" : !o ? (last.artifact_pct ? `${fmt(last.artifact_pct, 1)}% of beats left out. ` : "")
@@ -114,23 +120,45 @@ async function loadMorning(s) {
     : o.checked ? `ECG: no early beats.${o.real ? ` ${n(o.real, "long or quick beat was", "long or quick beats were")} real and counted.` : ""}` +
       `${o.mistimed ? ` ${n(o.mistimed, "strap error", "strap errors")} left out.` : ""}${o.unclear ? ` ${o.unclear} too noisy to tell, left out.` : ""} `
     : "ECG: every beat clean. ";
-  $("mc-note").textContent = days.length ? odd + "ln RMSSD: higher means more recovered. The band is your normal from the 30 days before; it appears after 7 checks." : "";
+  $("mc-note").textContent = (ns.length ? "Asleep: the watch's lowest 30 minutes of heart rate each night (Garmin; daytime readings aren't kept). 5+ bpm over your normal = not recovered. " : "")
+    + (days.length ? odd + "ln RMSSD (strap check): higher means more recovered; the band is your normal, after 7 checks." : "");
   drawMorning(m);
 }
 function drawMorning(m) {
-  const cv = $("mc-chart"), days = (m.days || []).slice(-30);
-  if (!days.length) { cv.hidden = true; return; }
+  const cv = $("mc-chart");
+  // the last 30 days of either: strap checks (ln RMSSD lane) and the watch's nights (heart-rate lane)
+  const endT = Math.max(...[...(m.days || []), ...(m.nights || [])].map((d) => dayOf(d.date).getTime()), 0);
+  const inWin = (d) => endT - dayOf(d.date).getTime() < 30 * 86400e3;
+  const days = (m.days || []).filter(inWin), ns = (m.nights || []).filter(inWin);
+  if (!days.length && !ns.length) { cv.hidden = true; return; }
   cv.hidden = false;
   const lcd = THEME === "lcd";
-  const t1 = dayOf(days[days.length - 1].date).getTime(), t0 = Math.min(dayOf(days[0].date).getTime(), t1 - 13 * 86400e3);
-  const lv = days.flatMap((d) => [d.ln_rmssd, d.lo, d.hi].filter((x) => x != null)), hv = days.map((d) => d.hr);
-  const [l0, l1] = niceRange(lv, 0.25, 0.1), [h0, h1] = niceRange(hv, 5, 2);
-  const ch = laneChart(cv, 190, [
-    { label: "ln RMSSD", weight: 1.6, y0: l0, y1: l1, step: l1 - l0 > 1.5 ? 0.5 : 0.25, fmt: (v) => v.toFixed(2) },
-    { label: "resting HR, bpm", weight: 1, y0: h0, y1: h1, step: h1 - h0 > 20 ? 10 : 5, fmt: (v) => `${Math.round(v)}` },
-  ], t0, t1);
+  const t1 = endT, t0 = Math.min(...[...days, ...ns].map((d) => dayOf(d.date).getTime()), t1 - 13 * 86400e3);
+  const hv = [...days.map((d) => d.hr), ...ns.flatMap((n) => [n.low30, n.base].filter((x) => x != null))];
+  const [h0, h1] = niceRange(hv, 5, 2);
+  const lanes = [];
+  if (days.length) {
+    const lv = days.flatMap((d) => [d.ln_rmssd, d.lo, d.hi].filter((x) => x != null)), [l0, l1] = niceRange(lv, 0.25, 0.1);
+    lanes.push({ label: "ln RMSSD (strap)", weight: 1.1, y0: l0, y1: l1, step: l1 - l0 > 1.5 ? 0.5 : 0.25, fmt: (v) => v.toFixed(2) });
+  }
+  lanes.push({ label: ns.length ? "asleep, lowest 30 min (line) · strap check (rings), bpm" : "resting HR, bpm", weight: days.length ? 1.4 : 1,
+               y0: h0, y1: h1, step: h1 - h0 > 20 ? 10 : 5, fmt: (v) => `${Math.round(v)}` });
+  const ch = laneChart(cv, days.length ? 220 : 130, lanes, t0, t1);
   if (!ch) return;
-  const { ctx, X } = ch, [L1, L2] = ch.lanes, mid = (d) => X(dayOf(d.date).getTime() + 43200e3);
+  const { ctx, X } = ch, L2 = ch.lanes[ch.lanes.length - 1], L1 = days.length ? ch.lanes[0] : null;
+  const mid = (d) => X(dayOf(d.date).getTime() + 43200e3);
+  if (ns.length) {                                                   // the nights: normal (dashed) and lowest 30 min
+    const nb = ns.filter((n) => n.base != null);
+    ctx.setLineDash([3, 3]); ctx.strokeStyle = blend(lcd ? C.fg : C.hr, C.panel, 0.45); ctx.lineWidth = 1.2; ctx.beginPath();
+    nb.forEach((n, i) => (i ? ctx.lineTo(mid(n), L2.Y(n.base)) : ctx.moveTo(mid(n), L2.Y(n.base)))); ctx.stroke(); ctx.setLineDash([]);
+    ctx.strokeStyle = lcd ? C.fg : C.hr; ctx.lineWidth = 2; ctx.beginPath();
+    ns.forEach((n, i) => (i ? ctx.lineTo(mid(n), L2.Y(n.low30)) : ctx.moveTo(mid(n), L2.Y(n.low30)))); ctx.stroke();
+    for (const n of ns) {
+      ctx.beginPath(); ctx.arc(mid(n), L2.Y(n.low30), 3, 0, 2 * Math.PI);
+      ctx.fillStyle = n.up != null && n.up >= 5 ? (lcd ? C.fg : C.bad) : (lcd ? C.fg : C.hr); ctx.fill();
+    }
+  }
+  if (!days.length) return;
   const band = days.filter((d) => d.lo != null);                     // the normal range
   if (band.length) {
     ctx.fillStyle = blend(lcd ? C.fg : C.good, C.panel, 0.85);
@@ -149,7 +177,10 @@ function drawMorning(m) {
     ctx.beginPath(); ctx.arc(mid(d), L1.Y(d.ln_rmssd), 3.5, 0, 2 * Math.PI);
     ctx.fillStyle = lcd ? C.fg : C.rr; ctx.fill();
   }
-  line(L2, "hr", lcd ? C.fg : C.hr, 1.5);
+  for (const d of days) {                                            // the strap's resting HR: open rings
+    ctx.beginPath(); ctx.arc(mid(d), L2.Y(d.hr), 3.5, 0, 2 * Math.PI);
+    ctx.strokeStyle = lcd ? C.fg : blend(C.hr, C.panel, 0.3); ctx.lineWidth = 1.5; ctx.stroke();
+  }
 }
 // the countdown while it runs (on any page): lie still, breathe normally
 function renderMorningRun(s) {

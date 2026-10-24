@@ -8,6 +8,9 @@ HRV, Buchheit 2014 for heart rate at a fixed load, Coggan's form for training lo
   While it is still learning your normal (under 7 checks) a big drop against the checks so far
   (> 0.4 in ln RMSSD) or a resting HR 5 up is shown, but only as a note: one noisy morning
   shouldn't cancel a session.
+- the watch's night (morning.nights, Garmin): the lowest 30 min of sleeping heart rate 5+ bpm
+  over its 30-night normal = easy, 3+ = a note. With it, a day without the strap check still has
+  a morning reading.
 - the warm-up (checks.warmup): heart rate at 125 W in today's ride, against your normal. 8+ bpm up
   = easy (6 Oct: 135 vs 126 after two step tests the evening before); 4+ = a note.
 - form (training.pmc): under -30 = easy, under -40 = rest; -20 to -30 = a note.
@@ -24,6 +27,7 @@ from statistics import mean
 from typing import Optional
 
 import training
+from morning import SLEEP_NOTE as mo_SLEEP_NOTE, SLEEP_UP as mo_SLEEP_UP
 
 LEVELS = ("go", "easy", "rest")
 
@@ -40,8 +44,20 @@ def today(morning_trend: dict, rides: list, pmc: dict, warm_normal: Optional[dic
     # the morning check
     days = morning_trend.get("days") or []
     m = next((x for x in days if x["date"] == day.isoformat()), None)
+    # the watch's night (morning.nights): sleeping heart rate against its normal
+    n = next((x for x in morning_trend.get("nights") or [] if x["date"] == day.isoformat()), None)
+    if n is not None and "base" in n:
+        if n["up"] >= mo_SLEEP_UP:
+            _add(reasons, "easy", f"Sleeping heart rate {n['low30']:.0f}, {n['up']:.0f} over your normal {n['base']:.0f}.")
+        elif n["up"] >= mo_SLEEP_NOTE:
+            _add(reasons, "note", f"Sleeping heart rate {n['low30']:.0f}, a little over your normal {n['base']:.0f}.")
+        else:
+            _add(reasons, "go", f"Sleeping heart rate {n['low30']:.0f} (normal {n['base']:.0f}).")
+    elif n is not None:
+        _add(reasons, "note", f"Sleeping heart rate {n['low30']:.0f}; the watch is still learning your normal.")
     if m is None:
-        _add(reasons, "note", "No morning check today.")
+        if n is None:
+            _add(reasons, "note", "No morning check or night from the watch today.")
     elif "base" in m:
         v = (morning_trend.get("verdict") or ["", ""])[0]
         if v == "below":

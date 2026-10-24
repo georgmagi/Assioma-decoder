@@ -139,6 +139,9 @@ class Engine(threading.Thread):
         # the morning check (morning.py): resting HR and HRV lying down, kept in morning.json
         self.morning_path = os.path.join(os.path.dirname(settings_path), "morning.json") if settings_path else None
         self.mornings = mo.load(self.morning_path)
+        # the watch's nights (garmin.json: the server pulls it from Garmin, sync brings it here)
+        self.garmin_path = os.path.join(os.path.dirname(settings_path), "garmin.json") if settings_path else None
+        self.garmin = cs.load_json(self.garmin_path, {}) if self.garmin_path else {}
         self.mcheck: Optional[mo.Check] = None
         self.mresult: Optional[dict] = None
         self.morning_version = 0
@@ -369,6 +372,9 @@ class Engine(threading.Thread):
             self._plan_day = None
         if any(r.startswith("workouts/") for r in rels):
             self.plan_version += 1
+        if "garmin.json" in rels and self.garmin_path:
+            self.garmin = cs.load_json(self.garmin_path, {})
+            self.morning_version += 1
         if ("morning.json" in rels or any(r.startswith("mornings/") for r in rels)) and self.morning_path:
             self.mornings = mo.load(self.morning_path)
             self.morning_version += 1
@@ -517,6 +523,10 @@ class Engine(threading.Thread):
             state = "above"
         return {"ref": ref, "hr30": hr30, "headroom": None if hr30 is None else ref["hr"] - hr30,
                 "state": state, "a1_low_s": a1_low_s, "above_s": scan[1]}
+
+    def morning_trend(self) -> dict:
+        """The morning check and the watch's nights, read together (morning.trend)."""
+        return mo.trend(self.mornings, garmin=self.garmin)
 
     def rides(self) -> list[dict]:
         """The ride list, each ride scored at the FTP it was ridden at (ride_summary.ride_ftp)."""
@@ -1137,7 +1147,7 @@ def today_readiness(engine: "Engine", rides: list, pmc: dict) -> dict:
     """readiness.today with the morning trend and your normal warm-up from the rides before today."""
     today = date.today()
     earlier = [r for r in rides if r.get("source") == "Assioma" and training.local_day(r["start_utc"]) < today]
-    return rd.today(mo.trend(engine.mornings), rides, pmc, checks.warmup_normal([r.get("warmup") for r in earlier]), today)
+    return rd.today(engine.morning_trend(), rides, pmc, checks.warmup_normal([r.get("warmup") for r in earlier]), today)
 
 
 def pedal_silhouette() -> dict:
@@ -1209,7 +1219,7 @@ def make_handler(engine: Engine, app_mode: dict):
                 w = engine.workouts().get(q.get("id", [""])[0])
                 self._json({"name": w["name"], "text": wk.to_text(w["steps"])} if w else {"error": "no such workout"})
             elif u.path == "/api/morning":
-                self._json(mo.trend(engine.mornings))
+                self._json(engine.morning_trend())
             elif u.path == "/api/readiness":
                 rides = engine.rides()
                 self._json(today_readiness(engine, rides, training.pmc(rides)))
@@ -1225,7 +1235,7 @@ def make_handler(engine: Engine, app_mode: dict):
                         if date.today().isoformat() <= d["day"] <= soon and d["status"] in ("today", "upcoming") and rd.is_hard(d):
                             d["warn"] = ("Your body says " + ready["level"] + " today: swap this for Z2?") if d["day"] == date.today().isoformat()                                 else "Check how you feel tomorrow before this one."
                             break
-                self._json({**over, "status_text": pl.status_text(prog, rides, engine.settings, over, mo.trend(engine.mornings)),
+                self._json({**over, "status_text": pl.status_text(prog, rides, engine.settings, over, engine.morning_trend()),
                             "pmc_now": prog["pmc"]})
             elif u.path == "/api/progress":
                 self._json(training.progress(engine.rides()))

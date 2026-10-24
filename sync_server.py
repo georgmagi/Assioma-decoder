@@ -367,7 +367,8 @@ def make_handler(store: Store, env: dict, rapp, engine):
     return Handler
 
 
-def start_garmin(store: "Store", every: Optional[float] = None, tokens: Optional[str] = None) -> threading.Event:
+def start_garmin(store: "Store", every: Optional[float] = None, tokens: Optional[str] = None,
+                 after=None) -> threading.Event:
     """Your watch's resting and sleeping heart rate (garmin_pull.py) into garmin.json, written the
     way a device's upload is (with history), so every device syncs it down."""
     import garmin_pull as gp
@@ -382,6 +383,8 @@ def start_garmin(store: "Store", every: Optional[float] = None, tokens: Optional
     def write(body: bytes) -> None:
         base = store.files.get(gp.REL, {}).get("sha256", "")
         store.put(gp.REL, body, base, time.time())
+        if after:
+            after()                                          # the web view reads it again
 
     stop = threading.Event()
     threading.Thread(target=gp.pull_loop, args=(read, write, stop, lambda t: print(t, flush=True),
@@ -407,7 +410,7 @@ def main() -> None:
     srv = ThreadingHTTPServer(("127.0.0.1", int(env.get("ASSIOMA_PORT", "8100"))),
                               make_handler(store, dict(env), rapp, engine))
     srv.daemon_threads = True
-    start_garmin(store)
+    start_garmin(store, after=lambda: engine.command("sync_reload", ["garmin.json"], timeout=2))
     print(f"assioma: {len(store.files)} files, listening on {srv.server_address}", flush=True)
     srv.serve_forever()
 
