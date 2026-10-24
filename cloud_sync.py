@@ -33,7 +33,7 @@ from typing import Callable, Optional
 
 STATE_FILES = ("settings.json", "plan.json", "morning.json")
 # what is synced: the app folder's own files, no deeper folders, no temp files, no logs of this device
-PATH_RE = re.compile(r"^(?:settings\.json|plan\.json|morning\.json|mornings/[\w.-]+\.csv"
+PATH_RE = re.compile(r"^(?:settings\.json|plan\.json|morning\.json|garmin\.json|mornings/[\w.-]+\.csv"
                      r"|workouts/[\w. ()-]+\.zwo|rides/(?!app_log\.txt$)[\w. ()-]+)$")
 SKIP_SUFFIX = (".tmp", ".part")
 RECENT_S = 30            # a file written in the last 30 s may still be being written: next round

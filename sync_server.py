@@ -31,6 +31,7 @@ import threading
 import time
 import zlib
 from datetime import datetime, timezone
+from typing import Optional
 from http.server import ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
@@ -366,6 +367,28 @@ def make_handler(store: Store, env: dict, rapp, engine):
     return Handler
 
 
+def start_garmin(store: "Store", every: Optional[float] = None, tokens: Optional[str] = None) -> threading.Event:
+    """Your watch's resting and sleeping heart rate (garmin_pull.py) into garmin.json, written the
+    way a device's upload is (with history), so every device syncs it down."""
+    import garmin_pull as gp
+
+    def read() -> Optional[bytes]:
+        try:
+            with open(store.path(gp.REL), "rb") as fh:
+                return fh.read()
+        except OSError:
+            return None
+
+    def write(body: bytes) -> None:
+        base = store.files.get(gp.REL, {}).get("sha256", "")
+        store.put(gp.REL, body, base, time.time())
+
+    stop = threading.Event()
+    threading.Thread(target=gp.pull_loop, args=(read, write, stop, lambda t: print(t, flush=True),
+                                                every or gp.PULL_EVERY_S, tokens or gp.TOKENS), daemon=True).start()
+    return stop
+
+
 def main() -> None:
     if sys.argv[1:] == ["hash-password"]:
         pw = getpass.getpass("Password: ")
@@ -384,6 +407,7 @@ def main() -> None:
     srv = ThreadingHTTPServer(("127.0.0.1", int(env.get("ASSIOMA_PORT", "8100"))),
                               make_handler(store, dict(env), rapp, engine))
     srv.daemon_threads = True
+    start_garmin(store)
     print(f"assioma: {len(store.files)} files, listening on {srv.server_address}", flush=True)
     srv.serve_forever()
 

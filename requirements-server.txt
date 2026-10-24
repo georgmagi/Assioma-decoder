@@ -1,2 +1,3 @@
 # the server (sync_server.py): FIT files from other apps in the ride list
 garmin-fit-sdk==21.218.0
+garminconnect==0.3.20
