@@ -160,7 +160,11 @@ function drawMorning(m) {
   ctx.strokeStyle = ink; ctx.lineWidth = 2.5; ctx.beginPath();
   win.forEach((p, i) => (i ? ctx.lineTo(mid(p), L.Y(p.hr)) : ctx.moveTo(mid(p), L.Y(p.hr)))); ctx.stroke();
   ctx.font = "600 12px Barlow, 'IBM Plex Sans', sans-serif"; ctx.textAlign = "center";
+  const MK = marksOf(cv);
   for (const p of win) {
+    MK.push({ x: mid(p), y: L.Y(p.hr), html: tipHtml(SHORT_DAY.format(dayOf(p.date)), [
+      [p.src === "watch" ? "asleep, lowest 30 min" : "morning check", fmt(p.hr), "bpm", ink],
+      p.base != null && ["your normal", fmt(p.base), "bpm"], p.up != null && ["vs normal", `${p.up > 0 ? "+" : ""}${fmt(p.up, 1)}`, "bpm"]]) });
     const high = p.up != null && p.up >= 5;
     ctx.beginPath(); ctx.arc(mid(p), L.Y(p.hr), high ? 5 : 4, 0, 2 * Math.PI);
     ctx.fillStyle = high && !lcd ? C.bad : ink; ctx.fill();
@@ -291,8 +295,13 @@ function drawHero() {
   ctx.font = "11px Barlow, 'IBM Plex Sans', sans-serif"; ctx.textAlign = "center";
   ctx.strokeStyle = C.grid; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(0, mt + H + 0.5); ctx.lineTo(wd, mt + H + 0.5); ctx.stroke();
+  const MK = marksOf(cv), DF = new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "short" });
   last.forEach((x, i) => {
     const cx = slot * (i + 0.5), v = vals[i], y = mt + H - (v / top) * H, now = i === 6;
+    const zt7 = Object.values(x.zones).reduce((a, b) => a + b, 0), zs = (zz) => zz.reduce((a, z) => a + (x.zones[z] || 0), 0) / (zt7 || 1);
+    MK.push({ x: cx, y: v > 0 ? y : mt + H, html: tipHtml(now ? "Today" : DF.format(x.d), x.rides ? [
+      ["rides", x.rides], ["time", hm(x.time_s)], ["load", fmt(x.tss), "TSS"], ["work", fmt(x.kj), "kJ"],
+      zt7 && ["easy", Math.round(100 * zs(["Z1", "Z2"])), "%"], zt7 && ["hard", Math.round(100 * zs(["Z4", "Z5", "Z6"])), "%"]] : [["", "no ride", ""]]) });
     if (v > 0) {
       ctx.save();
       ctx.beginPath(); ctx.roundRect(cx - bw / 2, y, bw, mt + H - y, [4, 4, 0, 0]); ctx.clip();
@@ -373,6 +382,9 @@ function drawForm(prog, ramp = 0) {
   ctx.beginPath(); ctx.moveTo(0, Y(0)); ctx.lineTo(wd, Y(0)); ctx.stroke();
   ctx.strokeStyle = lcd ? C.fg : tsb >= 0 ? C.good : C.warn; ctx.lineWidth = 2;
   ctx.beginPath(); v.forEach((t, i) => (i ? ctx.lineTo(X(i), Y(t)) : ctx.moveTo(X(i), Y(t)))); ctx.stroke();
+  const MK = marksOf(cv), days = p.days.slice(-42), ctl = p.ctl.slice(-42), atl = p.atl.slice(-42);
+  v.forEach((t, i) => MK.push({ x: X(i), y: Y(t), html: tipHtml(SHORT_DAY.format(dayOf(days[i])), [
+    ["form", `${t > 0 ? "+" : ""}${fmt(t)}`, "", t >= 0 ? C.good : C.warn], ["fitness", fmt(ctl[i]), "", C.power], ["fatigue", fmt(atl[i]), "", C.hr]]) }));
   ctx.fillStyle = ctx.strokeStyle;
   ctx.beginPath(); ctx.arc(X(v.length - 1), Y(v[v.length - 1]), 3.5, 0, 2 * Math.PI); ctx.fill();
 }
@@ -696,6 +708,11 @@ function drawVt1(e, unit) {
   ctx.beginPath();
   cur.forEach(([x, f], i) => (i ? ctx.lineTo(X(x), Y(f)) : ctx.moveTo(X(x), Y(f))));
   ctx.stroke();
+  const MK = marksOf(cv);
+  for (const [x, f, md] of cur) MK.push({ x: X(x), y: Y(f), html: tipHtml(`${fmt(x)} ${unit}`,
+    [["α1 here", md.toFixed(2), "", C.a1], ["fitted", f.toFixed(2), ""], [f >= 0.75 ? "below VT1" : "above VT1", "", ""]]) });
+  if (e.kind === "cross") MK.push({ x: X(e.value), y: Y(0.75), html: tipHtml("VT1 (α1 0.75)",
+    [["", fmt(e.value), unit], e.lo != null && ["80 % range", `${fmt(e.lo)}–${fmt(e.hi)}`, unit]]) });
   // the estimate
   if (e.kind === "cross") {
     ctx.fillStyle = lcd ? C.fg : C.fg;
@@ -752,6 +769,9 @@ function drawBreathing(d) {
   // the dots, then the 3-point median line through them
   ctx.fillStyle = lcd ? C.fg : blend(C.rr, C.panel, 0.35);
   b.t.forEach((t, i) => { if (b.rate[i] != null) { ctx.beginPath(); ctx.arc(X(t), Y(b.rate[i]), 2.5, 0, 2 * Math.PI); ctx.fill(); } });
+  const MK = marksOf(cv), avgP = (t) => { let s = 0, k = 0; for (let j = Math.max(0, t - 15); j < Math.min(n, t + 15); j++) if (d.series.power[j] != null) { s += d.series.power[j]; k++; } return k ? s / k : null; };
+  b.t.forEach((t, i) => { if (b.rate[i] != null) MK.push({ x: X(t), y: Y(b.rate[i]), html: tipHtml(`${hms(t)} in`,
+    [["breathing", fmt(b.rate[i]), "/min", C.rr], ["power", fmt(avgP(t)), "W", C.power], d.series.hr[t] != null && ["heart rate", fmt(d.series.hr[t]), "bpm", C.hr]]) }); });
   ctx.strokeStyle = lcd ? C.fg : C.rr; ctx.lineWidth = 2; ctx.beginPath();
   let started = false;
   b.t.forEach((t, i) => {
@@ -896,6 +916,11 @@ function drawWbal(d) {
   ctx.fillStyle = lcd ? "rgba(27,30,25,0.18)" : blend(C.power, C.panel, 0.78); ctx.fill();
   ctx.beginPath(); pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
   ctx.strokeStyle = C.power; ctx.lineWidth = 2; ctx.stroke();
+  const MK = marksOf(cv), every = Math.max(10, Math.round(n / 200));
+  for (let i = 0; i < n; i += every) MK.push({ x: X(i), y: Y((100 * ser[i]) / w.w_prime), html: tipHtml(`${hms(i)} in`,
+    [["W′ left", fmt((100 * ser[i]) / w.w_prime), "%", C.power], ["", fmt(ser[i] / 1000, 1), "kJ"], d.series.power[i] != null && ["power", fmt(d.series.power[i]), "W"]]) });
+  w.efforts.forEach((e, i) => MK.push({ x: X(e.end - 1), y: Y((100 * e.low) / w.w_prime), html: tipHtml(`Effort #${i + 1}, ${hms(e.start)}–${hms(e.end)}`,
+    [["lowest", fmt((100 * e.low) / w.w_prime), "%", C.power], ["", fmt(e.low / 1000, 1), "kJ"]]) }));
   // each effort's low point
   ctx.fillStyle = C.fg; ctx.textAlign = "center";
   w.efforts.forEach((e, i) => {
@@ -979,7 +1004,7 @@ function makeSummaryCharts(d) {
   const a1R = a1St ? [Math.floor(a1lo / 0.25) * 0.25, Math.ceil(Math.max(a1lo + (a1St.med - a1lo) / LOW_AT, a1St.max + 0.05) / 0.25) * 0.25] : [0.5, 1.75];
   const common = (el) => ({
     width: el.clientWidth, height: el.clientHeight, legend: { show: false }, padding: [24, 8, 0, 0],
-    cursor: { sync: { key: "sum" }, drag: { x: true, y: false, setScale: true }, y: false, points: { show: false } },
+    cursor: { sync: { key: "sum" }, drag: { x: true, y: false, setScale: true }, y: false, points: { size: 9, width: 2, fill: () => C.panel } },
   });
   const xAxis = (labels) => ({
     stroke: C.dim, font: axisFont, grid: { stroke: C.grid, width: 1 }, ticks: { show: false }, space: 80,
@@ -1004,11 +1029,11 @@ function makeSummaryCharts(d) {
     }
   };
   const readout = (u) => {
-    const i = u.cursor.idx, out = $("sum-readout");
-    if (i == null || u.cursor.left < 0) { out.textContent = ""; return; }
+    const i = u.cursor.idx;
+    if (i == null || u.cursor.left < 0) { uTip(u, null); return; }
     const a1 = ser.a1[i];
-    out.innerHTML = `${TIME.format(new Date(t0 + t[i] * 1000))} &nbsp; <b>${fmt(p30[i])}</b> W &nbsp; <b>${fmt(hr15[i])}</b> bpm` +
-      (a1 != null ? ` &nbsp; α1 <b>${a1.toFixed(2)}</b>` : "");
+    uTip(u, tipHtml(`${TIME.format(new Date(t0 + t[i] * 1000))} <span class="dim">· ${hms(t[i])} in</span>`,
+      [["power 30 s", fmt(p30[i]), "W", C.power], ["heart rate", fmt(hr15[i]), "bpm", C.hr], a1 != null && ["α1", a1.toFixed(2), "", C.a1]]));
   };
   const zoomBoth = (u) => {                                          // drag to zoom, double-click to reset
     const { min, max } = u.scales.x;
@@ -1119,6 +1144,9 @@ function drawEftp(prog, s) {
     }
     ctx.stroke(); }
   }
+  const MK = marksOf(cv), durName = (t) => (t >= 60 ? `${t / 60} min` : `${t} s`);
+  for (const [t, p] of pts) MK.push({ x: X(t), y: Y(p), html: tipHtml(`Best ${durName(t)}, 42 days`,
+    [["", fmt(p), "W", C.fg], f && t >= 150 && ["model", fmt(f.cp + f.w_prime / t), "W", C.power], f && f.durations.includes(t) && ["used in the fit", "", ""]]) });
   for (const [t, p] of pts) {                                      // your bests; filled = used in the fit
     const used = f && f.durations.includes(t);
     ctx.beginPath(); ctx.arc(X(t), Y(p), 3.5, 0, 2 * Math.PI);

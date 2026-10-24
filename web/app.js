@@ -500,7 +500,7 @@ function makeCharts() {
     width: el.clientWidth, height: el.clientHeight,
     legend: { show: false },
     padding: [24, 8, 0, 0],
-    cursor: { sync: { key: "ph" }, drag: { x: false, y: false, setScale: false }, y: false, points: { show: false } },
+    cursor: { sync: { key: "ph" }, drag: { x: false, y: false, setScale: false }, y: false, points: { size: 9, width: 2, fill: () => C.panel } },
   });
   const xAxis = (labels) => ({
     stroke: C.dim, font: axisFont, grid: { stroke: C.grid, width: 1 }, ticks: { show: false },
@@ -549,13 +549,12 @@ function makeCharts() {
     hline(u, "a1", 0.5, blend(C.bad, C.panel, 0.45), true);
   };
   const readout = (u) => {
-    const i = u.cursor.idx, out = $("readout");
-    if (i == null || u.cursor.left < 0) { out.textContent = ""; return; }
+    const i = u.cursor.idx;
+    if (i == null || u.cursor.left < 0) { uTip(u, null); return; }
     const t = G.x[i], rr = nearest(B.x, B.rr, t, 3), a1 = nearest(B.x, B.ag, t, 8) ?? nearest(B.x, B.ab, t, 8);
     const hr = hrLine()[i];
-    out.innerHTML = `${clockOf(t, true)} &nbsp; <b>${fmt(G.pa[i])}</b> W` +
-      (hr != null ? ` &nbsp; <b>${fmt(hr)}</b> bpm` : "") + (rr != null ? ` &nbsp; RR <b>${fmt(rr)}</b> ms` : "") +
-      (a1 != null ? ` &nbsp; α1 <b>${a1.toFixed(2)}</b>` : "");
+    uTip(u, tipHtml(clockOf(t, true), [["power", fmt(G.pa[i]), "W", C.power], hr != null && ["heart rate", fmt(hr), "bpm", C.hr],
+      rr != null && ["RR", fmt(rr), "ms", C.rr], a1 != null && ["α1", a1.toFixed(2), "", C.a1]]));
   };
   const elP = $("c-power"), elB = $("c-beats");
   plots.power = new uPlot({
@@ -740,6 +739,74 @@ async function act(name, arg) {
 // Theme, graph span and the power tile's mode live in the app's settings.json (the page's own
 // storage is lost: the app's port changes every run). The first snapshot brings them; after that
 // the page is in charge and sends every change.
+// ---- hovering, the same on every chart -----------------------------------------------------------
+// Canvas charts: marks [{x, y, html, id?}] in CSS pixels. The pointer snaps to the nearest mark in x
+// (anywhere over the chart's height), every mark at that x shows: a guide line, a ring on each, and
+// one box beside them with the values. A mark with an id opens that ride on click.
+function placeTip(tip, box, x, y) {
+  const w = tip.offsetWidth, h = tip.offsetHeight, W = box.clientWidth;
+  let left = x + 14;
+  if (left + w > W - 4) left = x - 14 - w;                    // no room on the right: the left side
+  tip.style.left = Math.max(4, left) + "px";
+  tip.style.top = Math.max(0, Math.min(y - h / 2, box.clientHeight - h)) + "px";
+}
+// a tooltip's content: a title, then one row per value [label, value, unit, colour]
+function tipHtml(title, rows) {
+  return `<div class="tt">${title}</div>` + rows.filter((r) => r && r[1] != null && (r[1] !== "" || r[0])).map(([l, v, u, c]) =>
+    `<div class="tr">${c ? `<i style="background:${c}"></i>` : "<i></i>"}<span>${l}</span><b>${v}</b><em>${u || ""}</em></div>`).join("");
+}
+function chartTips(cv, getMarks, opts = {}) {
+  if (cv._tips) return;
+  cv._tips = true;
+  const wrap = cv.parentElement;
+  if (getComputedStyle(wrap).position === "static") wrap.style.position = "relative";
+  const tip = document.createElement("div"), guide = document.createElement("div"), rings = document.createElement("div");
+  tip.className = "ctip"; guide.className = "cguide"; rings.className = "crings";
+  tip.hidden = guide.hidden = rings.hidden = true;
+  wrap.append(guide, rings, tip);
+  const maxDx = opts.maxDx ?? 36;
+  const pick = (ev) => {
+    const r = cv.getBoundingClientRect(), mx = ev.clientX - r.left, my = ev.clientY - r.top;
+    let best = null, bd = maxDx;
+    for (const m of getMarks()) { const d = Math.abs(m.x - mx); if (d < bd || (d === bd && best && Math.abs(m.y - my) < Math.abs(best.y - my))) { bd = d; best = m; } }
+    if (!best) return null;
+    const at = getMarks().filter((m) => Math.abs(m.x - best.x) <= 2);
+    at.sort((a, b) => a.y - b.y);
+    return { at, x: best.x, my, ox: cv.offsetLeft, oy: cv.offsetTop, h: cv.clientHeight };
+  };
+  const hide = () => { tip.hidden = guide.hidden = rings.hidden = true; cv.style.cursor = ""; };
+  cv.addEventListener("mousemove", (ev) => {
+    const p = pick(ev);
+    if (!p) { hide(); return; }
+    const html = [...new Set(p.at.map((m) => m.html))].join('<hr>');
+    tip.innerHTML = html; tip.hidden = false;
+    guide.hidden = false; guide.style.left = p.ox + p.x + "px"; guide.style.top = p.oy + "px"; guide.style.height = p.h + "px";
+    rings.hidden = false;
+    rings.innerHTML = p.at.map((m) => `<i style="left:${p.ox + m.x}px;top:${p.oy + m.y}px"></i>`).join("");
+    placeTip(tip, wrap, p.ox + p.x, p.oy + (p.at.length === 1 ? p.at[0].y : p.my));
+    cv.style.cursor = p.at.some((m) => m.id) ? "pointer" : "";
+  });
+  cv.addEventListener("mouseleave", hide);
+  cv.addEventListener("click", (ev) => { const p = pick(ev), m = p && p.at.find((x) => x.id); if (m) act("open", m.id); });
+}
+// a chart's marks, kept on the canvas: drawing code fills them, the hover reads them
+function marksOf(cv) {
+  if (!cv._marks) { cv._marks = []; chartTips(cv, () => cv._marks); }
+  cv._marks.length = 0;
+  return cv._marks;
+}
+// uPlot charts: the same box beside the cursor (uPlot draws the guide line); shown only on the chart
+// the pointer is over, so two charts sharing a cursor don't both pop up
+function uTip(u, html) {
+  let tip = u._tip;
+  if (!tip) { tip = u._tip = document.createElement("div"); tip.className = "ctip"; u.over.append(tip); }
+  const on = html && u.cursor.left >= 0 && u.over.matches(":hover");
+  tip.hidden = !on;
+  if (!on) return;
+  tip.innerHTML = html;
+  placeTip(tip, u.over, u.cursor.left, u.cursor.top);
+}
+
 function savePref(key, value) {
   store.set(key, value);
   act("prefs", { [key]: value });

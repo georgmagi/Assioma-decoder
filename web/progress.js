@@ -88,10 +88,10 @@ function makePmc(p) {
     return [first, Math.max(last, first + 14 * 86400)];
   };
   const readout = (u) => {
-    const i = u.cursor.idx, out = $("pmc-readout");
-    if (i == null || u.cursor.left < 0) { out.textContent = ""; return; }
-    out.innerHTML = `${SHORT_DAY.format(dayOf(p.days[i]))} &nbsp; fitness <b>${fmt(p.ctl[i])}</b> &nbsp; fatigue <b>${fmt(p.atl[i])}</b>` +
-      ` &nbsp; form <b>${p.tsb[i] > 0 ? "+" : ""}${fmt(p.tsb[i])}</b> &nbsp; TSS <b>${fmt(p.tss[i])}</b>`;
+    const i = u.cursor.idx;
+    if (i == null || u.cursor.left < 0) { uTip(u, null); return; }
+    uTip(u, tipHtml(SHORT_DAY.format(dayOf(p.days[i])), [["fitness", fmt(p.ctl[i]), "", C.power], ["fatigue", fmt(p.atl[i]), "", C.hr],
+      ["form", `${p.tsb[i] > 0 ? "+" : ""}${fmt(p.tsb[i])}`, "", p.tsb[i] >= 0 ? C.good : C.warn], ["ridden", p.tss[i] ? fmt(p.tss[i]) : "–", p.tss[i] ? "TSS" : ""]]));
   };
   const zero = (u) => {                                           // form's zero line
     const y = Math.round(u.valToPos(0, "form", true)) + 0.5;
@@ -100,7 +100,7 @@ function makePmc(p) {
   };
   PROG.plots.pmc = new uPlot({
     width: el.clientWidth, height: el.clientHeight, legend: { show: false }, padding: [24, 8, 0, 0],
-    cursor: { drag: { x: false, y: false, setScale: false }, y: false, points: { show: false } },
+    cursor: { drag: { x: false, y: false, setScale: false }, y: false, points: { size: 9, width: 2, fill: () => C.panel } },
     scales: { x: { time: true, range }, load: { range: () => [-0.55 * loadMax, loadMax] },
               form: { range: () => [-formAbs, 3 * formAbs] } },
     axes: [
@@ -178,15 +178,15 @@ function makeWeekly(weeks) {
   const x = weeks.map((w) => dayOf(w.start).getTime() / 1000), y = weeks.map((w) => conv(w[PROG.metric]));
   const axisFont = "12px Barlow, 'IBM Plex Sans', sans-serif";
   const readout = (u) => {
-    const i = u.cursor.idx, out = $("wk-readout");
-    if (i == null || u.cursor.left < 0) { out.textContent = ""; return; }
+    const i = u.cursor.idx;
+    if (i == null || u.cursor.left < 0) { uTip(u, null); return; }
     const w = weeks[i];
-    out.innerHTML = `week of ${SHORT_DAY.format(dayOf(w.start))} &nbsp; <b>${w.rides}</b> ${w.rides === 1 ? "ride" : "rides"} &nbsp; <b>${hm(w.time_s)}</b>` +
-      ` &nbsp; <b>${fmt(w.tss)}</b> TSS &nbsp; <b>${fmt(w.work_kj)}</b> kJ`;
+    uTip(u, tipHtml(`Week of ${SHORT_DAY.format(dayOf(w.start))}`, [["rides", w.rides], ["time", hm(w.time_s)],
+      ["load", fmt(w.tss), "TSS"], ["work", fmt(w.work_kj), "kJ"]]));
   };
   PROG.plots.wk = new uPlot({
     width: el.clientWidth, height: el.clientHeight, legend: { show: false }, padding: [12, 8, 0, 0],
-    cursor: { drag: { x: false, y: false, setScale: false }, y: false, points: { show: false } },
+    cursor: { drag: { x: false, y: false, setScale: false }, y: false, points: { size: 9, width: 2, fill: () => C.panel } },
     scales: { x: { time: true, range: () => [x[0] - 3.5 * 86400, x[x.length - 1] + 3.5 * 86400] },
               y: { range: () => [0, Math.max(unit === "h" ? 1 : 50, ...y) * 1.15] } },
     axes: [
@@ -251,32 +251,6 @@ function laneChart(cv, height, lanes, t0, t1, opts = {}) {
   return { ctx, X, lanes, ml, W };
 }
 const niceRange = (vals, step, pad) => [Math.floor((Math.min(...vals) - pad) / step) * step, Math.ceil((Math.max(...vals) + pad) / step) * step];
-
-// hover details and click-to-open; marks = [{x, y, html, id}] kept on the chart's own object
-function chartTips(cv, getMarks) {
-  const wrap = cv.parentElement;
-  wrap.style.position = "relative";
-  const tip = document.createElement("div");
-  tip.className = "ctip"; tip.hidden = true;
-  wrap.append(tip);
-  const hit = (ev) => {
-    const r = cv.getBoundingClientRect(), mx = ev.clientX - r.left, my = ev.clientY - r.top;
-    let best = null, bd = 12;
-    for (const m of getMarks()) { const d = Math.hypot(m.x - mx, m.y - my); if (d < bd) { bd = d; best = m; } }
-    return best;
-  };
-  cv.addEventListener("mousemove", (ev) => {
-    const m = hit(ev);
-    cv.style.cursor = m && m.id ? "pointer" : "";
-    tip.hidden = !m;
-    if (!m) return;
-    tip.innerHTML = m.html;
-    const left = Math.min(Math.max(4, m.x + 12), wrap.clientWidth - tip.offsetWidth - 4);
-    tip.style.left = left + "px"; tip.style.top = Math.max(0, m.y - tip.offsetHeight - 8) + "px";
-  });
-  cv.addEventListener("mouseleave", () => { tip.hidden = true; });
-  cv.addEventListener("click", (ev) => { const m = hit(ev); if (m && m.id) act("open", m.id); });
-}
 
 // ---- thresholds over time (vt1.py): VT1 (alpha 1 = 0.75) and VT2 (0.5, near FTP) of every ride, a
 // heart-rate lane over a power lane. Dots / squares with 80 % intervals where a ride crossed; open
@@ -610,6 +584,14 @@ function drawGoal() {
   }
   ctx.fillStyle = lcd ? C.fg : C.warn;                                                           // eFTP
   for (const [d, v] of g.eftp) { ctx.beginPath(); ctx.arc(X(dayOf(d).getTime() + 43200e3), L.Y(v), 3, 0, 2 * Math.PI); ctx.fill(); }
+  // hovering: each day with an eFTP, and each FTP change, in W/kg and watts
+  const MK = marksOf($("goal-chart"));
+  for (const [d, v, m] of g.eftp) MK.push({ x: X(dayOf(d).getTime() + 43200e3), y: L.Y(v), html: tipHtml(SHORT_DAY.format(dayOf(d)),
+    [["eFTP", v.toFixed(2), "W/kg", C.warn], ["", fmt(v * g.kg), "W"], ["from", m === "ramp" ? "ramp test" : m === "hrvt2" ? "HRV threshold" : "best efforts"]]) });
+  for (const [d, v] of g.ftp_steps) MK.push({ x: X(dayOf(d).getTime()), y: L.Y(v), html: tipHtml(`FTP from ${SHORT_DAY.format(dayOf(d))}`,
+    [["FTP", v.toFixed(2), "W/kg", C.power], ["", fmt(v * g.kg), "W"]]) });
+  if (g.goal_date) MK.push({ x: X(dayOf(g.goal_date).getTime()), y: L.Y(g.goal_wkg), html: tipHtml(`Goal, ${SHORT_DAY.format(dayOf(g.goal_date))}`,
+    [["", g.goal_wkg.toFixed(1), "W/kg", C.good], ["", fmt(g.target_w), "W"], g.need_w_week > 0 && ["needs", `+${g.need_w_week.toFixed(1)}`, "W/week"]]) });
   if (g.goal_date) {
     ctx.fillStyle = C.dim; ctx.textAlign = "right"; ctx.font = "11px Barlow, 'IBM Plex Sans', sans-serif";
     ctx.fillText(`${g.goal_wkg.toFixed(1)} W/kg by ${day(g.goal_date)}`, X(dayOf(g.goal_date).getTime()), L.Y(g.goal_wkg) - 6);

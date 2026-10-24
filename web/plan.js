@@ -83,8 +83,11 @@ function drawPlanChart(d) {
   line(L2, join(), joinV("tsb"), cTsb, 2, [6, 4]);
   PLC.marks = days.map((dd, i) => {
     const ctl = all("ctl")[i], atl = all("atl")[i], tsb = all("tsb")[i], planned = i >= A.days.length;
-    return { x: x(dd), y: L1.Y(ctl), html: `<b>${SHORT_DAY.format(dayOf(dd))}</b>${planned ? " (plan)" : ""}<br>fitness ${fmt(ctl)} · fatigue ${fmt(atl)}<br>form ${tsb > 0 ? "+" : ""}${fmt(tsb)}` +
-      (planned ? `<br>${fmt(fc.tss[i - A.days.length])} TSS planned` : "") };
+    const pd = planned ? d.days.find((y) => y.day === dd) : null;
+    return { x: x(dd), y: L1.Y(ctl), html: tipHtml(`${SHORT_DAY.format(dayOf(dd))}${planned ? ' <span class="dim">· plan</span>' : ""}`, [
+      ["fitness", fmt(ctl), "", cCtl], ["fatigue", fmt(atl), "", cAtl], ["form", `${tsb > 0 ? "+" : ""}${fmt(tsb)}`, "", cTsb],
+      planned && ["planned", pd && pd.name ? esc(pd.name) : fc.tss[i - A.days.length] ? "" : "rest", ""],
+      planned && fc.tss[i - A.days.length] > 0 && ["", fmt(fc.tss[i - A.days.length]), "TSS"]]) };
   });
 }
 
