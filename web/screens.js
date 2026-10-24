@@ -112,7 +112,17 @@ async function loadMorning(s) {
     recent && ovStat("RMSSD", last.rmssd.toFixed(0), "ms"),
     recent && ovStat("7-day ln RMSSD", last.ln7.toFixed(2), last.lo != null ? `normal ${last.lo.toFixed(2)}–${last.hi.toFixed(2)}` : ""),
   ].filter(Boolean).join("");
-  $("mc-note").hidden = true;                                       // the chart speaks for itself
+  // the ECG's word on the beats the filter left out (morning.py, ecg_beats.py)
+  const o = last && last.odd, n = (k, one, many) => `${k} ${k === 1 ? one : many}`;
+  const odd = !last ? "" : !o ? (last.artifact_pct ? `${fmt(last.artifact_pct, 1)}% of beats left out. ` : "")
+    : o.early.length ? `ECG: ${n(o.early.length, "early beat", "early beats")} (${o.early.map((e) => `${fmt(e.short)} ms then ${fmt(e.long)} ms`).join(", ")}), left out of RMSSD` +
+      `${o.mistimed ? `; ${n(o.mistimed, "strap error", "strap errors")}` : ""}. Single early beats are common; symptoms are for a doctor. `
+    : o.checked ? `ECG: no early beats.${o.real ? ` ${n(o.real, "long or quick beat was", "long or quick beats were")} real and counted.` : ""}` +
+      `${o.mistimed ? ` ${n(o.mistimed, "strap error", "strap errors")} left out.` : ""}${o.unclear ? ` ${o.unclear} too noisy to tell, left out.` : ""} `
+    : "ECG: every beat clean. ";
+  $("mc-note").textContent = ns.length || days.length
+    ? "Resting heart rate each morning: lowest 30 min asleep (watch), or your strap check. Shaded = your normal; 5+ bpm over it = not recovered."
+      + (recent ? " " + odd.trim() : "") : "";
   drawMorning(m);
 }
 function drawMorning(m) {
