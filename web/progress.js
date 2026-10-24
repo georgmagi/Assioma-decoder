@@ -217,7 +217,7 @@ for (const b of $("wk-metric").querySelectorAll("button")) {
 
 // ---- charts over time with lanes: one date axis, a lane per measure (each with its own scale and
 // gridlines, stacked, never two scales on one plot), hover details and click-to-open on every mark
-function laneChart(cv, height, lanes, t0, t1) {
+function laneChart(cv, height, lanes, t0, t1, opts = {}) {
   const dpr = devicePixelRatio || 1, wd = cv.parentElement.clientWidth;
   if (!wd) return null;
   cv.style.width = wd + "px"; cv.style.height = height + "px";
@@ -225,7 +225,7 @@ function laneChart(cv, height, lanes, t0, t1) {
   const ctx = cv.getContext("2d");
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, wd, height);
-  const ml = 46, mr = 14, mt = 8, mb = 22, gap = 30, W = wd - ml - mr;
+  const ml = 46, mr = opts.mr ?? 14, mt = 8, mb = 22, gap = 30, W = wd - ml - mr;   // opts.mr: room for a right scale
   const total = height - mt - mb - gap * (lanes.length - 1), wsum = lanes.reduce((a, l) => a + l.weight, 0);
   const X = (t) => ml + ((t - t0) / (t1 + 86400e3 - t0)) * W;
   ctx.font = "11px Bahnschrift, 'Segoe UI', sans-serif";

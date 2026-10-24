@@ -120,7 +120,9 @@ async function loadMorning(s) {
     : o.checked ? `ECG: no early beats.${o.real ? ` ${n(o.real, "long or quick beat was", "long or quick beats were")} real and counted.` : ""}` +
       `${o.mistimed ? ` ${n(o.mistimed, "strap error", "strap errors")} left out.` : ""}${o.unclear ? ` ${o.unclear} too noisy to tell, left out.` : ""} `
     : "ECG: every beat clean. ";
-  $("mc-note").textContent = (ns.length ? "Asleep: the watch's lowest 30 minutes of heart rate each night (Garmin; daytime readings aren't kept). 5+ bpm over your normal = not recovered. " : "")
+  $("mc-note").textContent = (ns.length || days.length ? "Left scale, bpm: line = asleep, lowest 30 min (dashed: its normal); rings = strap check. "
+      + (days.length ? "Right scale: squares = ln RMSSD, dashed = its 7-day mean, band = its normal. " : "") : "")
+    + (ns.length ? "Asleep: the watch's lowest 30 minutes of heart rate each night (Garmin; daytime readings aren't kept). 5+ bpm over your normal = not recovered. " : "")
     + (days.length ? odd + "ln RMSSD (strap check): higher means more recovered; the band is your normal, after 7 checks." : "");
   drawMorning(m);
 }
@@ -136,17 +138,32 @@ function drawMorning(m) {
   const t1 = endT, t0 = Math.min(...[...days, ...ns].map((d) => dayOf(d.date).getTime()), t1 - 13 * 86400e3);
   const hv = [...days.map((d) => d.hr), ...ns.flatMap((n) => [n.low30, n.base].filter((x) => x != null))];
   const [h0, h1] = niceRange(hv, 5, 2);
-  const lanes = [];
+  // one chart: heart rate on the left scale (the watch's nights as a line, the strap's checks as
+  // rings), the strap's ln RMSSD on the right scale (dots, its 7-day mean and the normal band)
+  const ch = laneChart(cv, 200, [{ label: "", weight: 1, y0: h0, y1: h1, step: h1 - h0 > 20 ? 10 : 5, fmt: (v) => `${Math.round(v)}` }],
+                       t0, t1, { mr: days.length ? 40 : 14 });
+  if (!ch) return;
+  const { ctx, X } = ch, L2 = ch.lanes[0];
+  let L1 = null;
   if (days.length) {
     const lv = days.flatMap((d) => [d.ln_rmssd, d.lo, d.hi].filter((x) => x != null)), [l0, l1] = niceRange(lv, 0.25, 0.1);
-    lanes.push({ label: "ln RMSSD (strap)", weight: 1.1, y0: l0, y1: l1, step: l1 - l0 > 1.5 ? 0.5 : 0.25, fmt: (v) => v.toFixed(2) });
+    L1 = { Y: (v) => L2.top + L2.h - ((v - l0) / (l1 - l0)) * L2.h };
+    ctx.font = "11px Bahnschrift, 'Segoe UI', sans-serif"; ctx.textAlign = "left";       // its scale, on the right
+    ctx.fillStyle = lcd ? C.fg : C.rr;
+    const st = l1 - l0 > 1.5 ? 0.5 : 0.25;
+    for (let v = Math.ceil(l0 / st) * st; v <= l1 + 1e-9; v += st) ctx.fillText(v.toFixed(2), ch.ml + ch.W + 6, L1.Y(v) + 4);
   }
-  lanes.push({ label: ns.length ? "asleep, lowest 30 min (line) · strap check (rings), bpm" : "resting HR, bpm", weight: days.length ? 1.4 : 1,
-               y0: h0, y1: h1, step: h1 - h0 > 20 ? 10 : 5, fmt: (v) => `${Math.round(v)}` });
-  const ch = laneChart(cv, days.length ? 220 : 130, lanes, t0, t1);
-  if (!ch) return;
-  const { ctx, X } = ch, L2 = ch.lanes[ch.lanes.length - 1], L1 = days.length ? ch.lanes[0] : null;
   const mid = (d) => X(dayOf(d.date).getTime() + 43200e3);
+  if (L1) {                                                          // the HRV normal, under everything
+    const band = days.filter((d) => d.lo != null);                     // the normal range
+    if (band.length) {
+      ctx.fillStyle = blend(lcd ? C.fg : C.good, C.panel, 0.85);
+      ctx.beginPath();
+      band.forEach((d, i) => (i ? ctx.lineTo(mid(d), L1.Y(d.hi)) : ctx.moveTo(mid(d), L1.Y(d.hi))));
+      for (const d of [...band].reverse()) ctx.lineTo(mid(d), L1.Y(d.lo));
+      ctx.closePath(); ctx.fill();
+    }
+  }
   if (ns.length) {                                                   // the nights: normal (dashed) and lowest 30 min
     const nb = ns.filter((n) => n.base != null);
     ctx.setLineDash([3, 3]); ctx.strokeStyle = blend(lcd ? C.fg : C.hr, C.panel, 0.45); ctx.lineWidth = 1.2; ctx.beginPath();
@@ -159,23 +176,16 @@ function drawMorning(m) {
     }
   }
   if (!days.length) return;
-  const band = days.filter((d) => d.lo != null);                     // the normal range
-  if (band.length) {
-    ctx.fillStyle = blend(lcd ? C.fg : C.good, C.panel, 0.85);
-    ctx.beginPath();
-    band.forEach((d, i) => (i ? ctx.lineTo(mid(d), L1.Y(d.hi)) : ctx.moveTo(mid(d), L1.Y(d.hi))));
-    for (const d of [...band].reverse()) ctx.lineTo(mid(d), L1.Y(d.lo));
-    ctx.closePath(); ctx.fill();
-  }
   const line = (lane, key, colour, width) => {
     ctx.strokeStyle = colour; ctx.lineWidth = width; ctx.beginPath();
     days.forEach((d, i) => (i ? ctx.lineTo(mid(d), lane.Y(d[key])) : ctx.moveTo(mid(d), lane.Y(d[key]))));
     ctx.stroke();
   };
-  line(L1, "ln7", lcd ? C.fg : blend(C.fg, C.panel, 0.3), 2);        // the 7-day mean
-  for (const d of days) {
-    ctx.beginPath(); ctx.arc(mid(d), L1.Y(d.ln_rmssd), 3.5, 0, 2 * Math.PI);
-    ctx.fillStyle = lcd ? C.fg : C.rr; ctx.fill();
+  ctx.setLineDash([6, 4]);
+  line(L1, "ln7", lcd ? C.fg : C.rr, 1.5);                            // the 7-day mean: dashed, apart from the nights' line
+  ctx.setLineDash([]);
+  for (const d of days) {                                            // each check's ln RMSSD: squares
+    ctx.fillStyle = lcd ? C.fg : C.rr; ctx.fillRect(mid(d) - 3.5, L1.Y(d.ln_rmssd) - 3.5, 7, 7);
   }
   for (const d of days) {                                            // the strap's resting HR: open rings
     ctx.beginPath(); ctx.arc(mid(d), L2.Y(d.hr), 3.5, 0, 2 * Math.PI);
