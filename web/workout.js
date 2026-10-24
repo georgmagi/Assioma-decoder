@@ -182,7 +182,9 @@ function renderWorkout(s) {
   const tr = w.trainer;
   $("wo-trainer").textContent = !s.settings.trainer ? "trainer not used"
     : !tr ? "" : tr.error ? tr.error
-    : tr.controlled ? (w.erg && tgt != null ? (w.ceiling && w.cap < 1 ? `held under VT1: ${fmt(tgt * w.cap)} W` : "trainer holding") : "trainer flat")
+    : tr.controlled ? (w.erg && tgt != null ? (w.ceiling && w.cap < 1 ? `held under VT1: ${fmt(tgt * w.cap)} W` : "trainer holding")
+                      + (w.pm != null && Math.abs(w.pm - 1) >= 0.005 ? ` · power match ${w.pm > 1 ? "+" : "−"}${(Math.abs(w.pm - 1) * 100).toFixed(1)}%` : w.pm != null ? " · power match" : "")
+                      : "trainer flat")
     : "waiting for the trainer…";
   $("wo-trainer").classList.toggle("warn", !!(tr && tr.error) || (s.settings.trainer && tr && !tr.controlled));
   drawProfile($("wo-profile"), w.steps, { at: w.t, ftpLine: true, fill: true, watts: w.ftp * w.intensity });

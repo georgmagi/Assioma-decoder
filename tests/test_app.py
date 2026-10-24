@@ -695,3 +695,40 @@ def test_weight_and_goal_settings_are_checked_and_weight_is_kept_by_day(tmp_path
     assert e.settings["weight_kg"] == 73 and e.settings["goal_wkg"] == 4.0 and e.settings["goal_date"] == "2027-06-01"
     e._settings({"goal_date": None})
     assert e.settings["goal_date"] is None
+
+
+def test_power_match_learns_the_trainer_to_pedal_ratio_and_steers_by_the_pedals(tmp_path):
+    e = _engine(tmp_path)                                    # FTP 200
+    e.worker.trainer = _Trainer()
+    e._do("workout", "endurance-60")
+    s = _ride(e, 0)
+    s.t0 = app.utcnow()
+    _pedal(s, 3)
+    e._drive_trainer()
+    target = e.worker.trainer.want[1]
+    assert e.pm_k == 1.0                                     # nothing learnt yet: asked for the target
+    # the trainer reads 4 % above the pedals: after settling it learns, slowly, and keeps it
+    t0, e._pm_tgt = 1000.0, None                            # (a clock of the test's own)
+    for k in range(200):
+        e._power_match(target, 150.0, 156.0, t0 + k)
+    assert 1.02 < e.pm_k <= 1.04
+    for k in range(200, 900):
+        e._power_match(target, 150.0, 156.0, t0 + k)
+    assert e.pm_k == pytest.approx(1.04, abs=0.002)
+    assert e.settings["power_match_k"] == pytest.approx(e.pm_k, abs=0.005)
+    # a sprint or a dropout window: ignored
+    before = e.pm_k
+    for k in range(900, 1000):
+        e._power_match(target, 150.0, 240.0, t0 + k)
+    assert e.pm_k == before
+    # a new target: waits PM_SETTLE_S before using samples
+    e._power_match(target + 50, 200.0, 300.0, 3000.0)
+    e._power_match(target + 50, 200.0, 300.0, 3005.0)
+    assert e._pm == []
+    # the trainer is asked for target × k, so the pedals read the target
+    e._pm_tgt = None
+    e._drive_trainer()
+    assert e.worker.trainer.want[1] == pytest.approx(target * e.pm_k)
+    e.settings["power_match"] = False                        # off: the trainer's own reading
+    e._drive_trainer()
+    assert e.worker.trainer.want[1] == pytest.approx(target)

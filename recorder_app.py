@@ -76,7 +76,8 @@ SETTINGS_DEFAULTS = {"ftp": None, "max_hr": None, "vt1_hr": None, "room_temp": N
                      "power3s": False, "hr_lock": None, "autopause": True, "fuel_g_h": 60, "layout": "auto",
                      "ftp_history": None,     # [[from_day, ftp], ...]: each FTP change, so past rides keep theirs
                      "weight_kg": None, "weight_history": None,    # [[from_day, kg], ...]: W/kg on each day
-                     "goal_wkg": 4.0, "goal_date": None}           # the goal (training.goal)
+                     "goal_wkg": 4.0, "goal_date": None,           # the goal (training.goal)
+                     "power_match": True, "power_match_k": None}   # ERG by the pedals (Engine._power_match)
 PREFS = {"theme": ("dark", "lcd"), "layout": ("auto", "intervals", "z2", "free"), "span": (300, 1800, 0), "power3s": (True, False)}
 
 
@@ -159,6 +160,9 @@ class Engine(threading.Thread):
         # the VT1 ceiling (a toggle on the ride screen): ERG targets trimmed while you're above VT1
         self.ceiling = False
         self.cap, self._cap_t = 1.0, 0.0     # the share of the target allowed, when it last changed
+        self.pm_k = float(self.settings.get("power_match_k") or 1.0)   # power match (_power_match)
+        self._pm, self._pm_tgt, self._pm_last = [], None, 0.0
+        self.trainer_log: list = []          # [ride s, trainer's W, W asked of it] every 5 s in ERG
         self._wo_meta: Optional[dict] = None
         self.error = ""
         self.pedal_since = None
@@ -677,7 +681,14 @@ class Engine(threading.Thread):
                 tr.want = ("sim", 0.0)           # (paused or not pedalling: no ERG wall to restart against)
             else:
                 self._update_cap(s)
-                tr.want = ("erg", a["target_w"] * self.cap)
+                target = a["target_w"] * self.cap
+                pm = self.settings.get("power_match", True)
+                if pm:
+                    self._power_match(target, self._power_3s(utcnow()), self._trainer_w(), time.monotonic())
+                tr.want = ("erg", target * (self.pm_k if pm else 1.0))
+                n, tw = len(s.seconds), self._trainer_w()
+                if tw is not None and (not self.trainer_log or n - self.trainer_log[-1][0] >= 5):
+                    self.trainer_log.append([n, round(tw), round(tr.want[1])])   # both meters, kept with the ride
         elif tr.want is not None and tr.want[0] == "erg":
             tr.want = ("sim", 0.0)                       # never leave it holding a workout's watts
 
@@ -723,7 +734,45 @@ class Engine(threading.Thread):
 
     def _trainer_w(self) -> Optional[float]:
         tr = getattr(self.worker, "trainer", None)
-        return tr.power_w if tr is not None and time.monotonic() - tr.data_at < 3 else None
+        return tr.power_w if tr is not None and time.monotonic() - getattr(tr, "data_at", 0.0) < 3 else None
+
+    # Power match (as Zwift, TrainerRoad and Wahoo do): ERG holds the target by the pedals, not by the
+    # trainer's own reading. pm_k = trainer W / pedal W, learnt in steady ERG; the trainer is asked
+    # for target * pm_k, so the pedals read the target. The ratio between the two meters doesn't
+    # depend on what the trainer is asked, so the loop can't run away; it moves slowly anyway.
+    PM_SETTLE_S = 15.0       # after a target change: both meters steady again
+    PM_WIN_S = 60.0          # the window the ratio comes from
+    PM_EVERY_S = 10.0        # how often the ratio is updated
+    PM_GAIN = 0.25           # the share of the new ratio taken each update
+    PM_SANE = (0.80, 1.20)   # a reading's (or window's) ratio outside this: a dropout or a surge, not the meters
+    PM_LIMITS = (0.85, 1.15)
+    PM_MIN_W = 60.0
+
+    def _power_match(self, target: float, pedal_w: Optional[float], trainer_w: Optional[float], t: float) -> None:
+        if self._pm_tgt is None or abs(target - self._pm_tgt[0]) > 2:
+            self._pm_tgt, self._pm = (target, t), []         # a new target: wait for both to settle
+            return
+        if t - self._pm_tgt[1] < self.PM_SETTLE_S or not pedal_w or not trainer_w or pedal_w < self.PM_MIN_W:
+            return
+        if not self.PM_SANE[0] <= trainer_w / pedal_w <= self.PM_SANE[1]:
+            return                                           # a dropout or a surge on one meter: not the meters' ratio
+        self._pm.append((t, pedal_w, trainer_w))
+        self._pm = [x for x in self._pm if t - x[0] <= self.PM_WIN_S]
+        if t - self._pm_last < self.PM_EVERY_S or len(self._pm) < 20 or t - self._pm[0][0] < 0.6 * self.PM_WIN_S:
+            return
+        self._pm_last = t
+        k_new = sum(x[2] for x in self._pm) / sum(x[1] for x in self._pm)
+        if not self.PM_SANE[0] <= k_new <= self.PM_SANE[1]:
+            return
+        lo, hi = self.PM_LIMITS
+        k = round(min(hi, max(lo, self.pm_k + self.PM_GAIN * (k_new - self.pm_k))), 4)
+        if abs(k - self.pm_k) >= 0.0005:
+            self.pm_k = k
+            if abs(k - (self.settings.get("power_match_k") or 1.0)) >= 0.005:     # remembered for the next ride
+                self.settings["power_match_k"] = k
+                if self.settings_path:
+                    save_settings(self.settings_path, self.settings)
+                self.worker.log(f"power match: trainer asked for {k:.3f} × the target")
 
     def _workout_view(self, s) -> Optional[dict]:
         p = self.player
@@ -737,6 +786,7 @@ class Engine(threading.Thread):
                 "label": (a.get("step") or {}).get("label", ""), "target": a["target_w"],
                 "next": nxt and {"dur": nxt["dur"], "lo": nxt["lo"], "hi": nxt["hi"], "label": nxt["label"]},
                 "intensity": p.intensity, "erg": self.erg, "ftp": p.ftp, "ceiling": self.ceiling, "cap": self.cap,
+                "pm": self.pm_k if self.settings.get("power_match", True) else None,
                 "trainer": tr and {"controlled": tr.controlled, "error": tr.error, "power": tr.power_w}}
 
     def _meta(self, s: Session) -> None:
@@ -749,6 +799,10 @@ class Engine(threading.Thread):
                 m["hr_strap"] = {"name": status.split(": ", 1)[-1], "link": link}
         if self._wo_meta:
             m["workout"] = {**self._wo_meta, "log": self.step_log}
+            if self.settings.get("power_match", True) and self.pm_k != 1.0:
+                m["power_match_k"] = self.pm_k                     # ERG was asked for target × this
+        if self.trainer_log:
+            m["trainer"] = self.trainer_log                        # [ride s, trainer W, asked W]: the second meter
         if self.fuel_log:
             m["fuel"] = [list(x) for x in self.fuel_log]             # [[ride s, grams]]: what you ate, when
         try:
@@ -775,6 +829,7 @@ class Engine(threading.Thread):
         self._autopaused, self._still_since = False, None
         self._a1_low_since = None
         self.step_log, self._wo_meta = [], None
+        self.trainer_log, self._pm, self._pm_tgt = [], [], None
         self.cap, self._cap_t = 1.0, 0.0                 # (the ceiling toggle itself stays as you left it)
         self.player, self.workout_done, self.erg = None, False, True
         w = self.workouts().get(self.workout_id) if self.workout_id else None
@@ -1108,8 +1163,8 @@ class Engine(threading.Thread):
 
     def _log_target(self, now) -> None:
         """The workout's target each second, on the graphs' clock (s since the first notification):
-        the power chart draws it as a stepped line. What the trainer is asked for (intensity, VT1
-        cap included); None for a free-ride step or no workout."""
+        the power chart draws it as a stepped line. What the pedals should read (intensity, VT1 cap
+        included; power match asks the trainer for its own equivalent); None for a free-ride step or no workout."""
         s = self.session
         lt = getattr(s, "live_target", None)
         if lt is None or s.t0 is None or s.state != "recording":
