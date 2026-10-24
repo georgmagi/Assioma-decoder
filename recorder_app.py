@@ -72,9 +72,9 @@ PAGES = ("home", "plan", "workouts", "stats")   # the app's pages (top bar); plu
 # remembered from the page (its own browser storage is lost: the port changes every run)
 SETTINGS_DEFAULTS = {"ftp": None, "max_hr": None, "vt1_hr": None, "room_temp": None, "room_rh": None,
                      "plan_min": 60, "hr": True, "trainer": False, "theme": "dark", "span": 300,
-                     "power3s": False, "hr_lock": None, "autopause": True, "fuel_g_h": 60,
+                     "power3s": False, "hr_lock": None, "autopause": True, "fuel_g_h": 60, "layout": "auto",
                      "ftp_history": None}     # [[from_day, ftp], ...]: each FTP change, so past rides keep theirs
-PREFS = {"theme": ("dark", "lcd"), "span": (300, 1800, 0), "power3s": (True, False)}
+PREFS = {"theme": ("dark", "lcd"), "layout": ("auto", "intervals", "z2", "free"), "span": (300, 1800, 0), "power3s": (True, False)}
 
 
 def load_settings(path: str) -> dict:

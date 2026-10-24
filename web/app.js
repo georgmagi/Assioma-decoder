@@ -53,7 +53,8 @@ const S = {
   offset: null,                         // server clock (s since first data) minus performance.now()/1000
   span: store.get("span", 300),         // graph range in s; 0 = the whole ride
   dialogKey: null,
-  power3s: store.get("power3s", false),  // power tile: 3 s average instead of instantaneous
+  power3s: store.get("power3s", false),
+  layout: store.get("layout", "auto"),   // the ride screen: auto (from the workout), intervals, z2 or free  // power tile: 3 s average instead of instantaneous
 };
 const serverNow = () => (S.offset == null ? null : performance.now() / 1000 + S.offset);
 // the strap's raw streams (a Polar H10): ECG [s, uV] and accelerometer [s, x, y, z mG], the last
@@ -750,7 +751,22 @@ function syncPrefs(p) {
     for (const o of $("views").querySelectorAll("button")) o.classList.toggle("on", +o.dataset.span === S.span);
   }
   if (typeof p.power3s === "boolean" && p.power3s !== S.power3s) { S.power3s = p.power3s; showPowerMode(); }
+  if (LAYOUTS.includes(p.layout) && p.layout !== S.layout) { S.layout = p.layout; showLayoutChoice(); }
 }
+
+// the ride layout is yours to choose (bottom bar); Auto picks it from the workout (layoutKind)
+const LAYOUTS = ["auto", "intervals", "z2", "free"];
+function showLayoutChoice() {
+  for (const b of $("layouts").querySelectorAll("button")) b.classList.toggle("on", b.dataset.layout === S.layout);
+}
+for (const b of $("layouts").querySelectorAll("button")) {
+  b.addEventListener("click", () => {
+    b.blur();
+    S.layout = b.dataset.layout; savePref("layout", S.layout); showLayoutChoice();
+    if (S.snap?.screen === "ride" && S.snap.ride) { applyLayout(S.snap); renderGraph(); }
+  });
+}
+showLayoutChoice();
 
 // one screen at a time: home, ride or summary (the Python side decides)
 function showScreen(name) {
@@ -783,6 +799,12 @@ function layoutKind(w) {
   return top >= 0.8 ? "intervals" : top > 0 ? "z2" : "free";
 }
 
+function applyLayout(s) {
+  const kind = S.layout && S.layout !== "auto" ? S.layout : layoutKind(s.workout);
+  if ($("scr-ride").dataset.kind !== kind) $("scr-ride").dataset.kind = kind;
+  $("dyn-row").hidden = kind === "free";
+}
+
 function apply(s) {
   if (!s || !s.screen) return;
   if (s.pn != null) {
@@ -809,12 +831,11 @@ function apply(s) {
   renderMorningRun(s);
   if (!$("topnav").hidden) renderNavStart(s);
   renderFuel(s.screen === "ride" && s.ride ? s.ride.fuel : null);
+  $("layouts").hidden = s.screen !== "ride";
   if (s.screen === "ride" && s.ride) {
     renderTiles(s);
     renderWorkout(s);
-    const kind = layoutKind(s.workout);
-    if ($("scr-ride").dataset.kind !== kind) $("scr-ride").dataset.kind = kind;
-    $("dyn-row").hidden = kind === "free";
+    applyLayout(s);
     renderDyn(s);
     $("z2-key").hidden = !s.config.ftp || !!s.workout;
     $("tg-key").hidden = !s.workout;
