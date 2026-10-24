@@ -57,6 +57,7 @@ DYN_KEYS = ["rider_position"] + [f"{m}_{side}{unit}" for side in ("left", "right
             [("power", "_w"), ("te", "_pct"), ("ps", "_pct"), ("pco", "_mm"), ("pp", "_start_deg"),
              ("pp", "_peak_start_deg"), ("pp", "_peak_end_deg"), ("pp", "_end_deg")]]
 AUTOSTART_S = 3             # pedalling this long on the home screen starts a ride
+QUICK_S = 60                # a ride shorter than this is a test: Stop puts it in rides/discarded/ without asking
 REARM_S = 5                 # after a ride, auto-start waits until the pedals were still this long
 
 
@@ -274,6 +275,11 @@ class Engine(threading.Thread):
                 s.resume(now)
             elif name == "toggle" and self.dialog is None:
                 {"recording": s.pause, "paused": s.resume}.get(s.state, lambda _n: None)(now)
+            elif name == "stop" and len(s.seconds) < QUICK_S:   # a test ride: put aside, no questions
+                self._drain()
+                kept = s.discard()
+                self.worker.log(f"ride under {QUICK_S} s stopped: kept in {kept}" if kept else "ride stopped: nothing recorded")
+                self._leave_ride("home")
             elif name == "stop":
                 s.pause(now)                       # the clock stops while you decide
                 self.dialog = "finish"

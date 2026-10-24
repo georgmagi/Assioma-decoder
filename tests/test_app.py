@@ -37,6 +37,12 @@ class FakeWorker:
         pass
 
 
+@pytest.fixture(autouse=True)
+def _no_quick_stop(monkeypatch):
+    """The tests' rides are seconds long: Stop asks as for a real ride (QUICK_S has its own test)."""
+    monkeypatch.setattr(app, "QUICK_S", 0)
+
+
 def _engine(tmp_path, **settings):
     return app.Engine(str(tmp_path), {**app.SETTINGS_DEFAULTS, "ftp": 200, **settings}, FakeWorker)
 
@@ -563,3 +569,16 @@ def test_a_strap_you_dont_use_stays_off_when_the_sensors_wake(tmp_path):
     e.worker.state["pedal"] = "connected"
     e._sensor_tick(app.utcnow())
     assert e.awake and not e.worker.want["hr"] and not e.worker.want["trainer"]
+
+
+def test_stopping_a_ride_under_a_minute_asks_nothing_and_keeps_it_aside(tmp_path, monkeypatch):
+    monkeypatch.setattr(app, "QUICK_S", 60)
+    e = _engine(tmp_path)
+    s = _ride(e, 30)
+    e._do("stop")
+    assert e.screen == "home" and e.dialog is None and e.session is None
+    assert os.path.isfile(os.path.join(str(tmp_path), "discarded", os.path.basename(s.base) + "_per_second.csv"))
+    assert rs.ride_list(str(tmp_path), 200) == []
+    s = _ride(e, 60)                                             # a minute or more: asks as always
+    e._do("stop")
+    assert e.screen == "ride" and e.dialog == "finish"
