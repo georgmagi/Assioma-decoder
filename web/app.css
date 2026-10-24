@@ -1322,3 +1322,4 @@ body.page .bar .ride-ctl { display: none; }
 .pl-bhead .btn { padding: 5px 12px; font-size: 12.5px; }
 .pl-into { display: flex; align-items: center; gap: 8px; color: var(--dim); font-size: 13px; margin: 0 0 8px; }
 [data-theme="lcd"] .pl-block + .pl-block { border-top-color: rgba(27, 30, 25, 0.3); }
+.pl-blocks .pl-d { cursor: default; }

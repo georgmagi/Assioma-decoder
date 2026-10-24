@@ -1,5 +1,5 @@
-// The training plan (plan.py): a block of days with its fitness / fatigue / form forecast, the
-// calendar (click a day to change it), a pasted plan from Claude, and the status to give Claude.
+// The training plan (plan.py), to look at: the blocks with their fitness / fatigue / form forecast
+// and the calendar. The plan itself is written by the AI agent (plan.json), not by hand here.
 // Uses $, act, fmt, hms, C, THEME, blend, dayOf, isoOf, SHORT_DAY, hm, laneChart, chartTips,
 // niceRange, drawProfile, esc, formWord, store from the other files.
 "use strict";
@@ -16,9 +16,6 @@ async function showPlan(s) {
   PLAN.version = s.plan_version; PLAN.rides = s.data_key; PLAN.morning = s.morning_version;
   PLAN.loading = true;
   try { PLAN.data = await (await fetch("/api/plan")).json(); } catch { return; } finally { PLAN.loading = false; }
-  // the next block starts the day after the last one ends
-  const lastEnd = dayOf(PLAN.data.end);
-  $("pl-start").value = isoOf(new Date(lastEnd.getFullYear(), lastEnd.getMonth(), lastEnd.getDate() + 1));
   renderPlan();
 }
 
@@ -101,17 +98,16 @@ function entryText(e) {
 function renderPlanGrid(d) {
   const today = isoOf(new Date());
   const head = WEEKDAYS.map((w) => `<div class="pl-h">${w}</div>`).concat(`<div class="pl-h">Week</div>`).join("");
-  const many = d.blocks.length > 1;
   const html = d.blocks.map((blk) => {
     const cells = [];
     d.days.slice(blk.first, blk.first + blk.count).forEach((x, j) => {
       const dd = dayOf(x.day), isToday = x.day === today, past = x.day < today;
       const st = { done: `done ${fmt(x.done_tss)}`, missed: "missed", extra: `extra ${fmt(x.done_tss)}`, today: "today" }[x.status] || "";
-      cells.push(`<button class="pl-d${isToday ? " today" : ""}${past ? " past" : ""}${x.warn ? " warn" : ""}" data-day="${x.day}"${x.warn ? ` title="${esc(x.warn)}"` : ""}>` +
+      cells.push(`<div class="pl-d${isToday ? " today" : ""}${past ? " past" : ""}${x.warn ? " warn" : ""}" data-day="${x.day}"${x.warn ? ` title="${esc(x.warn)}"` : ""}>` +
         `<span class="dn">${dd.getDate()} ${SHORT_DAY.format(dd).split(" ")[1] || ""}</span>` +
         `<span class="nm${x.entry && x.entry.rest ? " rest" : ""}">${x.name ? esc(x.name) : x.entry && x.entry.rest ? "rest" : ""}</span>` +
         `${x.steps ? "<canvas></canvas>" : "<span></span>"}` +
-        `<span class="mt"><span>${x.minutes ? `${x.minutes} min` : ""}${x.tss != null ? ` · ${fmt(x.tss)}` : ""}</span><span class="st ${x.status}">${x.warn ? "⚠ " : ""}${st}</span></span></button>`);
+        `<span class="mt"><span>${x.minutes ? `${x.minutes} min` : ""}${x.tss != null ? ` · ${fmt(x.tss)}` : ""}</span><span class="st ${x.status}">${x.warn ? "⚠ " : ""}${st}</span></span></div>`);
       if (j % 7 === 6) {
         const w = blk.weeks[Math.floor(j / 7)], tot = w.split.easy + w.split.moderate + w.split.hard;
         const seg = (k, cls) => (w.split[k] ? `<i class="${cls}" style="flex:${w.split[k]}"></i>` : "");
@@ -124,7 +120,7 @@ function renderPlanGrid(d) {
     const bhead = `<div class="pl-bhead"><h2>Block ${blk.n}</h2>` +
       `<span class="sub">${SHORT_DAY.format(dayOf(blk.start))} – ${SHORT_DAY.format(dayOf(blk.end))} · ${blk.weeks_n} weeks${now ? " · now" : blk.start > today ? "" : " · done"}</span>` +
       `<span class="readout"><b>${hm(blk.minutes * 60)}</b> · <b>${fmt(blk.tss)}</b> TSS${blk.done_tss ? ` · done ${fmt(blk.done_tss)}` : ""}</span>` +
-      (many && last ? `<button class="btn pl-rm" title="Take this block off the calendar (its days are kept)">Remove</button>` : "") + `</div>`;
+      `</div>`;
     return `<div class="pl-block">${bhead}<div class="pl-grid">${head}${cells.join("")}</div></div>`;
   }).join("");
   const box = $("pl-grid");
@@ -133,63 +129,8 @@ function renderPlanGrid(d) {
     const x = d.days.find((y) => y.day === b.dataset.day);
     const cv = b.querySelector("canvas");
     if (cv && x.steps) drawProfile(cv, x.steps);
-    b.addEventListener("click", () => editDay(b, x));
   });
-  const rm = box.querySelector(".pl-rm");
-  if (rm) rm.addEventListener("click", (e) => {
-    const btn = e.currentTarget;
-    if (btn.dataset.sure) { act("plan_remove_block"); return; }
-    btn.dataset.sure = "1"; btn.textContent = "Sure? Remove";
-    setTimeout(() => { if (btn.isConnected) { delete btn.dataset.sure; btn.textContent = "Remove"; } }, 4000);
-  });
-  // the paste dialog: which block
-  $("pl-into").innerHTML = d.blocks.map((b) => `<option value="${b.n}"${b.n === d.blocks.length ? " selected" : ""}>Block ${b.n} (${SHORT_DAY.format(dayOf(b.start))} – ${SHORT_DAY.format(dayOf(b.end))})</option>`).join("");
-}
-function editDay(cell, x) {
-  if (cell.querySelector("input") || S.snap?.viewer) return;     // the web view only shows the plan
-  if (!WO.list) loadWorkouts();
-  const input = document.createElement("input");
-  input.value = entryText(x.entry);
-  input.setAttribute("list", "pl-names");
-  input.placeholder = "60m Z2 · rest · a workout";
-  cell.querySelector(".nm").replaceWith(input);
-  let list = $("pl-names");
-  if (!list) { list = document.createElement("datalist"); list.id = "pl-names"; document.body.append(list); }
-  list.innerHTML = (WO.list || []).filter((w) => !w.id.startsWith("plan:")).map((w) => `<option value="${esc(w.name)}">`).join("") + `<option value="rest">`;
-  input.focus(); input.select();
-  let done = false;
-  const commit = (save) => {
-    if (done) return; done = true;
-    if (save && input.value.trim() !== entryText(x.entry)) act("plan_set", { date: x.day, text: input.value.trim() });
-    else renderPlanGrid(PLAN.data);
-  };
-  input.addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter") commit(true); if (e.key === "Escape") commit(false); });
-  input.addEventListener("blur", () => commit(true));
-  input.addEventListener("click", (e) => e.stopPropagation());
+
 }
 
-// ---- new block, paste a plan, copy the status
-$("pl-make").addEventListener("click", (e) => {
-  e.preventDefault(); e.currentTarget.blur();
-  act("plan_add", { start: $("pl-start").value, weeks: +$("pl-weeks").value });
-});
-$("pl-paste").addEventListener("click", (e) => { e.currentTarget.blur(); $("pl-dialog").hidden = false; $("pl-text").focus(); });
-$("pl-cancel").addEventListener("click", () => { $("pl-dialog").hidden = true; });
-$("pl-import").addEventListener("click", () => {
-  act("plan_import", { text: $("pl-text").value, block: +$("pl-into").value || undefined });
-  $("pl-dialog").hidden = true; $("pl-text").value = "";
-});
-$("pl-text").addEventListener("keydown", (e) => e.stopPropagation());
-$("pl-copy").addEventListener("click", async (e) => {
-  e.currentTarget.blur();
-  let text = PLAN.data && PLAN.data.status_text;
-  try { text = (await (await fetch("/api/plan")).json()).status_text; } catch { /* the one we have */ }
-  $("pl-status").value = text || "";
-  let ok = false;
-  try { await navigator.clipboard.writeText(text); ok = true; } catch { /* select it instead */ }
-  $("pl-copied").textContent = ok ? "Copied: paste it into Claude when you ask for the next block." : "Select all and copy it (Ctrl+A, Ctrl+C), then paste it into Claude.";
-  $("pl-copybox").hidden = false;
-  $("pl-status").focus(); $("pl-status").select();
-});
-$("pl-close").addEventListener("click", () => { $("pl-copybox").hidden = true; });
 window.addEventListener("resize", () => { if (!$("scr-plan").hidden) renderPlan(); });

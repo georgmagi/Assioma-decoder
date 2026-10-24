@@ -653,11 +653,6 @@ class Engine(threading.Thread):
             weeks = arg.get("weeks", 4)
             pl.add_block(self.plan, start, weeks if weeks in (1, 2, 3, 4, 5, 6) else 4)   # never replaces: adds after
             self._plan_changed(f"Block {len(pl.blocks(self.plan))} added.")
-        elif name == "plan_remove_block":
-            n = len(pl.blocks(self.plan))
-            pl.remove_last_block(self.plan)
-            self._plan_changed(f"Block {n} taken off the calendar; its days are kept and come back if you add it again."
-                               if n > 1 else "")
         elif name == "plan_set" and isinstance(arg, dict) and isinstance(arg.get("date"), str):
             try:
                 date.fromisoformat(arg["date"])
