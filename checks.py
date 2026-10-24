@@ -127,7 +127,56 @@ def fitness_check(rows: list, meta: dict) -> Optional[dict]:
         at = _mean(r.get("heart_rate_bpm") for r in rows[end - 5: end])
         after = _mean(r.get("heart_rate_bpm") for r in rows[end + 57: end + 63])
         hrr = at - after if at and after else None
-    return {"steps": out, "hr_a": my - b * mx, "hr_b": b, "hrr60": hrr}
+    return {"steps": out, "hr_a": my - b * mx, "hr_b": b, "hrr60": hrr,
+            "rec_s": starts[rec] if rec and starts[rec] + 63 <= len(rows) else None}
+
+
+REC_MIN_PAIRS = 20
+
+
+def recovery_ln_rmssd(beat_t: list, rr: list, artifact: list, start: float, dur: float = 60) -> Optional[float]:
+    """ln RMSSD over the first `dur` s after the hardest step: the LSCT's recovery HRV (Lamberts et
+    al. 2024: LnRMSSD60s, ICC 0.97, tracks peak power, VO2peak and 40-km TT). Only pairs of
+    neighbouring clean beats count; fewer than REC_MIN_PAIRS: nothing. (The paper's riders sat still;
+    here you spin easy, so compare it with your own checks, not with their numbers.)"""
+    d = [rr[i + 1] - rr[i] for i in range(len(rr) - 1)
+         if start <= beat_t[i] and beat_t[i + 1] <= start + dur and not artifact[i] and not artifact[i + 1]]
+    if len(d) < REC_MIN_PAIRS:
+        return None
+    rms = math.sqrt(sum(x * x for x in d) / len(d))
+    return math.log(rms) if rms > 0 else None
+
+
+# ---- durability: your best efforts after work already done (Spragg et al. 2023, Mateo-March et
+# al. 2024: how far the best 5 and 20 min fall after 1000-2000+ kJ separates riders that fresh
+# numbers don't). Per ride, the best mean power over each duration for efforts that start once the
+# ride's work has passed each level; training.durability_profile takes the best of each over 90 days.
+DUR_KJ = (0, 500, 1000, 1500, 2000)
+DUR_S = (60, 300, 1200)
+
+
+def durable_mmp(power: list) -> dict:
+    """{kJ level: {seconds: [best watts, start second]}} for every level the ride reached with the
+    effort still fitting after it ("0": fresh, the ride's plain best)."""
+    p = [v or 0 for v in power]
+    n = len(p)
+    cum = [0.0]
+    for v in p:
+        cum.append(cum[-1] + v)
+    out = {}
+    for kj in DUR_KJ:
+        first = next((i for i in range(n + 1) if cum[i] >= kj * 1000), None)
+        if first is None:
+            break
+        level = {}
+        for d in DUR_S:
+            if first + d > n:
+                continue
+            best, at = max(((cum[i + d] - cum[i]) / d, i) for i in range(first, n - d + 1))
+            level[str(d)] = [round(best, 1), at]
+        if level:
+            out[str(kj)] = level
+    return out
 
 
 def a1_at(check: dict, watts: float) -> Optional[float]:

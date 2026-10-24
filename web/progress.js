@@ -38,6 +38,7 @@ function renderProgress() {
   makeWeekly(d.weeks);
   drawVt1Trend();
   drawChecks();
+  drawDurability();
   drawEftp(d, S.snap);
   HOME.efFtp = S.snap?.config.ftp;
   drawEfficiency();
@@ -482,28 +483,31 @@ function drawChecks() {
   const n = cs.length, withT = cs.filter((c) => c.temp_c != null);
   $("fc-note").textContent = !n
     ? "Ride Threshold steps (Workouts page) once a week, rested, with the room temperature set: the same watts every time, so heart rate, α1 and recovery show your fitness and freshness, and the same ride gives VT1 and VT2."
-    : `Heart rate at ${fmt(f.ref_w)} W from each check's steps up to 80 % FTP (lower = fitter), α1 at the same watts (higher = fresher), recovery in the first minute after the 100 % step (more = fitter). ` +
+    : `Heart rate at ${fmt(f.ref_w)} W from each check's steps up to 80 % FTP (lower = fitter), α1 at the same watts (higher = fresher), recovery in the first minute after the 100 % step (more = fitter) and the heart rate variability in that minute (higher = fitter; Lamberts 2024). ` +
       (heat ? `Heat model: ${heat.bpm_per_c.toFixed(1)} bpm per °C from ${heat.n} checks (${heat.range_c[0]}–${heat.range_c[1]} °C); the line is corrected to 20 °C.`
             : `Heat model: learning (${withT.length} of 5 checks with a temperature, needs a 3 °C spread).`);
   FC.marks = [];
-  if (!n) { laneChart($("fc-chart"), 320, [], 0, 1); return; }
+  if (!n) { laneChart($("fc-chart"), 390, [], 0, 1); return; }
   const hrs = cs.flatMap((c) => [c.hr_ref, c.hr_ref_20c].filter((v) => v != null));
   const a1s = cs.map((c) => c.a1_ref).filter((v) => v != null), hrr = cs.map((c) => c.hrr60).filter((v) => v != null);
+  const lns = cs.map((c) => c.rec_ln).filter((v) => v != null);
+  const [l0, l1] = lns.length ? niceRange(lns, 0.5, 0.2) : [1, 3];
   const [h0, h1] = niceRange(hrs, 5, 3);
   const [a0, a1] = a1s.length ? niceRange(a1s, 0.25, 0.1) : [0.5, 1.5];
   const [r0, r1] = hrr.length ? niceRange(hrr, 5, 3) : [0, 40];
   const first = dayOf(cs[0].day).getTime(), t1 = dayOf(d.today).getTime(), t0 = Math.min(first, t1 - 28 * 86400e3) - 2 * 86400e3;
-  const ch = laneChart($("fc-chart"), 320, [
+  const ch = laneChart($("fc-chart"), 390, [
     { label: `heart rate at ${fmt(f.ref_w)} W, bpm`, weight: 1.4, y0: h0, y1: h1, step: (h1 - h0) / 5 > 4 ? 10 : 5, fmt: (v) => `${v}` },
     { label: `α1 at ${fmt(f.ref_w)} W`, weight: 1, y0: a0, y1: a1, step: 0.25, fmt: (v) => v.toFixed(2) },
     { label: "recovery, bpm in 60 s", weight: 1, y0: r0, y1: r1, step: (r1 - r0) / 5 > 4 ? 10 : 5, fmt: (v) => `${v}` },
+    { label: "recovery HRV, ln RMSSD in 60 s", weight: 1, y0: l0, y1: l1, step: l1 - l0 > 1.5 ? 1 : 0.5, fmt: (v) => v.toFixed(1) },
   ], t0, t1);
   if (!ch) return;
-  const { ctx, X } = ch, [L1, L2, L3] = ch.lanes, ink = lcd ? C.fg : C.hr;
+  const { ctx, X } = ch, [L1, L2, L3, L4] = ch.lanes, ink = lcd ? C.fg : C.hr;
   const tip = (c) => `<b>${SHORT_DAY.format(dayOf(c.day))}</b>${c.temp_c != null ? ` · ${c.temp_c} °C${c.rh_pct != null ? `, ${c.rh_pct}%` : ""}` : ""}` +
     `<br>${fmt(c.hr_ref)} bpm at ${fmt(f.ref_w)} W${c.hr_ref_20c != null ? ` (${fmt(c.hr_ref_20c)} at 20 °C)` : ""}` +
     `<br>steps ${c.steps.map((s) => `${fmt(s.power)} W ${fmt(s.hr)} bpm`).join(" · ")}` +
-    `<br>α1 ${c.a1.map((v) => fmt(v, 2)).join(" / ")}${c.hrr60 != null ? ` · recovery ${fmt(c.hrr60)} bpm` : ""}`;
+    `<br>α1 ${c.a1.map((v) => fmt(v, 2)).join(" / ")}${c.hrr60 != null ? ` · recovery ${fmt(c.hrr60)} bpm` : ""}${c.rec_ln != null ? ` · recovery ln RMSSD ${c.rec_ln.toFixed(2)}` : ""}`;
   const line = (lane, vals, colour) => {
     ctx.strokeStyle = colour; ctx.lineWidth = 2; ctx.beginPath();
     let started = false;
@@ -514,7 +518,7 @@ function drawChecks() {
   if (heat) line(L1, (c) => c.hr_ref_20c, lcd ? C.fg : blend(C.hr, C.panel, 0.3));
   for (const c of cs) {
     const x = X(dayOf(c.day).getTime() + 43200e3);
-    const dots = [[L1, c.hr_ref, ink], [L2, c.a1_ref, lcd ? C.fg : C.a1], [L3, c.hrr60, lcd ? C.fg : C.good]];
+    const dots = [[L1, c.hr_ref, ink], [L2, c.a1_ref, lcd ? C.fg : C.a1], [L3, c.hrr60, lcd ? C.fg : C.good], [L4, c.rec_ln, lcd ? C.fg : C.rr]];
     for (const [lane, v, col] of dots) {
       if (v == null) continue;
       ctx.beginPath(); ctx.arc(x, lane.Y(v), 4.5, 0, 2 * Math.PI);
@@ -523,4 +527,32 @@ function drawChecks() {
       FC.marks.push({ x, y: lane.Y(v), id: c.id, html: tip(c) });
     }
   }
+}
+
+// ---- durability (training.durability_profile): your best 1 / 5 / 20 min fresh and after 500-2000 kJ
+// of work in the same ride, the last 90 days. A cell counts only when the effort was hard for its
+// length; the rest are shown dim as "not tested" (a Z2 hour's best 20 min is no limit)
+function drawDurability() {
+  const p = PROG.data && PROG.data.durability_profile;
+  if (!p) return;
+  const name = { 60: "1 min", 300: "5 min", 1200: "20 min" };
+  $("dur-head").innerHTML = `<tr><th>Best</th>${p.levels.map((k) => `<th class="n">${k ? `after ${k} kJ` : "fresh"}</th>`).join("")}</tr>`;
+  let tested = 0, worst = null;
+  $("dur-rows").innerHTML = p.durs.map((d) => {
+    const row = p.cells[d] || {};
+    return `<tr><td>${name[d]}</td>` + p.levels.map((k) => {
+      const c = row[k];
+      if (!c) return `<td class="n dim">--</td>`;
+      const tip = `${SHORT_DAY.format(dayOf(c.day))}, from minute ${Math.floor(c.at_s / 60)}`;
+      if (!c.tested) return `<td class="n dim" title="${tip}: not a hard effort for its length">${fmt(c.w)} W<br><small>not tested</small></td>`;
+      if (k !== 0 && k !== "0") { tested++; if (c.pct != null && (worst == null || c.pct < worst.pct)) worst = { ...c, d, k }; }
+      return `<td class="n" title="${tip}"><b>${fmt(c.w)}</b> W${c.pct != null ? `<br><small>${fmt(c.pct)} % kept</small>` : ""}</td>`;
+    }).join("") + "</tr>";
+  }).join("");
+  $("dur-readout").innerHTML = worst ? `${name[worst.d]} after ${worst.k} kJ: <b>${fmt(worst.pct)} %</b> of fresh` : "";
+  $("dur-note").textContent = (tested ? "" : "No hard effort late in a long ride yet, so only the fresh column is real. ") +
+    "How much of your best you keep after work already done: what decides road races, and it separates riders with the same FTP " +
+    "(Spragg 2023, Mateo-March 2024). Each column takes efforts that started after that much work in the ride (1000 kJ ≈ 1 h 45 min of your Z2). " +
+    "A cell counts once the effort was hard for its length (1 min ≥ 120 %, 5 min ≥ 100 %, 20 min ≥ 88 % FTP). " +
+    "Fill it with the Durability test workout, or by putting a session's intervals at the end of a long ride. Last 90 days.";
 }

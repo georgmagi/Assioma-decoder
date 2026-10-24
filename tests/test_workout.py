@@ -47,7 +47,7 @@ def test_player_targets_ramps_skip_and_intensity():
 def test_built_in_workouts_are_sane_and_the_folder_adds_files(tmp_path):
     for k, w in wk.BUILT_IN.items():
         top = 1.8 if k == "ramp-test" else 1.3                   # a ramp test climbs until you stop
-        assert all(s["dur"] > 0 and 0.3 <= s["lo"] <= top for s in w["steps"])
+        assert all(s["dur"] > 0 and (s["lo"] is None or 0.3 <= s["lo"] <= top) for s in w["steps"])   # None: free
     (tmp_path / "mine.zwo").write_text(ZWO, encoding="utf-8")
     (tmp_path / "broken.zwo").write_text("<nope", encoding="utf-8")
     lib = wk.library(str(tmp_path))

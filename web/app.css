@@ -1210,3 +1210,8 @@ body.viewer .home-row.three { grid-template-columns: minmax(0, 1fr) minmax(0, 1f
 body.alerting::after { content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 49;
   box-shadow: inset 0 0 0 6px #d92f37; animation: alert-blink 1s steps(2, jump-none) infinite; }
 @keyframes alert-blink { 0% { opacity: 1; } 100% { opacity: 0.25; } }
+
+/* the Durability table (progress.js drawDurability): untested cells dim */
+.dur-table td.dim { color: var(--faint); }
+.dur-table small { color: var(--dim); font-size: 11px; }
+.dur-table td.dim small { color: var(--faint); }

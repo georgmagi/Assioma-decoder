@@ -86,3 +86,34 @@ def test_heat_model_learns_bpm_per_degree_and_corrects_the_trend():
     assert f["heat"]["bpm_per_c"] == pytest.approx(1.5) and f["ref_w"] == 140
     assert all(x["hr_ref_20c"] == pytest.approx(130) for x in f["checks"])        # the same fitness, any room
     assert checks.heat_model([(20, 120)] * 6) is None                             # no temperature range
+
+
+def test_recovery_ln_rmssd_uses_clean_neighbours_in_the_minute_only():
+    import math
+    beat_t = [i * 0.5 for i in range(200)]
+    rr = [500 + (10 if i % 2 else -10) for i in range(200)]       # successive differences of 20 ms
+    art = [False] * 200
+    v = checks.recovery_ln_rmssd(beat_t, rr, art, 10)
+    assert abs(v - math.log(20)) < 1e-9
+    art = [True] * 200                                             # all set aside: nothing
+    assert checks.recovery_ln_rmssd(beat_t, rr, art, 10) is None
+
+
+def test_durable_mmp_takes_efforts_only_after_the_work_level():
+    power = [300] * 300 + [150] * 7000 + [280] * 300               # a hard 5 min fresh, another after ~1100 kJ
+    d = checks.durable_mmp(power)
+    assert d["0"]["300"][0] == 300
+    assert d["1000"]["300"][0] == 280 and d["1000"]["300"][1] >= 7000
+    assert "2000" not in d                                         # never reached
+
+
+def test_durability_profile_counts_only_hard_efforts_and_compares_with_fresh():
+    from datetime import date
+    import training
+    ride = lambda day, durable: {"start_utc": f"{day}T08:00:00+00:00", "ftp": 240, "id": day, "durable": durable}
+    rides = [ride("2026-10-01", {"0": {"300": [290, 0]}}),
+             ride("2026-10-10", {"0": {"300": [250, 0]}, "1000": {"300": [261, 7000]}, "1500": {"1200": [160, 9000]}})]
+    p = training.durability_profile(rides, date(2026, 10, 24))
+    c = p["cells"]
+    assert c["300"]["0"]["w"] == 290 and c["300"]["1000"]["tested"] and round(c["300"]["1000"]["pct"]) == 90
+    assert not c["1200"]["1500"]["tested"] and c["1200"]["1500"]["pct"] is None   # Z2 is no limit

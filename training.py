@@ -96,11 +96,40 @@ def fitness_checks(rides: list[dict]) -> dict:
         c, hr = r["check"], checks.hr_at(r["check"], ref)
         corr = hr - heat["bpm_per_c"] * (r["temp_c"] - 20) if heat and r.get("temp_c") is not None else None
         out.append({"id": r.get("id"), "day": local_day(r["start_utc"]).isoformat(), "temp_c": r.get("temp_c"),
-                    "rh_pct": r.get("rh_pct"), "hr_ref": hr, "hr_ref_20c": corr, "hrr60": c.get("hrr60"),
+                    "rh_pct": r.get("rh_pct"), "hr_ref": hr, "hr_ref_20c": corr, "hrr60": c.get("hrr60"), "rec_ln": c.get("rec_ln_rmssd60"),
                     "a1": [st.get("a1") for st in c["steps"]], "rmssd": [st.get("rmssd") for st in c["steps"]],
                     "a1_ref": checks.a1_at(c, ref),
                     "steps": c["steps"]})
     return {"checks": out, "ref_w": ref, "heat": heat}
+
+
+DUR_DAYS = 90                                   # the window, as power-duration models use
+DUR_FLOOR = {"60": 1.20, "300": 1.00, "1200": 0.88}   # a hard effort for its length, × the ride's FTP
+
+
+def durability_profile(rides: list[dict], today: Optional[date] = None) -> dict:
+    """Your best 1, 5 and 20 min over the last DUR_DAYS, fresh and after 500 / 1000 / 1500 / 2000 kJ
+    of work in the same ride (checks.durable_mmp). A cell counts as tested only when that effort was
+    hard for its length (DUR_FLOOR × the FTP of its ride): your best 20 min after 1500 kJ of Z2 is
+    just Z2, not a limit. Tested cells against the tested fresh one: % kept (100 = no drop)."""
+    today = today or date.today()
+    since = today - timedelta(days=DUR_DAYS)
+    cells: dict = {}
+    for r in rides:
+        if not r.get("durable") or local_day(r["start_utc"]) < since:
+            continue
+        for kj, level in r["durable"].items():
+            for d, (w, at) in level.items():
+                cell = cells.setdefault(d, {}).get(kj)
+                tested = bool(r.get("ftp")) and w >= DUR_FLOOR[d] * r["ftp"]
+                if cell is None or (tested, w) > (cell["tested"], cell["w"]):
+                    cells[d][kj] = {"w": w, "day": local_day(r["start_utc"]).isoformat(), "id": r.get("id"),
+                                    "at_s": at, "tested": tested}
+    for d, row in cells.items():
+        fresh = row.get("0")
+        for kj, c in row.items():
+            c["pct"] = (100 * c["w"] / fresh["w"] if fresh and fresh["tested"] and c["tested"] and kj != "0" else None)
+    return {"days": DUR_DAYS, "levels": list(checks.DUR_KJ), "durs": list(checks.DUR_S), "cells": cells}
 
 
 def progress(rides: list[dict], today: Optional[date] = None) -> dict:
@@ -122,6 +151,7 @@ def progress(rides: list[dict], today: Optional[date] = None) -> dict:
     vt1 = [v for v in vt1 if v["hr"] or v["power"] or v["vt2"]["hr"] or v["vt2"]["power"]]
     return {
         "fitness_checks": fitness_checks(rides),
+        "durability_profile": durability_profile(rides, today),
         "today": today.isoformat(),
         "days": by_day,
         "vt1": vt1,

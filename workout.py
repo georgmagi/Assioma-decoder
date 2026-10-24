@@ -41,6 +41,11 @@ BUILT_IN = {
     "ramp-test": {"name": "Ramp test", "description": "1-min steps from 50 % FTP, +10 % each minute, until you can't hold it: then stop pedalling (the trainer goes flat) and spin easy. eFTP = 75 % of your best minute.",
                   "steps": [_step(300, 0.40, 0.50, "warm up")] + [_step(60, p / 100, label=f"{p}%") for p in range(50, 181, 10)]
                   + [_step(600, 0.40, label="cool down")]},
+    # durability (checks.durable_mmp): about 1000 kJ of Z2, then 5 min as hard as you can (free: no
+    # ERG target, you set the pace), as in the home protocol of 2025 studies; against your fresh 5 min
+    "durability-test": {"name": "Durability test", "description": "About 1000 kJ of steady Z2 (1 h 50 min), then 5 min as hard as you can hold, with the trainer free, then easy. Your 5 min after 1000 kJ against your fresh best: the Durability panel on Statistics. A hard day: 48 h after it like any other.",
+                        "steps": [_step(600, 0.50, 0.68, "warm up"), _step(6000, 0.68, label="Z2"), _step(120, 0.55, label="easy"),
+                                  _step(300, None, label="5 min all out"), _step(600, 0.45, label="cool down")]},
     "sweet-spot-3x12": {"name": "Sweet spot 3×12", "description": "3 × 12 min at 90 % with 4 min easy.",
                         "steps": [_step(600, 0.50, 0.70, "warm up")] + _repeat(3, 720, 0.90, 240, 0.55)[:-1]
                         + [_step(600, 0.60, 0.45, "cool down")]},

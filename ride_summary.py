@@ -35,7 +35,7 @@ ZONES = [(0.55, "Z1"), (0.75, "Z2"), (0.90, "Z3"), (1.05, "Z4"), (1.20, "Z5"), (
 # Z5 above 90 %
 HR_ZONES = [(0.60, "Z1"), (0.70, "Z2"), (0.80, "Z3"), (0.90, "Z4"), (float("inf"), "Z5")]
 TEXT = {"time", "rider_position", "rr_ms"}
-SUMMARY_VERSION = 13                    # bump when the cached short summary changes
+SUMMARY_VERSION = 14                    # bump when the cached short summary changes
 
 
 def load(path: str) -> list[dict]:
@@ -242,7 +242,8 @@ def summarize(rows: list[dict], ftp: Optional[float] = None, max_hr: Optional[fl
         "warmup": checks.warmup(rows),                         # heart rate at 125 W early on (checks.py)
         "hr_model": checks.hr_model(rows),                     # HR at 150 W, its time constant (checks.py)
         "knee": {**checks.knee(rows, ftp), "score": (meta or {}).get("knee")},   # torque per rep + your 0-3
-        "check": _no_a1(checks.fitness_check(rows, meta), meta),
+        "check": _rec_hrv(_no_a1(checks.fitness_check(rows, meta), meta), ts, beat_t, beats, meta),
+        "durable": checks.durable_mmp(power),                   # best efforts after 0-2000 kJ (checks.py)
         "workout_steps": _workout_steps(rows, meta),
         "zones": zone_s, "hr_zones": hr_zone_s, "a1_bands": a1_bands,
         "legs": legs,
@@ -303,6 +304,17 @@ def _no_a1(check: Optional[dict], meta: Optional[dict]) -> Optional[dict]:
     return check
 
 
+def _rec_hrv(check: Optional[dict], ts: list, beat_t: list, beats: list, meta: Optional[dict]) -> Optional[dict]:
+    """The check's recovery ln RMSSD over 60 s (checks.recovery_ln_rmssd), from the beats themselves;
+    not from a strap that only sent smoothed RR."""
+    if check is None:
+        return None
+    i = check.get("rec_s")
+    check["rec_ln_rmssd60"] = (checks.recovery_ln_rmssd(beat_t, [b.rr for b in beats], [b.artifact for b in beats], ts[i])
+                               if i is not None and i < len(ts) and not smoothed_rr(meta) else None)
+    return check
+
+
 def _thresholds(rows: list) -> dict:
     """VT1 (alpha 1 = 0.75) and VT2 (0.5) from the same steady windows (vt1.py)."""
     s = vt1.samples(rows)
@@ -325,8 +337,10 @@ def short(s: dict) -> dict:
                      "rep_torque": max((r["torque"] or 0 for r in s["knee"]["reps"]), default=None) or None,
                      "rep_cadence": checks._mean([r["cadence"] for r in s["knee"]["reps"]]),
                      "reps": len(s["knee"]["reps"])},
+            "durable": s.get("durable"),
             "durability": s["durability"] and {k: s["durability"][k] for k in ("drift_pct", "a1_drop", "onset_min", "score")},
             "check": s["check"] and {"hr_a": s["check"]["hr_a"], "hr_b": s["check"]["hr_b"], "hrr60": s["check"]["hrr60"],
+                                     "rec_ln_rmssd60": s["check"].get("rec_ln_rmssd60"),
                                      "steps": [{k: st[k] for k in ("power", "hr", "a1", "rmssd")} for st in s["check"]["steps"]]}}
 
 
