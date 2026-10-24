@@ -174,7 +174,12 @@ function renderWorkout(s) {
   $("wo-total").textContent = `${minsec(rest)} left of ${minsec(w.total)}`;
   $("wo-int").textContent = `${Math.round(w.intensity * 100)}%`;
   const erg = $("wo-erg");
-  erg.textContent = w.erg ? "ERG on" : "ERG off";
+  erg.textContent = "ERG";
+  erg.title = w.erg ? "ERG on: the trainer holds the target. Click to ride it freely." : "ERG off. Click to let the trainer hold the target.";
+  const match = $("wo-match");
+  match.classList.toggle("on", w.pm != null);
+  match.title = w.pm != null ? "Power match on: ERG holds the target by your pedals. Click to use the trainer's own reading."
+    : "Power match off: ERG holds the target by the trainer's own reading. Click to steer by your pedals.";
   erg.classList.toggle("on", w.erg);
   const ceil = $("wo-ceil");
   ceil.classList.toggle("on", !!w.ceiling);
@@ -190,7 +195,7 @@ function renderWorkout(s) {
   drawProfile($("wo-profile"), w.steps, { at: w.t, ftpLine: true, fill: true, watts: w.ftp * w.intensity });
 }
 
-for (const [id, name, arg] of [["wo-down", "wo_nudge", -1], ["wo-up", "wo_nudge", 1], ["wo-skip", "wo_skip"], ["wo-erg", "wo_erg"], ["wo-ceil", "wo_ceiling"]]) {
+for (const [id, name, arg] of [["wo-match", "wo_match"], ["wo-down", "wo_nudge", -1], ["wo-up", "wo_nudge", 1], ["wo-skip", "wo_skip"], ["wo-erg", "wo_erg"], ["wo-ceil", "wo_ceiling"]]) {
   $(id).addEventListener("click", (e) => { act(name, arg); e.currentTarget.blur(); });
 }
 // ending the workout takes a second click within 3 s (a stray click mid-interval shouldn't end it)

@@ -322,6 +322,12 @@ class Engine(threading.Thread):
                 self.fuel_later = len(s.seconds) + 5 * 60
             elif name == "save":
                 self._save()
+            elif name == "wo_match":                     # power match on/off, kept for the next ride too
+                self.settings["power_match"] = not self.settings.get("power_match", True)
+                self._pm, self._pm_tgt = [], None
+                self.worker.log(f"power match: {'on' if self.settings['power_match'] else 'off'}")
+                if self.settings_path:
+                    save_settings(self.settings_path, self.settings)
             elif name == "wo_ceiling" and self.player is not None:
                 self.ceiling, self.cap = not self.ceiling, 1.0
             elif name in ("wo_skip", "wo_nudge", "wo_erg", "wo_end") and self.player is not None:
@@ -743,19 +749,24 @@ class Engine(threading.Thread):
     PM_SETTLE_S = 15.0       # after a target change: both meters steady again
     PM_WIN_S = 60.0          # the window the ratio comes from
     PM_EVERY_S = 10.0        # how often the ratio is updated
-    PM_GAIN = 0.25           # the share of the new ratio taken each update
+    PM_GAIN = 0.5            # the share of the new ratio taken each update
+    PM_DEAD = 0.01           # the ratio is only touched when a window disagrees by more than 1 %: settled = still
     PM_SANE = (0.80, 1.20)   # a reading's (or window's) ratio outside this: a dropout or a surge, not the meters
     PM_LIMITS = (0.85, 1.15)
     PM_MIN_W = 60.0
+    PM_OFF = 0.20            # pedals further than this from the target: not holding it (stopped, surging)
 
     def _power_match(self, target: float, pedal_w: Optional[float], trainer_w: Optional[float], t: float) -> None:
         if self._pm_tgt is None or abs(target - self._pm_tgt[0]) > 2:
             self._pm_tgt, self._pm = (target, t), []         # a new target: wait for both to settle
             return
-        if t - self._pm_tgt[1] < self.PM_SETTLE_S or not pedal_w or not trainer_w or pedal_w < self.PM_MIN_W:
+        steady = (pedal_w and trainer_w and pedal_w >= self.PM_MIN_W and abs(pedal_w - target) <= self.PM_OFF * target
+                  and self.PM_SANE[0] <= trainer_w / pedal_w <= self.PM_SANE[1])
+        if not steady:                                       # a stop, a drink, a surge: the trainer's reading lags
+            self._pm_tgt, self._pm = (target, t), []         # the pedals there, so start over once steady again
             return
-        if not self.PM_SANE[0] <= trainer_w / pedal_w <= self.PM_SANE[1]:
-            return                                           # a dropout or a surge on one meter: not the meters' ratio
+        if t - self._pm_tgt[1] < self.PM_SETTLE_S:
+            return
         self._pm.append((t, pedal_w, trainer_w))
         self._pm = [x for x in self._pm if t - x[0] <= self.PM_WIN_S]
         if t - self._pm_last < self.PM_EVERY_S or len(self._pm) < 20 or t - self._pm[0][0] < 0.6 * self.PM_WIN_S:
@@ -764,6 +775,8 @@ class Engine(threading.Thread):
         k_new = sum(x[2] for x in self._pm) / sum(x[1] for x in self._pm)
         if not self.PM_SANE[0] <= k_new <= self.PM_SANE[1]:
             return
+        if abs(k_new - self.pm_k) <= self.PM_DEAD:
+            return                                           # the pedals swing; within 1 % is the same ratio
         lo, hi = self.PM_LIMITS
         k = round(min(hi, max(lo, self.pm_k + self.PM_GAIN * (k_new - self.pm_k))), 4)
         if abs(k - self.pm_k) >= 0.0005:

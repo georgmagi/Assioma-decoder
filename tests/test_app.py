@@ -710,25 +710,41 @@ def test_power_match_learns_the_trainer_to_pedal_ratio_and_steers_by_the_pedals(
     # the trainer reads 4 % above the pedals: after settling it learns, slowly, and keeps it
     t0, e._pm_tgt = 1000.0, None                            # (a clock of the test's own)
     for k in range(200):
-        e._power_match(target, 150.0, 156.0, t0 + k)
-    assert 1.02 < e.pm_k <= 1.04
+        e._power_match(target, target, target * 1.04, t0 + k)
+    assert 1.02 < e.pm_k <= 1.05
     for k in range(200, 900):
-        e._power_match(target, 150.0, 156.0, t0 + k)
-    assert e.pm_k == pytest.approx(1.04, abs=0.002)
+        e._power_match(target, target, target * 1.04, t0 + k)
+    assert e.pm_k == pytest.approx(1.04, abs=0.01)           # within the 1 % dead zone: about 1 W at 228
     assert e.settings["power_match_k"] == pytest.approx(e.pm_k, abs=0.005)
     # a sprint or a dropout window: ignored
     before = e.pm_k
     for k in range(900, 1000):
-        e._power_match(target, 150.0, 240.0, t0 + k)
+        e._power_match(target, target, target * 1.6, t0 + k)
     assert e.pm_k == before
     # a new target: waits PM_SETTLE_S before using samples
-    e._power_match(target + 50, 200.0, 300.0, 3000.0)
-    e._power_match(target + 50, 200.0, 300.0, 3005.0)
+    e._power_match(target + 50, target + 50, (target + 50) * 1.04, 3000.0)
+    e._power_match(target + 50, target + 50, (target + 50) * 1.04, 3005.0)
     assert e._pm == []
     # the trainer is asked for target × k, so the pedals read the target
     e._pm_tgt = None
     e._drive_trainer()
     assert e.worker.trainer.want[1] == pytest.approx(target * e.pm_k)
-    e.settings["power_match"] = False                        # off: the trainer's own reading
+    e._do("wo_match")                                        # off (the ride screen's button): the trainer's own reading
+    assert e.settings["power_match"] is False
     e._drive_trainer()
     assert e.worker.trainer.want[1] == pytest.approx(target)
+    e._do("wo_match")
+    assert e.settings["power_match"] is True
+
+
+def test_power_match_holds_still_on_swinging_pedals_and_restarts_after_a_stop(tmp_path):
+    import math
+    e = _engine(tmp_path)
+    e.pm_k, e._pm_tgt = 1.04, None
+    for k in range(3000):                                    # ±15 W swing every 5 s, trainer 4 % up and lagging
+        ped = 160 + 15 * math.sin(2 * math.pi * k / 5)
+        tr = 1.04 * (160 + 15 * math.sin(2 * math.pi * (k - 2) / 5))
+        e._power_match(163, ped, tr, 1000.0 + k)
+    assert e.pm_k == 1.04                                    # settled = still
+    e._power_match(163, 5, 150, 5000.0)                      # stopped pedalling: starts over
+    assert e._pm == [] and e._pm_tgt == (163, 5000.0)
