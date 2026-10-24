@@ -57,11 +57,41 @@ function drawProfile(cv, steps, opts = {}) {
     ctx.strokeStyle = blend(C.fg, C.panel, 0.75); ctx.setLineDash([3, 3]); ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(0, Y(1)); ctx.lineTo(w, Y(1)); ctx.stroke(); ctx.setLineDash([]);
   }
+  if (opts.watts) {                                                // the ride strip: watts on the work steps that fit
+    ctx.font = "600 11px Bahnschrift, 'Segoe UI', sans-serif";
+    ctx.textAlign = "center"; ctx.textBaseline = "top";
+    let t2 = 0;
+    for (const [dur, lo, hi] of steps) {
+      const x0 = X(t2), x1 = X(t2 + dur), txt = lo == null ? "" : `${Math.round(((lo + hi) / 2) * opts.watts)}`;
+      if (lo != null && lo === hi && lo >= 0.75 && x1 - x0 >= 34 && h - Y(lo) >= 18) {
+        ctx.fillStyle = THEME === "lcd" ? C.lcd || C.panel : C.panel;
+        ctx.fillText(txt, (x0 + x1) / 2, Y(lo) + 3);
+      }
+      t2 += dur;
+    }
+  }
   if (opts.at != null) {                                           // where we are
     const x = Math.min(w - 1, X(opts.at));
     ctx.fillStyle = C.fg;
     ctx.fillRect(Math.round(x) - 1, 0, 2, h);
   }
+}
+
+// what a step is, for the strip: its own label, else from where it sits and how hard it is
+function stepNames(steps) {
+  const mid = (s) => (s[1] == null ? null : (s[1] + s[2]) / 2);
+  const work = steps.map((s) => mid(s) != null && mid(s) >= 0.85 && s[0] >= 30);
+  const nWork = work.filter(Boolean).length;
+  let k = 0;
+  return steps.map((s, i) => {
+    if (s[3]) return s[3][0].toUpperCase() + s[3].slice(1);
+    if (work[i]) return nWork > 1 ? `Interval ${++k} of ${nWork}` : "Main block";
+    if (s[1] == null) return "Free ride";
+    if (i === 0) return "Warm-up";
+    if (i === steps.length - 1) return "Cool-down";
+    if (work[i - 1] && mid(s) < 0.65) return "Recovery";
+    return "Steady";
+  });
 }
 
 // ---- the library (Workouts page) and the next ride's workout (Home)
@@ -122,21 +152,26 @@ function renderWorkout(s) {
   strip.hidden = !w;
   if (!w) return;
   if (w.done && !w.name) {
-    $("wo-now").innerHTML = `<span class="wo-step">Workout done</span><span class="wo-target">free ride</span>`;
-    $("wo-next").textContent = ""; $("wo-ctl").hidden = true;
+    $("wo-step").textContent = "Workout done"; $("wo-target").textContent = "free ride"; $("wo-left").textContent = "";
+    $("wo-next").textContent = ""; $("wo-name").textContent = ""; $("wo-total").textContent = ""; $("wo-ctl").hidden = true;
     drawProfile($("wo-profile"), [], {});
     return;
   }
   $("wo-ctl").hidden = false;
+  const names = stepNames(w.steps), st = w.steps[w.index] || [];
   const tgt = w.target, pct = tgt != null && w.ftp ? Math.round((100 * tgt) / w.ftp) : null;
-  $("wo-now").innerHTML =
-    `<span class="wo-step">${esc(w.label || `Step ${w.index + 1}`)} · <b>${minsec(Math.max(0, w.left))}</b></span>` +
-    `<span class="wo-target">${tgt == null ? "free ride" : `<span class="num">${fmt(tgt)}</span><span class="unit">W</span>` +
-      `<span class="pct">${pct}%</span>`}</span>`;
+  const ramp = st[1] != null && st[1] !== st[2];                        // a ramp: where it's heading
+  $("wo-step").innerHTML = `${esc(names[w.index] || `Step ${w.index + 1}`)} <span>· step ${w.index + 1} of ${w.steps.length}</span>`;
+  $("wo-target").innerHTML = tgt == null ? `<span class="num">free</span>`
+    : `<span class="num">${fmt(tgt)}</span><span class="unit">W</span><span class="sub">${ramp ? `→ ${fmt(st[2] * w.ftp * w.intensity)}` : `${pct}%`}</span>`;
+  $("wo-left").innerHTML = `<span class="num">${minsec(Math.max(0, w.left))}</span>`;
   const n = w.next;
-  $("wo-next").innerHTML = n ? `Next ${n.lo == null ? "free"
-    : `<b>${fmt(n.lo * w.ftp * w.intensity)}${n.hi !== n.lo ? `–${fmt(n.hi * w.ftp * w.intensity)}` : ""}</b> W`} · ${minsec(n.dur)}`
+  $("wo-next").innerHTML = n ? `Next: ${esc(names[w.index + 1] || "")} · ${n.lo == null ? "free"
+    : `<b>${fmt(n.lo * w.ftp * w.intensity)}${n.hi !== n.lo ? `–${fmt(n.hi * w.ftp * w.intensity)}` : ""} W</b>`} · ${minsec(n.dur)}`
     : "Last step";
+  const rest = Math.max(0, w.total - w.t);
+  $("wo-name").textContent = w.name || "";
+  $("wo-total").textContent = `${minsec(rest)} left of ${minsec(w.total)}`;
   $("wo-int").textContent = `${Math.round(w.intensity * 100)}%`;
   const erg = $("wo-erg");
   erg.textContent = w.erg ? "ERG on" : "ERG off";
@@ -150,7 +185,7 @@ function renderWorkout(s) {
     : tr.controlled ? (w.erg && tgt != null ? (w.ceiling && w.cap < 1 ? `held under VT1: ${fmt(tgt * w.cap)} W` : "trainer holding") : "trainer flat")
     : "waiting for the trainer…";
   $("wo-trainer").classList.toggle("warn", !!(tr && tr.error) || (s.settings.trainer && tr && !tr.controlled));
-  drawProfile($("wo-profile"), w.steps, { at: w.t, ftpLine: true, fill: true });
+  drawProfile($("wo-profile"), w.steps, { at: w.t, ftpLine: true, fill: true, watts: w.ftp * w.intensity });
 }
 
 for (const [id, name, arg] of [["wo-down", "wo_nudge", -1], ["wo-up", "wo_nudge", 1], ["wo-skip", "wo_skip"], ["wo-erg", "wo_erg"], ["wo-ceil", "wo_ceiling"]]) {
@@ -160,9 +195,9 @@ for (const [id, name, arg] of [["wo-down", "wo_nudge", -1], ["wo-up", "wo_nudge"
 $("wo-end").addEventListener("click", (e) => {
   const b = e.currentTarget;
   b.blur();
-  if (b.classList.contains("confirm")) { b.classList.remove("confirm"); b.textContent = "End"; act("wo_end"); return; }
-  b.classList.add("confirm"); b.textContent = "Sure?";
-  setTimeout(() => { b.classList.remove("confirm"); b.textContent = "End"; }, 3000);
+  if (b.classList.contains("confirm")) { b.classList.remove("confirm"); b.textContent = "End workout"; act("wo_end"); return; }
+  b.classList.add("confirm"); b.textContent = "Click again to end";
+  setTimeout(() => { b.classList.remove("confirm"); b.textContent = "End workout"; }, 3000);
 });
 
 // ---- the builder: the shorthand (workout.parse_text) with a live preview, saved as a .zwo file

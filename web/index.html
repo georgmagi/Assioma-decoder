@@ -142,22 +142,26 @@
 
 <section class="panel wo-strip" id="wo-strip" hidden>
   <div class="wo-left">
-    <div class="wo-now" id="wo-now"></div>
+    <div class="wo-step" id="wo-step"></div>
+    <div class="wo-pair">
+      <div class="wo-big"><span class="wo-cap">target</span><span id="wo-target"></span></div>
+      <div class="wo-big"><span class="wo-cap">left in step</span><span id="wo-left"></span></div>
+    </div>
     <div class="wo-next" id="wo-next"></div>
   </div>
-  <div class="wo-prof"><canvas id="wo-profile"></canvas></div>
+  <div class="wo-mid">
+    <div class="wo-head"><b id="wo-name"></b><span id="wo-total"></span></div>
+    <div class="wo-prof"><canvas id="wo-profile"></canvas></div>
+  </div>
   <div class="wo-ctl" id="wo-ctl">
-    <div class="wo-btns">
-      <div class="wo-int" role="group" aria-label="Intensity">
-        <button class="btn" id="wo-down" title="-1 %">−</button><span id="wo-int">100%</span><button class="btn" id="wo-up" title="+1 %">+</button>
-      </div>
-      <button class="btn" id="wo-skip">Skip</button>
-      <button class="btn" id="wo-end">End</button>
+    <div class="wseg" role="group" aria-label="Intensity">
+      <button id="wo-down" title="Intensity −1 %">−</button><span id="wo-int">100%</span><button id="wo-up" title="Intensity +1 %">+</button>
     </div>
-    <div class="wo-btns">
-      <button class="btn toggle" id="wo-erg">ERG on</button>
-      <button class="btn toggle" id="wo-ceil" title="Trim the ERG target while you're above VT1">VT1 cap</button>
+    <button class="wbtn" id="wo-skip" title="Go to the next step">Skip step</button>
+    <div class="wseg" role="group" aria-label="Trainer">
+      <button class="tg" id="wo-erg" title="ERG: the trainer holds the target">ERG</button><button class="tg" id="wo-ceil" title="Trim the ERG target while you're above VT1">VT1 cap</button>
     </div>
+    <button class="wbtn end" id="wo-end" title="End the workout (click twice); the ride goes on">End workout</button>
     <div class="wo-trainer" id="wo-trainer"></div>
   </div>
 </section>
