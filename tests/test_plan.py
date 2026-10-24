@@ -72,3 +72,22 @@ def test_status_for_claude_has_the_numbers_and_the_format():
     prog = tr.progress(rides)
     text = pl.status_text(prog, rides, {"ftp": 199}, None)
     assert "Fitness (CTL" in text and "FTP setting 199" in text and "Week 1" in text and "Mon: rest" in text
+
+
+def test_a_second_block_follows_the_first_and_removing_it_keeps_its_days():
+    from datetime import date
+    import plan as pl2
+    p = {"start": "2026-10-19", "weeks": 4, "days": {"2026-10-19": {"rest": True}, "2026-11-17": {"text": "60m Z2", "name": "Z2"}}}
+    assert [b["start"] for b in pl2.blocks(p)] == ["2026-10-19"]                 # an old plan: one block
+    pl2.add_block(p, None, 4)
+    assert pl2.blocks(p)[1] == {"start": "2026-11-16", "weeks": 4}               # the Monday after block 1
+    assert p["start"] == "2026-10-19" and p["weeks"] == 4                       # older copies still read block 1
+    pl2.add_block(p, date(2026, 11, 20), 2)                                       # a date inside: after the last instead
+    assert pl2.blocks(p)[2]["start"] == "2026-12-14"
+    o = pl2.overview(p, {}, [], 240, date(2026, 10, 25))
+    assert [b["n"] for b in o["blocks"]] == [1, 2, 3] and o["end"] == "2026-12-27" and len(o["days"]) == 70
+    assert o["blocks"][1]["count"] == 28 and o["days"][o["blocks"][1]["first"] + 1]["name"] == "Z2"
+    pl2.remove_last_block(p); pl2.remove_last_block(p)
+    assert len(pl2.blocks(p)) == 1 and "2026-11-17" in p["days"]                  # the days stay
+    pl2.remove_last_block(p)
+    assert len(pl2.blocks(p)) == 1                                                # never the last one

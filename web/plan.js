@@ -16,10 +16,9 @@ async function showPlan(s) {
   PLAN.version = s.plan_version; PLAN.rides = s.data_key; PLAN.morning = s.morning_version;
   PLAN.loading = true;
   try { PLAN.data = await (await fetch("/api/plan")).json(); } catch { return; } finally { PLAN.loading = false; }
-  if (!$("pl-start").value) {                                    // next Monday, for a new block
-    const t = new Date(), add = (8 - t.getDay()) % 7 || 7;
-    $("pl-start").value = isoOf(new Date(t.getFullYear(), t.getMonth(), t.getDate() + add));
-  }
+  // the next block starts the day after the last one ends
+  const lastEnd = dayOf(PLAN.data.end);
+  $("pl-start").value = isoOf(new Date(lastEnd.getFullYear(), lastEnd.getMonth(), lastEnd.getDate() + 1));
   renderPlan();
 }
 
@@ -45,9 +44,9 @@ function drawPlanChart(d) {
   if (!days.length) { laneChart($("pl-chart"), 280, [], 0, 1); return; }
   const lastF = fc.days.length - 1;
   const end = lastF >= 0 ? { ctl: fc.ctl[lastF], atl: fc.atl[lastF], tsb: fc.tsb[lastF], day: fc.days[lastF] } : null;
-  $("pl-readout").innerHTML = end ? `end of block (${SHORT_DAY.format(dayOf(end.day))}): fitness <b>${fmt(end.ctl)}</b> · fatigue <b>${fmt(end.atl)}</b> · form <b>${end.tsb > 0 ? "+" : ""}${fmt(end.tsb)}</b>` : "";
+  $("pl-readout").innerHTML = end ? `end of ${d.blocks && d.blocks.length > 1 ? "the plan" : "block"} (${SHORT_DAY.format(dayOf(end.day))}): fitness <b>${fmt(end.ctl)}</b> · fatigue <b>${fmt(end.atl)}</b> · form <b>${end.tsb > 0 ? "+" : ""}${fmt(end.tsb)}</b>` : "";
   const today = A.days.length ? A.ctl[A.ctl.length - 1] : 0;
-  $("pl-note").textContent = end ? `Fitness ${end.ctl >= today ? "+" : ""}${fmt(end.ctl - today)} over the block. ${formWord(end.tsb)[0].toUpperCase() + formWord(end.tsb).slice(1)} at the end. ` +
+  $("pl-note").textContent = end ? `Fitness ${end.ctl >= today ? "+" : ""}${fmt(end.ctl - today)} by then. ${formWord(end.tsb)[0].toUpperCase() + formWord(end.tsb).slice(1)} at the end. ` +
     "Solid: what happened; dashed: the plan, if ridden as written (each workout's TSS at your current FTP)." : "Plan some days to see the forecast.";
   const [y0, y1] = niceRange(all("ctl").concat(all("atl")), 10, 3);
   const [f0, f1] = niceRange(all("tsb").concat([0]), 10, 3);
@@ -60,8 +59,12 @@ function drawPlanChart(d) {
   const { ctx, X } = ch, [L1, L2] = ch.lanes;
   const x = (iso) => X(dayOf(iso).getTime());
   // the block, shaded; today as a line
-  ctx.fillStyle = lcd ? "rgba(27,30,25,0.06)" : blend(C.power, C.panel, 0.93);
-  ctx.fillRect(x(d.start), L1.top, x(d.end) - x(d.start) + 1, L2.top + L2.h - L1.top);
+  (d.blocks || [{ start: d.start, end: d.end }]).forEach((b, i) => {          // each block shaded, every other one lighter
+    ctx.fillStyle = lcd ? `rgba(27,30,25,${i % 2 ? 0.03 : 0.07})` : blend(C.power, C.panel, i % 2 ? 0.96 : 0.92);
+    ctx.fillRect(x(b.start), L1.top, x(b.end) - x(b.start) + 1, L2.top + L2.h - L1.top);
+    ctx.fillStyle = C.dim; ctx.textAlign = "left"; ctx.font = "11px Barlow, 'IBM Plex Sans', sans-serif";
+    if (d.blocks && d.blocks.length > 1) ctx.fillText(`Block ${b.n}`, x(b.start) + 4, L1.top + 12);
+  });
   if (A.days.length) {
     ctx.strokeStyle = C.dim; ctx.lineWidth = 1;
     const tx = x(A.days[A.days.length - 1]);
@@ -97,31 +100,50 @@ function entryText(e) {
 }
 function renderPlanGrid(d) {
   const today = isoOf(new Date());
-  const cells = WEEKDAYS.map((w) => `<div class="pl-h">${w}</div>`).concat(`<div class="pl-h">Week</div>`);
-  d.days.forEach((x, i) => {
-    const dd = dayOf(x.day), isToday = x.day === today, past = x.day < today;
-    const st = { done: `done ${fmt(x.done_tss)}`, missed: "missed", extra: `extra ${fmt(x.done_tss)}`, today: "today" }[x.status] || "";
-    cells.push(`<button class="pl-d${isToday ? " today" : ""}${past ? " past" : ""}${x.warn ? " warn" : ""}" data-day="${x.day}"${x.warn ? ` title="${esc(x.warn)}"` : ""}>` +
-      `<span class="dn">${dd.getDate()} ${SHORT_DAY.format(dd).split(" ")[1] || ""}</span>` +
-      `<span class="nm${x.entry && x.entry.rest ? " rest" : ""}">${x.name ? esc(x.name) : x.entry && x.entry.rest ? "rest" : ""}</span>` +
-      `${x.steps ? "<canvas></canvas>" : "<span></span>"}` +
-      `<span class="mt"><span>${x.minutes ? `${x.minutes} min` : ""}${x.tss != null ? ` · ${fmt(x.tss)}` : ""}</span><span class="st ${x.status}">${x.warn ? "⚠ " : ""}${st}</span></span></button>`);
-    if (i % 7 === 6) {
-      const w = d.weeks[Math.floor(i / 7)], tot = w.split.easy + w.split.moderate + w.split.hard;
-      const seg = (k, cls) => (w.split[k] ? `<i class="${cls}" style="flex:${w.split[k]}"></i>` : "");
-      cells.push(`<div class="pl-w"><span><b>${hm(w.minutes * 60)}</b></span><span><b>${fmt(w.tss)}</b> TSS${w.done_tss ? ` · done ${fmt(w.done_tss)}` : ""}</span>` +
-        (tot ? `<div class="mix-bar">${seg("easy", "easy")}${seg("moderate", "mod")}${seg("hard", "hard")}</div>` +
-               `<span>${Math.round((100 * w.split.easy) / tot)}% easy · ${Math.round((100 * w.split.hard) / tot)}% hard</span>` : "") + `</div>`);
-    }
-  });
-  const grid = $("pl-grid");
-  grid.innerHTML = cells.join("");
-  grid.querySelectorAll(".pl-d").forEach((b) => {
+  const head = WEEKDAYS.map((w) => `<div class="pl-h">${w}</div>`).concat(`<div class="pl-h">Week</div>`).join("");
+  const many = d.blocks.length > 1;
+  const html = d.blocks.map((blk) => {
+    const cells = [];
+    d.days.slice(blk.first, blk.first + blk.count).forEach((x, j) => {
+      const dd = dayOf(x.day), isToday = x.day === today, past = x.day < today;
+      const st = { done: `done ${fmt(x.done_tss)}`, missed: "missed", extra: `extra ${fmt(x.done_tss)}`, today: "today" }[x.status] || "";
+      cells.push(`<button class="pl-d${isToday ? " today" : ""}${past ? " past" : ""}${x.warn ? " warn" : ""}" data-day="${x.day}"${x.warn ? ` title="${esc(x.warn)}"` : ""}>` +
+        `<span class="dn">${dd.getDate()} ${SHORT_DAY.format(dd).split(" ")[1] || ""}</span>` +
+        `<span class="nm${x.entry && x.entry.rest ? " rest" : ""}">${x.name ? esc(x.name) : x.entry && x.entry.rest ? "rest" : ""}</span>` +
+        `${x.steps ? "<canvas></canvas>" : "<span></span>"}` +
+        `<span class="mt"><span>${x.minutes ? `${x.minutes} min` : ""}${x.tss != null ? ` · ${fmt(x.tss)}` : ""}</span><span class="st ${x.status}">${x.warn ? "⚠ " : ""}${st}</span></span></button>`);
+      if (j % 7 === 6) {
+        const w = blk.weeks[Math.floor(j / 7)], tot = w.split.easy + w.split.moderate + w.split.hard;
+        const seg = (k, cls) => (w.split[k] ? `<i class="${cls}" style="flex:${w.split[k]}"></i>` : "");
+        cells.push(`<div class="pl-w"><span><b>${hm(w.minutes * 60)}</b></span><span><b>${fmt(w.tss)}</b> TSS${w.done_tss ? ` · done ${fmt(w.done_tss)}` : ""}</span>` +
+          (tot ? `<div class="mix-bar">${seg("easy", "easy")}${seg("moderate", "mod")}${seg("hard", "hard")}</div>` +
+                 `<span>${Math.round((100 * w.split.easy) / tot)}% easy · ${Math.round((100 * w.split.hard) / tot)}% hard</span>` : "") + `</div>`);
+      }
+    });
+    const now = blk.start <= today && today <= blk.end, last = blk.n === d.blocks.length;
+    const bhead = `<div class="pl-bhead"><h2>Block ${blk.n}</h2>` +
+      `<span class="sub">${SHORT_DAY.format(dayOf(blk.start))} – ${SHORT_DAY.format(dayOf(blk.end))} · ${blk.weeks_n} weeks${now ? " · now" : blk.start > today ? "" : " · done"}</span>` +
+      `<span class="readout"><b>${hm(blk.minutes * 60)}</b> · <b>${fmt(blk.tss)}</b> TSS${blk.done_tss ? ` · done ${fmt(blk.done_tss)}` : ""}</span>` +
+      (many && last ? `<button class="btn pl-rm" title="Take this block off the calendar (its days are kept)">Remove</button>` : "") + `</div>`;
+    return `<div class="pl-block">${bhead}<div class="pl-grid">${head}${cells.join("")}</div></div>`;
+  }).join("");
+  const box = $("pl-grid");
+  box.innerHTML = html;
+  box.querySelectorAll(".pl-d").forEach((b) => {
     const x = d.days.find((y) => y.day === b.dataset.day);
     const cv = b.querySelector("canvas");
     if (cv && x.steps) drawProfile(cv, x.steps);
     b.addEventListener("click", () => editDay(b, x));
   });
+  const rm = box.querySelector(".pl-rm");
+  if (rm) rm.addEventListener("click", (e) => {
+    const btn = e.currentTarget;
+    if (btn.dataset.sure) { act("plan_remove_block"); return; }
+    btn.dataset.sure = "1"; btn.textContent = "Sure? Remove";
+    setTimeout(() => { if (btn.isConnected) { delete btn.dataset.sure; btn.textContent = "Remove"; } }, 4000);
+  });
+  // the paste dialog: which block
+  $("pl-into").innerHTML = d.blocks.map((b) => `<option value="${b.n}"${b.n === d.blocks.length ? " selected" : ""}>Block ${b.n} (${SHORT_DAY.format(dayOf(b.start))} – ${SHORT_DAY.format(dayOf(b.end))})</option>`).join("");
 }
 function editDay(cell, x) {
   if (cell.querySelector("input") || S.snap?.viewer) return;     // the web view only shows the plan
@@ -149,12 +171,12 @@ function editDay(cell, x) {
 // ---- new block, paste a plan, copy the status
 $("pl-make").addEventListener("click", (e) => {
   e.preventDefault(); e.currentTarget.blur();
-  act("plan_new", { start: $("pl-start").value, weeks: +$("pl-weeks").value });
+  act("plan_add", { start: $("pl-start").value, weeks: +$("pl-weeks").value });
 });
 $("pl-paste").addEventListener("click", (e) => { e.currentTarget.blur(); $("pl-dialog").hidden = false; $("pl-text").focus(); });
 $("pl-cancel").addEventListener("click", () => { $("pl-dialog").hidden = true; });
 $("pl-import").addEventListener("click", () => {
-  act("plan_import", { text: $("pl-text").value });
+  act("plan_import", { text: $("pl-text").value, block: +$("pl-into").value || undefined });
   $("pl-dialog").hidden = true; $("pl-text").value = "";
 });
 $("pl-text").addEventListener("keydown", (e) => e.stopPropagation());

@@ -465,8 +465,8 @@
 <div class="screen plan" id="scr-plan" hidden>
   <div class="sum-head">
     <h1>Training plan <span class="sub-title" id="pl-range"></span></h1>
-    <label class="pl-new">Block from <input type="date" id="pl-start"> <select id="pl-weeks"><option>2</option><option>3</option><option selected>4</option><option>5</option><option>6</option></select> weeks
-      <button class="btn" id="pl-make">New block</button></label>
+    <label class="pl-new">Next block from <input type="date" id="pl-start"> <select id="pl-weeks"><option>2</option><option>3</option><option selected>4</option><option>5</option><option>6</option></select> weeks
+      <button class="btn" id="pl-make">Add block</button></label>
     <button class="btn" id="pl-paste">Paste plan</button>
     <button class="btn primary" id="pl-copy">Copy status for Claude</button>
   </div>
@@ -477,7 +477,7 @@
     <p class="wk-note" id="pl-note"></p>
   </section>
   <section class="panel pl-cal">
-    <div class="pl-grid" id="pl-grid"></div>
+    <div class="pl-blocks" id="pl-grid"></div>
     <p class="wk-note">Click a day to change it: a workout's name, shorthand like <code>60m Z2</code> or <code>3x(12m 90%, 4m 55%)</code>, or rest. Empty removes it.</p>
   </section>
 </div>
@@ -486,6 +486,7 @@
   <div class="card pl-card" role="dialog" aria-modal="true" aria-labelledby="pl-d-title">
     <h3 id="pl-d-title">Paste a plan</h3>
     <p class="pl-d-sub">One line per day, as Claude writes it: <code>Week 1</code>, then <code>Tue: Threshold 2x20 | 15m 50-70%, 2x(20m 90%, 5m 55%), 10m 50%</code>, <code>Wed: 60m Z2</code>, <code>Thu: Threshold steps</code>, <code>Mon: rest</code>. Days count from the block's first Monday.</p>
+    <label class="pl-into">Into <select id="pl-into"></select></label>
     <textarea id="pl-text" rows="14" spellcheck="false"></textarea>
     <div class="buttons"><button class="btn" id="pl-cancel">Cancel</button><button class="btn primary" id="pl-import">Import</button></div>
   </div>

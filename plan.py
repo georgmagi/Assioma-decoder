@@ -3,7 +3,8 @@ The training planner: a block of days (usually 4 weeks from a Monday), each a wo
 workout (workout.parse_text) or rest; what it does to fitness, fatigue and form; how the days went;
 and a status summary to hand to Claude when asking for the next block.
 
-The plan lives in plan.json next to the app: {"start": "YYYY-MM-DD", "weeks": 4,
+The plan lives in plan.json next to the app: {"start": "YYYY-MM-DD", "weeks": 4, "blocks": [{start,
+weeks}, ...] (one after another; start/weeks name the first, for older copies of the app),
 "days": {"YYYY-MM-DD": {"rest": true} | {"ref": workout id} | {"text": shorthand, "name": name}}}.
 
 Import format (what Claude writes; one line per day, "Week N" lines move to the next week):
@@ -52,6 +53,44 @@ def save(path: str, plan: dict) -> None:
 def empty(start: Optional[date] = None, weeks: int = 4) -> dict:
     start = start or next_monday(date.today())
     return {"start": start.isoformat(), "weeks": weeks, "days": {}}
+
+
+def blocks(plan: dict) -> list:
+    """The plan's blocks in order, [{start, weeks}]. A plan from before blocks is its one block."""
+    bs = plan.get("blocks") or [{"start": plan.get("start") or date.today().isoformat(), "weeks": plan.get("weeks", 4)}]
+    return sorted(({"start": b["start"], "weeks": int(b.get("weeks", 4))} for b in bs), key=lambda b: b["start"])
+
+
+def block_end(b: dict) -> date:
+    return date.fromisoformat(b["start"]) + timedelta(weeks=b["weeks"]) - timedelta(days=1)
+
+
+def add_block(plan: dict, start: Optional[date] = None, weeks: int = 4) -> dict:
+    """Another block after the last one: from the Monday after it (or the Monday of `start`, if
+    later). The days already planned stay; plan["start"] / ["weeks"] keep naming the first block,
+    so an older copy of the app still reads the plan."""
+    if not plan.get("days") and not plan.get("blocks"):         # nothing planned yet: this is the first block
+        s = (start or next_monday(date.today()))
+        s -= timedelta(days=s.weekday())
+        plan.update({"start": s.isoformat(), "weeks": weeks, "blocks": [{"start": s.isoformat(), "weeks": weeks}]})
+        return plan
+    bs = blocks(plan)
+    after = block_end(bs[-1]) + timedelta(days=1)
+    s = start - timedelta(days=start.weekday()) if start else after
+    s = max(s, after)
+    bs.append({"start": s.isoformat(), "weeks": weeks})
+    plan["blocks"] = bs
+    plan["start"], plan["weeks"] = bs[0]["start"], bs[0]["weeks"]
+    return plan
+
+
+def remove_last_block(plan: dict) -> dict:
+    """The last block off the calendar. Its days stay in the plan (never thrown away): adding the
+    block back shows them again."""
+    bs = blocks(plan)
+    if len(bs) > 1:
+        plan["blocks"] = bs[:-1]
+    return plan
 
 
 def next_monday(d: date) -> date:
@@ -146,25 +185,44 @@ def zone_split(w: dict) -> dict:
 def overview(plan: dict, library: dict, rides: list, ftp: Optional[float], today: date) -> dict:
     """Everything the Plan page shows: each day (planned workout, its estimate, what was ridden),
     the weeks, and the fitness / fatigue / form forecast through the end of the block."""
-    start = date.fromisoformat(plan["start"])
-    end = start + timedelta(weeks=plan.get("weeks", 4)) - timedelta(days=1)
     actual = training.daily_tss(rides)
-    days, weeks = [], []
-    for k in range((end - start).days + 1):
-        d = start + timedelta(days=k)
-        e = plan["days"].get(d.isoformat())
-        w = resolve(e, library) if e else None
-        est = wk.estimate(w, ftp) if w and ftp else {}
-        done = actual.get(d)
-        status = ("rest" if e and e.get("rest") else "upcoming" if d > today
-                  else "done" if done else "today" if d == today else "missed" if w else "")
-        if done and not w and not (e and e.get("rest")):
-            status = "extra"
-        days.append({"day": d.isoformat(), "entry": e, "name": w["name"] if w else None,
-                     "id": day_id(plan, d, library), "minutes": round(wk.total_s(w) / 60) if w else 0,
-                     "tss": est.get("tss"), "if": est.get("if"), "done_tss": done, "status": status,
-                     "split": zone_split(w) if w else None,
-                     "steps": [[s["dur"], s["lo"], s["hi"]] for s in w["steps"]] if w else None})
+    days, weeks, out_blocks = [], [], []
+    bs = blocks(plan)
+    for n, b in enumerate(bs, 1):
+        first = len(days)
+        bstart, bend = date.fromisoformat(b["start"]), block_end(b)
+        for k in range((bend - bstart).days + 1):
+            days.append(_day(plan, bstart + timedelta(days=k), library, actual, ftp, today))
+        bdays = days[first:]
+        bweeks = _weeks(bdays)
+        weeks += bweeks
+        out_blocks.append({"n": n, "start": b["start"], "end": bend.isoformat(), "weeks_n": b["weeks"],
+                           "first": first, "count": len(bdays), "weeks": bweeks,
+                           "minutes": sum(w["minutes"] for w in bweeks), "tss": sum(w["tss"] for w in bweeks),
+                           "done_tss": sum(w["done_tss"] for w in bweeks)})
+    return {"start": bs[0]["start"], "end": out_blocks[-1]["end"], "weeks_n": sum(b["weeks"] for b in bs), "days": days,
+            "weeks": weeks, "blocks": out_blocks, "forecast": forecast(rides, days, today)}
+
+
+def _day(plan: dict, d: date, library: dict, actual: dict, ftp, today: date) -> dict:
+    """One day of the calendar: what's planned, its estimate, and what was ridden."""
+    e = plan["days"].get(d.isoformat())
+    w = resolve(e, library) if e else None
+    est = wk.estimate(w, ftp) if w and ftp else {}
+    done = actual.get(d)
+    status = ("rest" if e and e.get("rest") else "upcoming" if d > today
+              else "done" if done else "today" if d == today else "missed" if w else "")
+    if done and not w and not (e and e.get("rest")):
+        status = "extra"
+    return {"day": d.isoformat(), "entry": e, "name": w["name"] if w else None,
+            "id": day_id(plan, d, library), "minutes": round(wk.total_s(w) / 60) if w else 0,
+            "tss": est.get("tss"), "if": est.get("if"), "done_tss": done, "status": status,
+            "split": zone_split(w) if w else None,
+            "steps": [[s["dur"], s["lo"], s["hi"]] for s in w["steps"]] if w else None}
+
+
+def _weeks(days: list) -> list:
+    weeks = []
     for k in range(0, len(days), 7):
         wd = days[k: k + 7]
         split = {"easy": 0, "moderate": 0, "hard": 0}
@@ -173,8 +231,7 @@ def overview(plan: dict, library: dict, rides: list, ftp: Optional[float], today
                 split[z] += v
         weeks.append({"start": wd[0]["day"], "minutes": sum(x["minutes"] for x in wd),
                       "tss": sum(x["tss"] or 0 for x in wd), "done_tss": sum(x["done_tss"] or 0 for x in wd), "split": split})
-    return {"start": plan["start"], "end": end.isoformat(), "weeks_n": plan.get("weeks", 4), "days": days,
-            "weeks": weeks, "forecast": forecast(rides, days, today)}
+    return weeks
 
 
 def forecast(rides: list, days: list, today: date) -> dict:
@@ -253,8 +310,13 @@ def status_text(progress: dict, rides: list, settings: dict, over: Optional[dict
                          f"TSS {f(r.get('tss'))}, avg HR {f(r.get('avg_hr'))}, Pw:HR {f(r.get('decoupling_pct'), 1)} %"
                          + (f", durability {dur.get('score')}" if dur else "") + (f", room {f(r.get('temp_c'), 1)} C" if r.get("temp_c") is not None else ""))
     if over:
-        lines += ["", f"## Current block ({over['start']} to {over['end']})"]
+        today_s = date.today().isoformat()
+        cur = next((b for b in over.get("blocks", []) if b["start"] <= today_s <= b["end"]), None) or \
+            (over.get("blocks") or [{"start": over["start"], "end": over["end"]}])[-1]
+        lines += ["", f"## Current block ({cur['start']} to {cur['end']})"]
         for d in over["days"]:
+            if not cur["start"] <= d["day"] <= cur["end"]:
+                continue
             if d["status"] in ("done", "missed", "extra", "today") or d["day"] <= date.today().isoformat():
                 lines.append(f"- {d['day']}: planned {d['name'] or 'rest'} ({f(d['tss'])} TSS), done {f(d['done_tss'])} TSS")
     lines += ["", "Please write the next 4-week block, one line per day in this format (shorthand: durations 90s/12m/1h,",

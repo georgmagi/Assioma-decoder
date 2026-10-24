@@ -645,14 +645,19 @@ class Engine(threading.Thread):
 
     def _plan_action(self, name: str, arg) -> None:
         lib = self.workouts()
-        if name == "plan_new" and isinstance(arg, dict):
+        if name in ("plan_new", "plan_add") and isinstance(arg, dict):
             try:
-                start = date.fromisoformat(arg.get("start", ""))
+                start = date.fromisoformat(arg.get("start", "")) if arg.get("start") else None
             except (TypeError, ValueError):
-                return
+                start = None
             weeks = arg.get("weeks", 4)
-            self.plan = pl.empty(start - timedelta(days=start.weekday()), weeks if weeks in (1, 2, 3, 4, 5, 6) else 4)
-            self._plan_changed()
+            pl.add_block(self.plan, start, weeks if weeks in (1, 2, 3, 4, 5, 6) else 4)   # never replaces: adds after
+            self._plan_changed(f"Block {len(pl.blocks(self.plan))} added.")
+        elif name == "plan_remove_block":
+            n = len(pl.blocks(self.plan))
+            pl.remove_last_block(self.plan)
+            self._plan_changed(f"Block {n} taken off the calendar; its days are kept and come back if you add it again."
+                               if n > 1 else "")
         elif name == "plan_set" and isinstance(arg, dict) and isinstance(arg.get("date"), str):
             try:
                 date.fromisoformat(arg["date"])
@@ -666,7 +671,10 @@ class Engine(threading.Thread):
                 self.plan_msg = str(e)
                 self.plan_version += 1
         elif name == "plan_import" and isinstance(arg, dict):
-            days, problems = pl.parse_import(str(arg.get("text") or ""), date.fromisoformat(self.plan["start"]), lib)
+            bs = pl.blocks(self.plan)
+            k = arg.get("block")
+            b = bs[k - 1] if isinstance(k, int) and 1 <= k <= len(bs) else bs[-1]     # into the block you chose (last by default)
+            days, problems = pl.parse_import(str(arg.get("text") or ""), date.fromisoformat(b["start"]), lib)
             self.plan["days"].update(days)
             msg = f"Imported {len(days)} day{'s' if len(days) != 1 else ''}."
             if problems:
