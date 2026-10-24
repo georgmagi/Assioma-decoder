@@ -495,7 +495,7 @@ function dither(u) {                            // LCD fill: a 50 % checkerboard
 }
 function makeCharts() {
   const lcd = THEME === "lcd";
-  const axisFont = "12px Bahnschrift, 'Segoe UI', sans-serif";
+  const axisFont = "12px Barlow, 'IBM Plex Sans', sans-serif";
   const common = (el) => ({
     width: el.clientWidth, height: el.clientHeight,
     legend: { show: false },
@@ -539,7 +539,7 @@ function makeCharts() {
     hline(u, "hr", ref.hr, blend(C.hr, C.panel, 0.4), true);
     const dpr = devicePixelRatio || 1;
     u.ctx.save();
-    u.ctx.font = `${11 * dpr}px Bahnschrift, 'Segoe UI', sans-serif`;
+    u.ctx.font = `${11 * dpr}px Barlow, 'IBM Plex Sans', sans-serif`;
     u.ctx.fillStyle = blend(C.hr, C.panel, 0.25); u.ctx.textAlign = "left";
     u.ctx.fillText(`VT1 ${Math.round(ref.hr)}`, u.bbox.left + 6 * dpr, u.valToPos(ref.hr, "hr", true) - 4 * dpr);
     u.ctx.restore();
@@ -598,15 +598,17 @@ function setTheme(name, save = true) {
   document.documentElement.dataset.theme = name;
   Object.assign(C, PALETTES[name]);
   for (const k of ["power", "beats"]) if (plots[k]) { plots[k].destroy(); delete plots[k]; }   // rebuilt in the new ink
-  for (const b of $("themes").querySelectorAll("button")) b.classList.toggle("on", b.dataset.theme === name);
+  for (const b of document.querySelectorAll(".themes button")) b.classList.toggle("on", b.dataset.theme === name);
   if (S.snap?.screen === "ride" && S.snap.ride) { renderTiles(S.snap); renderGraph(); }
   if (typeof redrawSummary === "function") redrawSummary();
   if (typeof redrawProgress === "function") redrawProgress();
 }
-for (const b of $("themes").querySelectorAll("button")) {
+for (const b of document.querySelectorAll(".themes button")) {
   b.classList.toggle("on", b.dataset.theme === THEME);
   b.addEventListener("click", () => { setTheme(b.dataset.theme); b.blur(); });
 }
+// the charts draw their text on canvas: once the app's own fonts are in, draw them again
+document.fonts.ready.then(() => { setTheme(THEME, false); window.dispatchEvent(new Event("resize")); });
 function renderGraph() {
   const has = G.x.length > 0 || B.x.length > 0;
   $("chart-empty").hidden = has;
@@ -773,6 +775,7 @@ function showScreen(name) {
   for (const n of ["home", "plan", "workouts", "stats", "ride", "summary"]) $("scr-" + n).hidden = n !== name;
   // the top bar on the pages; a ride (and a ride's summary) has the whole window
   const page = ["home", "plan", "workouts", "stats"].includes(name);
+  document.body.classList.toggle("page", page);
   $("topnav").hidden = !page && name !== "summary";
   for (const b of $("topnav").querySelectorAll("button[data-page]"))
     b.classList.toggle("on", b.dataset.page === (name === "summary" ? S.snap?.back_to : name));
@@ -1028,7 +1031,7 @@ function drawMove(now) {
     ctx.strokeStyle = C.grid; ctx.lineWidth = 1;                          // frame and cross-hair
     ctx.strokeRect(cx - r + 0.5, cy - r + 0.5, 2 * r - 1, 2 * r - 1);
     ctx.beginPath(); ctx.moveTo(cx - r, cy); ctx.lineTo(cx + r, cy); ctx.moveTo(cx, cy - r); ctx.lineTo(cx, cy + r); ctx.stroke();
-    ctx.fillStyle = C.dim; ctx.font = "10px Bahnschrift, 'Segoe UI', sans-serif"; ctx.textAlign = "left";
+    ctx.fillStyle = C.dim; ctx.font = "10px Barlow, 'IBM Plex Sans', sans-serif"; ctx.textAlign = "left";
     ctx.fillText(vi ? "side" : "front", cx - r + 5, cy - r + 13);
     const hx = vi ? 3 : 1;                                                  // front: side-to-side; side: fore-aft
     for (let i = 1; i < trail.length; i++) {

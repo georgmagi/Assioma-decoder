@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import json
 import mimetypes
+mimetypes.add_type("font/woff2", ".woff2")
 import os
 import re
 import queue

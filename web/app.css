@@ -1,4 +1,24 @@
 /* Assioma Recorder. One dark look (a training screen): the palette of the tkinter recorder. */
+/* the app's own type, the same on every computer (fonts/, SIL Open Font License): Barlow for numbers,
+   IBM Plex Sans for words */
+@font-face { font-family: "Barlow"; font-weight: 400; font-display: swap; src: url("fonts/barlow-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "Barlow"; font-weight: 500; font-display: swap; src: url("fonts/barlow-latin-500-normal.woff2") format("woff2"); }
+@font-face { font-family: "Barlow"; font-weight: 600; font-display: swap; src: url("fonts/barlow-latin-600-normal.woff2") format("woff2"); }
+@font-face { font-family: "Barlow"; font-weight: 700; font-display: swap; src: url("fonts/barlow-latin-700-normal.woff2") format("woff2"); }
+@font-face { font-family: "Barlow Semi Condensed"; font-weight: 600; font-display: swap; src: url("fonts/barlow-semi-condensed-latin-600-normal.woff2") format("woff2"); }
+@font-face { font-family: "Barlow Semi Condensed"; font-weight: 700; font-display: swap; src: url("fonts/barlow-semi-condensed-latin-700-normal.woff2") format("woff2"); }
+@font-face { font-family: "IBM Plex Sans"; font-weight: 400; font-display: swap; src: url("fonts/ibm-plex-sans-latin-400-normal.woff2") format("woff2"); }
+@font-face { font-family: "IBM Plex Sans"; font-weight: 500; font-display: swap; src: url("fonts/ibm-plex-sans-latin-500-normal.woff2") format("woff2"); }
+@font-face { font-family: "IBM Plex Sans"; font-weight: 600; font-display: swap; src: url("fonts/ibm-plex-sans-latin-600-normal.woff2") format("woff2"); }
+@font-face { font-family: "IBM Plex Sans"; font-weight: 400; font-display: swap; src: url("fonts/ibm-plex-sans-latin-ext-400-normal.woff2") format("woff2");
+  unicode-range: U+0100-024F, U+0259, U+1E00-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: "IBM Plex Sans"; font-weight: 600; font-display: swap; src: url("fonts/ibm-plex-sans-latin-ext-600-normal.woff2") format("woff2");
+  unicode-range: U+0100-024F, U+0259, U+1E00-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF; }
+@font-face { font-family: "IBM Plex Sans"; font-weight: 400; font-display: swap; src: url("fonts/ibm-plex-sans-greek-400-normal.woff2") format("woff2");
+  unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF; }
+@font-face { font-family: "IBM Plex Sans"; font-weight: 600; font-display: swap; src: url("fonts/ibm-plex-sans-greek-600-normal.woff2") format("woff2");
+  unicode-range: U+0370-0377, U+037A-037F, U+0384-038A, U+038C, U+038E-03A1, U+03A3-03FF; }
+@font-face { font-family: "IBM Plex Mono"; font-weight: 400; font-display: swap; src: url("fonts/ibm-plex-mono-latin-400-normal.woff2") format("woff2"); }
 :root {
   color-scheme: dark;
   --bg: #0b0d10;
@@ -18,8 +38,10 @@
   --btn-primary: #1f6feb;
   --btn-neutral: #232830;
   --btn-go: #1f9d63;
-  --num: "Bahnschrift", "DIN Alternate", "Segoe UI", system-ui, sans-serif;
-  --ui: "Segoe UI", system-ui, -apple-system, sans-serif;
+  --num: "Barlow", "Bahnschrift", "DIN Alternate", sans-serif;
+  --num-cond: "Barlow Semi Condensed", "Barlow", sans-serif;
+  --ui: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", Consolas, monospace;
   --r: 12px;
   --gap: 14px;                                   /* between the tiles and between the panels */
   /* the first column of the top strip and of the panels below: one definition, so edges align */
@@ -488,7 +510,7 @@ body:has(#topnav:not([hidden])) { grid-template-rows: auto minmax(0, 1fr) auto; 
 .mix-key span { display: inline-flex; align-items: center; gap: 6px; }
 .mix-key i { width: 10px; height: 10px; border-radius: 3px; }
 .mix-key b { color: var(--fg); font-family: var(--num); font-weight: 600; }
-.easy { background: #5b9dff; } .mod { background: #3ddc97; } .hard { background: #ff9f43; }
+.hw-mix .easy { background: #5b9dff; } .hw-mix .mod { background: #3ddc97; } .hw-mix .hard { background: #ff9f43; }
 /* form gauge */
 .hf-gauge { display: grid; gap: 4px; margin-top: 4px; }
 .g-bar { position: relative; display: flex; height: 10px; border-radius: 5px; gap: 2px; }
@@ -502,8 +524,8 @@ body:has(#topnav:not([hidden])) { grid-template-rows: auto minmax(0, 1fr) auto; 
 .g-key { display: flex; gap: 2px; font-size: 10.5px; color: var(--dim); }
 .g-key span { text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .g-key span.on { color: var(--fg); font-weight: 600; }
-[data-theme="lcd"] .easy, [data-theme="lcd"] .mod, [data-theme="lcd"] .hard { background: var(--fg); }
-[data-theme="lcd"] .mod { opacity: 0.6; } [data-theme="lcd"] .easy { opacity: 0.3; }
+[data-theme="lcd"] .hw-mix .easy, [data-theme="lcd"] .hw-mix .mod, [data-theme="lcd"] .hw-mix .hard { background: var(--fg); }
+[data-theme="lcd"] .hw-mix .mod { opacity: 0.6; } [data-theme="lcd"] .hw-mix .easy { opacity: 0.3; }
 [data-theme="lcd"] .g-bar i { background: var(--fg); opacity: 0.2; } [data-theme="lcd"] .g-bar i.on { opacity: 0.75; }
 [data-theme="lcd"] .g-mark { box-shadow: 0 0 0 2px var(--lcd); }
 .hero-weeks .panel-head .seg { margin-left: auto; }
@@ -969,7 +991,7 @@ body:has(#topnav:not([hidden])) { grid-template-rows: auto minmax(0, 1fr) auto; 
 [data-theme="lcd"] .cal-d.today { border: 2px solid var(--fg); }
 [data-theme="lcd"] .chip { background: var(--fg); color: #b0bba6; }
 [data-theme="lcd"] .chip:hover, [data-theme="lcd"] .chip:focus-visible { background: #000; color: #fff; }
-[data-theme="lcd"] .nav { background: linear-gradient(#a2a8ae, #7f858b); color: #fff; }
+[data-theme="lcd"] .nav { background: transparent; color: var(--fg); border: 1.5px solid var(--fg); box-shadow: none; text-shadow: none; }
 [data-theme="lcd"] .cap .key i.tsb { background: var(--fg) !important; }
 [data-theme="lcd"] .cap .key i.atl { height: 0; border-top: 1.5px dashed var(--fg); background: none !important; }
 [data-theme="lcd"] .totals dd, [data-theme="lcd"] .pmc-now .num { font-weight: 700; }
@@ -1119,7 +1141,7 @@ body:has(#topnav:not([hidden])) { grid-template-rows: auto minmax(0, 1fr) auto; 
 .pl-w b { color: var(--fg); font: 15px var(--num); }
 .pl-w .mix-bar { height: 6px; }
 .pl-card { width: min(760px, 92vw); }
-.pl-card textarea { width: 100%; box-sizing: border-box; font: 13px/1.45 Consolas, "Cascadia Mono", monospace; background: var(--bg); color: var(--fg);
+.pl-card textarea { width: 100%; box-sizing: border-box; font: 13px/1.45 var(--mono); background: var(--bg); color: var(--fg);
   border: 1px solid var(--grid); border-radius: 6px; padding: 8px 10px; resize: vertical; }
 .pl-d-sub { color: var(--dim); font-size: 13px; line-height: 1.5; margin: 0 0 10px; }
 .wo-lib .panel-head .btn { margin-left: auto; }
@@ -1128,11 +1150,11 @@ body:has(#topnav:not([hidden])) { grid-template-rows: auto minmax(0, 1fr) auto; 
 .wo-build .panel-head .btn { margin-left: 0; }
 .wb-name, .wb-text { display: grid; grid-template-columns: 4.5em 1fr; gap: 10px; align-items: start; color: var(--dim); }
 .wb-name input, .wb-text textarea { background: var(--bg); color: var(--fg); border: 1px solid var(--grid); border-radius: 6px; padding: 7px 10px;
-  font: 14px Consolas, "Cascadia Mono", monospace; }
+  font: 14px var(--mono); }
 .wb-name input { font-family: var(--ui); }
 .wb-help { margin: 0; color: var(--dim); font-size: 12.5px; line-height: 1.6; }
 .wb-err { margin: 0; color: var(--bad); font-size: 13px; min-height: 1em; }
-code { font: 12px Consolas, "Cascadia Mono", monospace; background: color-mix(in srgb, var(--fg) 8%, transparent); padding: 1px 4px; border-radius: 3px; }
+code { font: 12px var(--mono); background: color-mix(in srgb, var(--fg) 8%, transparent); padding: 1px 4px; border-radius: 3px; }
 [data-theme="lcd"] .pl-d { background: rgba(27, 30, 25, 0.06); border-color: rgba(27, 30, 25, 0.35); }
 [data-theme="lcd"] .pl-d.today { border-color: var(--fg); box-shadow: inset 0 0 0 1.5px var(--fg); }
 [data-theme="lcd"] .pl-d .st.done, [data-theme="lcd"] .pl-d .st.missed, [data-theme="lcd"] .pl-d .st.extra { color: var(--fg); }
@@ -1217,3 +1239,55 @@ body.alerting::after { content: ""; position: fixed; inset: 0; pointer-events: n
 .dur-table td.dim small { color: var(--faint); }
 .settings input[type="date"] { width: auto; font-size: 15px; color-scheme: dark; }
 [data-theme="lcd"] .settings input[type="date"] { color-scheme: light; }
+
+/* ==== one system across the app: titles, buttons, fields, scrollbars ==================== */
+/* panel titles: sentence case, one size, both themes; small capitals only label numbers */
+.panel-head h2, .rd-lab, .hf-lab { font: 600 15px/1.2 var(--ui); letter-spacing: 0; text-transform: none; color: var(--fg); }
+[data-theme="lcd"] .panel-head h2, [data-theme="lcd"] .rd-lab, [data-theme="lcd"] .hf-lab { font-size: 15px; letter-spacing: 0; color: var(--fg); }
+.stats dt, .ov-stats dt, .hero-now dt, .sum-stats dt, .totals dt, .cal-h, .pl-h, .pmc-now .lab { letter-spacing: 0.08em; }
+[data-theme="lcd"] .num { font-family: var(--num-cond); }
+
+/* buttons: 8 px corners, one height; solid = the main action, the rest quieter */
+.btn { border-radius: 8px; padding: 8px 16px; font: 600 13.5px/1.2 var(--ui); border: 1px solid transparent; }
+.btn:where(:not(.primary):not(.go):not(.danger)) { border-color: #2f3640; }
+.panel-head .btn, .wo-detail .panel-head .btn { padding: 6px 13px; font-size: 13px; }
+.btn.big { padding: 15px 20px; font-size: 16px; }
+.nav-go .btn.primary { padding: 8px 20px; }
+/* LCD, on the glass (panels, dialogs): printed in ink; the main action in inverse video */
+[data-theme="lcd"] :is(.panel, .card) .btn {
+  background: transparent; color: var(--fg); text-shadow: none; box-shadow: none; border: 1.5px solid var(--fg); }
+[data-theme="lcd"] :is(.panel, .card) :is(.btn.primary, .btn.go) { background: var(--fg); color: #b0bba6; }
+[data-theme="lcd"] :is(.panel, .card) .btn:hover { filter: none; background: rgba(27, 30, 25, 0.1); }
+[data-theme="lcd"] :is(.panel, .card) :is(.btn.primary, .btn.go):hover { background: #2d3229; }
+/* LCD, on the bezel (top bar, bottom bar, page headers): flat keys, the main one light */
+[data-theme="lcd"] .btn:not(:is(.panel, .card) .btn) {
+  background: #4b4f53; color: #eef0f1; text-shadow: none; box-shadow: none; border: 1px solid #5d6166; }
+[data-theme="lcd"] .btn.primary:not(:is(.panel, .card) .btn) { background: #e2e4e6; color: #1b1e19; border-color: #e2e4e6; }
+[data-theme="lcd"] .btn.danger-text:not(:is(.panel, .card) .btn) { color: #ffb3b5; }
+[data-theme="lcd"] .btn:not(:is(.panel, .card) .btn):hover { filter: brightness(1.1); }
+[data-theme="lcd"] .bar .seg button.on { background: #e2e4e6; color: #1b1e19; }
+
+/* fields: the native date and select pickers dressed like the number fields */
+input[type="date"], select { font: 13.5px var(--ui); color: var(--fg); background: var(--bg); border: 1px solid var(--grid);
+  border-radius: 6px; padding: 6px 8px; color-scheme: dark; }
+[data-theme="lcd"] :is(.panel, .card) :is(input[type="date"], select) { color-scheme: light; }
+[data-theme="lcd"] .pl-new input, [data-theme="lcd"] .pl-new select { background: #2a2c2f; color: #e2e4e6; border-color: #5d6166; color-scheme: dark; }
+
+/* scrollbars: thin, out of the way */
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #2a3039; border-radius: 6px; border: 2px solid transparent; background-clip: padding-box; }
+::-webkit-scrollbar-thumb:hover { background-color: #3a424d; }
+::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
+::-webkit-scrollbar-corner { background: transparent; }
+[data-theme="lcd"] ::-webkit-scrollbar-thumb { background-color: #6b7075; }
+[data-theme="lcd"] .panel ::-webkit-scrollbar-thumb { background-color: rgba(27, 30, 25, 0.4); }
+
+/* the pages have no bottom bar (the theme switch sits in the top bar) unless it carries news */
+body.page .bar:not(:has(#sensors:not([hidden]))) { display: none; }
+body.page .bar .ride-ctl { display: none; }
+.topnav .seg.themes { margin: 0; }
+.topnav .seg.themes button { padding: 5px 10px; font-size: 12.5px; }
+[data-theme="lcd"] .topnav .seg { background: #2a2c2f; border-color: #232527; }
+[data-theme="lcd"] .topnav .seg button { color: #a3a7ac; }
+[data-theme="lcd"] .topnav .seg button.on { background: #e2e4e6; color: #1b1e19; }
