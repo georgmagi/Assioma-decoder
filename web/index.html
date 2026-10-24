@@ -207,9 +207,10 @@
         <button data-span="0">Ride</button>
       </div>
     </div>
+    <div class="dyn-row" id="dyn-row" hidden></div>
     <div class="chart" id="chart">
       <div class="plot" id="c-power">
-        <div class="cap"><span class="key"><i class="hr"></i>heart rate, bpm</span><span class="key"><i></i>power 10 s, W</span><span class="key" id="key-1s"><i class="faint"></i>1 s</span><span class="key z2" id="z2-key" hidden><i></i>Z2</span></div>
+        <div class="cap"><span class="key"><i class="hr"></i>heart rate, bpm</span><span class="key"><i></i>power 10 s, W</span><span class="key" id="key-1s"><i class="faint"></i>1 s</span><span class="key z2" id="z2-key" hidden><i></i>Z2</span><span class="key" id="tg-key" hidden><i class="tg"></i>target</span></div>
       </div>
       <div class="plot" id="c-beats">
         <div class="cap"><span class="key"><i class="rr"></i>beat intervals, ms</span><span class="key"><i class="dot"></i>artifact</span><span class="key"><i class="a1"></i><span>DFA <span class="greek">α</span>1</span></span><span class="key"><i class="vt1"></i>0.75 ≈ VT1</span><span class="key"><i class="vt2"></i>0.5 ≈ VT2</span></div>
@@ -502,6 +503,7 @@
 <footer class="bar">
   <div class="sensors" id="sensors"></div>
   <div class="ride-ctl">
+    <div class="fuel" id="fuel" hidden><span id="fuel-txt"></span><button class="wbtn" id="fuel-done">Done</button><button class="wbtn" id="fuel-later">Later</button></div>
     <div class="seg themes" id="themes" role="group" aria-label="Theme">
       <button data-theme="dark">Dark</button><button data-theme="lcd">LCD</button>
     </div>

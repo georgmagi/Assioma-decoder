@@ -193,6 +193,22 @@ main { min-height: 0; display: grid; grid-template-columns: var(--col1) minmax(0
 .seg button.on { background: var(--btn-neutral); color: var(--fg); }
 .seg button:hover:not(.on) { color: var(--fg); }
 .chart { position: relative; min-height: 0; display: grid; grid-template-rows: 1fr 1fr; gap: 6px; }
+/* the ride screen follows the ride (layoutKind in app.js): a free ride keeps the dynamics panel;
+   a workout gives the graphs the full width with dynamics as one line of numbers. Intervals: the
+   power chart (with the target) is the big one; Z2: beat intervals + DFA a1 (the VT1 line) is. */
+#scr-ride[data-kind="intervals"] main, #scr-ride[data-kind="z2"] main { grid-template-columns: minmax(0, 1fr); }
+#scr-ride[data-kind="intervals"] #dyn, #scr-ride[data-kind="z2"] #dyn { display: none; }
+#scr-ride[data-kind="intervals"] .chart { grid-template-rows: 1.6fr 1fr; }
+#scr-ride[data-kind="z2"] .chart { grid-template-rows: 1fr 1.4fr; }
+#scr-ride[data-kind="intervals"] .chart:has(#c-strap:not([hidden])) { grid-template-rows: 1.6fr 1fr 0.7fr; }
+#scr-ride[data-kind="z2"] .chart:has(#c-strap:not([hidden])) { grid-template-rows: 1fr 1.4fr 0.7fr; }
+.panel.graph:has(#dyn-row:not([hidden])) { grid-template-rows: auto auto minmax(0, 1fr); }
+.dyn-row { display: flex; align-items: baseline; gap: 22px; padding: 0 4px 8px; color: var(--dim); font-size: 13px;
+           font-variant-numeric: tabular-nums; white-space: nowrap; overflow: hidden; }
+.dyn-row b { color: var(--fg); font-weight: 600; font-size: 15px; }
+.dyn-row .side { display: flex; gap: 14px; align-items: baseline; }
+.dyn-row .side > span:first-child { font-weight: 700; color: var(--fg); letter-spacing: 0.08em; }
+.dyn-row .sep { width: 1px; align-self: stretch; background: var(--grid); }
 .plot { position: relative; min-height: 0; }
 /* the strap's raw streams under the graphs: ECG and chest movement, swept like a monitor */
 .chart:has(#c-strap:not([hidden])) { grid-template-rows: 1fr 1fr 0.8fr; }
@@ -217,6 +233,7 @@ main { min-height: 0; display: grid; grid-template-columns: var(--col1) minmax(0
 .cap .key i.rr { height: 1.5px; background: #2dd4bf; }
 .cap .key i.a1 { background: #c08cff; }
 .cap .key i.dot { width: 5px; height: 5px; border-radius: 50%; background: var(--bad); }
+.cap .key i.tg { height: 0; background: none; border-top: 1.5px dashed var(--fg); }
 .cap .key i.vt1, .cap .key i.vt2 { height: 0; background: none; border-top: 1.5px dashed #2a7a57; }
 .cap .key i.vt2 { border-top-color: #8a3a3c; }
 .cap .key.z2 i { height: 9px; background: var(--z2); outline: 1px solid #1f3a2a; }
@@ -309,6 +326,12 @@ main { min-height: 0; display: grid; grid-template-columns: var(--col1) minmax(0
 .sensor .link { margin-left: 0; }
 .link.ant { border-color: color-mix(in srgb, var(--good) 55%, transparent); color: var(--good); }
 .ride-ctl { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+/* fuelling on long rides (Engine._fuel): a pill in the bar when it's time, quiet otherwise */
+.fuel { display: flex; align-items: center; gap: 8px; padding: 4px 6px 4px 14px; border-radius: 999px;
+        background: color-mix(in srgb, var(--warn) 18%, transparent); box-shadow: inset 0 0 0 1px var(--warn); color: var(--fg); font-size: 13px; }
+.fuel.quiet { background: none; box-shadow: none; color: var(--dim); padding-left: 0; }
+.fuel .wbtn { height: 26px; padding: 0 10px; }
+.fuel.quiet .wbtn { display: none; }
 .rec {
   display: inline-flex;
   align-items: center;

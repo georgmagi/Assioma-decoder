@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import csv
+import glob
 import os
 import queue
 import sys
@@ -30,6 +31,7 @@ from typing import Optional
 
 import assioma_decoder as dec
 import fit_writer
+import keep
 import ftms
 import hrv
 
@@ -270,7 +272,7 @@ class Session:
         """Take the ride out of your rides, but never lose it: a Discard clicked by mistake after a
         long session costs nothing. Its files go to rides/discarded/ complete (FIT and strap streams
         too); to bring it back, move them into rides/. A ride with no seconds is just deleted.
-        Returns the new base path (None when there was nothing to keep)."""
+        Returns the new base path (None when nothing was recorded; its files are set aside too)."""
         if self.state in ("recording", "paused"):
             for s in self.ps.finish():               # the seconds still being put together
                 self._second(s)
@@ -279,19 +281,12 @@ class Session:
             if not fh.closed:
                 fh.close()
         exts = ("_raw.csv", "_per_second.csv", ".fit", "_meta.json") + STRAP_FILES
-        if not self.seconds:
-            for ext in exts:
-                try:
-                    os.remove(self.base + ext)
-                except OSError:
-                    pass
-            return None
         folder = os.path.join(os.path.dirname(self.base), self.DISCARDED)
-        os.makedirs(folder, exist_ok=True)
-        dest = os.path.join(folder, os.path.basename(self.base))
-        for ext in exts:
-            if os.path.exists(self.base + ext):
-                os.replace(self.base + ext, dest + ext)
+        moved = keep.set_aside_all([self.base + e for e in exts], folder)
+        if not self.seconds:                          # nothing recorded: the raw log is kept all the same
+            return None
+        dest = next((m[: -len("_raw.csv")] for m in moved if m.endswith("_raw.csv")),
+                    os.path.join(folder, os.path.basename(self.base)))
         try:
             fit_writer.write_activity(self.seconds, dest + ".fit", self.pedal_name, self.battery)
         except Exception as e:                        # the CSVs are what matters
@@ -310,12 +305,9 @@ class Session:
             self._second(s)
         self._raw.close()
         self._sec.close()
-        if not self.seconds:            # nothing recorded: don't leave empty files behind
-            for ext in ("_raw.csv", "_per_second.csv"):
-                try:
-                    os.remove(self.base + ext)
-                except OSError:
-                    pass
+        if not self.seconds:            # nothing recorded: out of your rides, but kept (keep.py)
+            keep.set_aside_all([self.base + e for e in ("_raw.csv", "_per_second.csv")],
+                               os.path.join(os.path.dirname(self.base), self.DISCARDED))
             return None
         path = self.base + ".fit"
         summary = fit_writer.write_activity(self.seconds, path, self.pedal_name, self.battery)
@@ -352,6 +344,36 @@ def convert(notes, base: str) -> tuple:
                     if r.get("battery_left_pct") is not None), None)
     summary = fit_writer.write_activity(sec, base + ".fit", battery=battery)
     return base + ".fit", summary, len(sec)
+
+
+def unfinished(folder: str, busy: Optional[str] = None) -> list:
+    """Rides whose recording never finished (the app closed or crashed mid-ride): a raw log with
+    no FIT beside it. busy: the ride being recorded right now, never one of them."""
+    out = []
+    for raw in sorted(glob.glob(os.path.join(folder, "ride_*_raw.csv"))):
+        base = raw[: -len("_raw.csv")]
+        if base != busy and not os.path.exists(base + ".fit"):
+            out.append(base)
+    return out
+
+
+def recover(base: str) -> Optional[tuple]:
+    """Finish an unfinished ride from its raw log, the way --rebuild does: per-second CSV (the
+    partial one the crash left is kept in .recovery/), FIT, strap streams. None if the log holds
+    no recorded seconds (then it's left exactly as it is)."""
+    notes = list(read_raw_log(base + "_raw.csv"))
+    try:
+        sec_probe = dec.per_second(dec.decode(n for n in notes if n.char != EVENT))
+        segs = recording_segments([(n.time, n.data.decode()) for n in notes if n.char == EVENT])
+        if not any(in_segments(r["time"], segs) for r in sec_probe):
+            return None
+    except Exception:
+        return None
+    if os.path.exists(base + "_per_second.csv"):
+        keep.set_aside(base + "_per_second.csv", os.path.join(os.path.dirname(base), ".recovery"))
+    path, summary, n = convert(notes, base)
+    export_strap_streams(base)
+    return path, summary, n
 
 
 def read_raw_log(path: str):

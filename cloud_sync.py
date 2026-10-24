@@ -32,6 +32,12 @@ from datetime import datetime, timezone
 from typing import Callable, Optional
 
 STATE_FILES = ("settings.json", "plan.json", "morning.json")
+# The format the synced files are in. Bumped whenever a change would let an older copy of the app
+# damage them (e.g. drop a settings key it doesn't know when it saves). The server refuses a device
+# on an older format (426): that device says "update the app" and syncs nothing until it is.
+# 2: settings ftp_history, autopause; garmin.json.
+FORMAT = 2
+OUTDATED = "This device's app is older than your server's: update it (git pull, then restart). It won't sync until then."
 # what is synced: the app folder's own files, no deeper folders, no temp files, no logs of this device
 PATH_RE = re.compile(r"^(?:settings\.json|plan\.json|morning\.json|garmin\.json|mornings/[\w.-]+\.csv"
                      r"|workouts/[\w. ()-]+\.zwo|rides/(?!app_log\.txt$)[\w. ()-]+)$")
@@ -94,7 +100,7 @@ class Client:
 
     def _req(self, method: str, path: str, body: Optional[bytes] = None, headers: Optional[dict] = None):
         req = urllib.request.Request(self.url + path, data=body, method=method,
-                                     headers={"Authorization": f"Bearer {self.key}",
+                                     headers={"Authorization": f"Bearer {self.key}", "X-Assioma-Format": str(FORMAT),
                                               "User-Agent": "AssiomaRecorder-sync", **(headers or {})})
         return urllib.request.urlopen(req, timeout=self.timeout)
 
@@ -285,6 +291,12 @@ class Syncer:
             down += self._apply(downloads)
             self.status.update(state="ok", last=datetime.now(timezone.utc).isoformat(timespec="seconds"),
                                msg="", up=up, down=down)
+        except urllib.error.HTTPError as e:
+            if e.code == 426:                       # this device is behind: nothing moves until it's updated
+                self.status.update(state="outdated", msg=OUTDATED)
+            else:
+                self.status.update(state="error", msg=f"HTTP {e.code}: {e.reason}"[:160])
+            self.log(f"sync: {self.status['msg']}")
         except (urllib.error.URLError, OSError, ValueError) as e:
             why = getattr(e, "reason", None) or e
             self.status.update(state="error", msg=f"{type(e).__name__}: {why}"[:160])
@@ -326,11 +338,13 @@ class Syncer:
 
 
 def apply_here(changes: list) -> None:
-    """Put downloaded files in place (tmp None: delete the file)."""
+    """Put downloaded files in place. tmp None: another device deleted it; here it's moved aside
+    into .removed/ next to it (keep.py), never deleted."""
+    import keep
     for _rel, tmp, dest in changes:
         try:
             if tmp is None:
-                os.remove(dest)
+                keep.set_aside(dest, os.path.join(os.path.dirname(dest), ".removed"))
             else:
                 os.replace(tmp, dest)
         except OSError:
@@ -356,7 +370,9 @@ class Background(threading.Thread):
         while not self.stop_flag.is_set():
             self.wake.clear()
             self.syncer.sync_once()
-            if self.syncer.status["state"] == "error":
+            if self.syncer.status["state"] == "outdated":
+                self.wake.wait(EVERY_S * 12)           # it won't change until the app is updated
+            elif self.syncer.status["state"] == "error":
                 self.wake.wait(60)                 # offline: try again in a minute
             else:
                 self.wake.wait(EVERY_S)

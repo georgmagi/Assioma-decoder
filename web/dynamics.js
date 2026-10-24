@@ -61,7 +61,26 @@ const pcoX = (v, inb) => -inb * Math.max(-25, Math.min(25, v)) * (0.72 / 62);
 
 function setText(el, text) { if (el.textContent !== text) el.textContent = text; }
 
+// the one-line dynamics of a workout's layout (layoutKind): per leg W, power phase, peak, TE, PS, PCO
+function renderDynRow(s) {
+  const row = $("dyn-row");
+  if (row.hidden) return;
+  const d = s.dyn || {}, st = s.stats || {};
+  const n = (v, unit = "", plus = false) => v == null ? "--" : `${plus && v > 0 ? "+" : ""}${fmt(v)}${unit}`;
+  const leg = (side, tag) => {
+    const a = d[`pp_${side}_start_deg`], b = d[`pp_${side}_end_deg`];
+    return `<span class="side"><span>${tag}</span><span><b>${n(d[`power_${side}_w`])}</b> W</span>` +
+      `<span>phase <b>${a == null || b == null ? "--" : `${Math.round(a)}–${Math.round(b)}°`}</b></span>` +
+      `<span>TE <b>${n(d[`te_${side}_pct`], "%")}</b></span><span>PS <b>${n(d[`ps_${side}_pct`], "%")}</b></span>` +
+      `<span>PCO <b>${n(d[`pco_${side}_mm`], "", true)}</b> mm${st[`pco_${side}`] == null ? "" : ` (avg ${st[`pco_${side}`] > 0 ? "+" : ""}${st[`pco_${side}`].toFixed(1)})`}</span></span>`;
+  };
+  const pos = d.rider_position ? `<span class="sep"></span><span>${d.rider_position.replace("to_", "→ ")}</span>` : "";
+  const html = leg("left", "L") + '<span class="sep"></span>' + leg("right", "R") + pos;
+  if (row.innerHTML !== html) row.innerHTML = html;
+}
+
 function renderDyn(s) {
+  renderDynRow(s);
   if (!DYN.built) buildDyn();
   const d = s.dyn || {}, st = s.stats || {};
   const pos = d.rider_position, badge = $("pos");

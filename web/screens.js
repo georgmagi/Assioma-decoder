@@ -109,6 +109,11 @@ async function loadMorning(s) {
   $("mc-stats").innerHTML = [
     night && ovStat("Asleep, lowest 30 min", fmt(night.low30), night.base != null ? `bpm · normal ${fmt(night.base)}` : "bpm"),
     night && night.rhr && ovStat("Resting HR (watch)", fmt(night.rhr), "bpm"),
+    night && night.sleep_start && night.sleep_end && (() => {          // hours asleep and when (the watch)
+      const a = new Date(night.sleep_start), b = new Date(night.sleep_end), m = Math.round((b - a) / 60000);
+      const hm = (d) => `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+      return ovStat("Slept", `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}`, `h · ${hm(a)}–${hm(b)}`);
+    })(),
     recent && ovStat("RMSSD", last.rmssd.toFixed(0), "ms"),
     recent && ovStat("7-day ln RMSSD", last.ln7.toFixed(2), last.lo != null ? `normal ${last.lo.toFixed(2)}–${last.hi.toFixed(2)}` : ""),
   ].filter(Boolean).join("");
@@ -423,10 +428,10 @@ function renderSync(s) {
     const m = Math.round((Date.now() - Date.parse(iso)) / 60000);
     return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`;
   };
-  const txt = !y.on ? "off" : y.state === "error" ? "offline, retrying"
+  const txt = !y.on ? "off" : y.state === "outdated" ? "update this device" : y.state === "error" ? "offline, retrying"
     : y.state === "syncing" && !y.last ? "syncing…" : y.last ? `synced ${ago(y.last)}` : "starting…";
   $("sync-state").textContent = txt;
-  $("sync-state").className = "sync-state " + (!y.on ? "" : y.state === "error" ? "bad" : "ok");
+  $("sync-state").className = "sync-state " + (!y.on ? "" : y.state === "error" || y.state === "outdated" ? "bad" : "ok");
   $("sync-state").title = y.msg || "";
   $("sync-setup").textContent = y.on ? "Change" : "Set up";
   $("sync-msg").hidden = !y.msg || y.state === "error";

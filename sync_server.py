@@ -255,6 +255,12 @@ def make_handler(store: Store, env: dict, rapp, engine):
             if not self._key_ok():
                 time.sleep(1)
                 return self._plain(401, "bad key")
+            try:
+                fmt = int(self.headers.get("X-Assioma-Format") or 0)
+            except ValueError:
+                fmt = 0
+            if fmt < cs.FORMAT:                         # an older app would damage newer files: update first
+                return self._plain(426, cs.OUTDATED)
             u = urlparse(self.path)
             q = parse_qs(u.query)
             if method == "GET" and u.path == "/sync/manifest":

@@ -30,13 +30,14 @@ import sys
 import threading
 import time
 from collections import deque
-from datetime import date, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 
 import assioma_decoder as dec
 import cloud_sync as cs
+import keep
 import morning as mo
 import polar_pmd as pmd
 import plan as pl
@@ -46,6 +47,7 @@ import checks
 import readiness as rd
 import training
 import wbal
+from assioma_recorder import recover as ar_recover, unfinished as ar_unfinished
 from assioma_recorder import (EVENT, HERE, STRAP_FILES, BleWorker, ReplayWorker, Session, local_utc_offset_h,
                               read_raw_log, utcnow)
 
@@ -70,7 +72,7 @@ PAGES = ("home", "plan", "workouts", "stats")   # the app's pages (top bar); plu
 # remembered from the page (its own browser storage is lost: the port changes every run)
 SETTINGS_DEFAULTS = {"ftp": None, "max_hr": None, "vt1_hr": None, "room_temp": None, "room_rh": None,
                      "plan_min": 60, "hr": True, "trainer": False, "theme": "dark", "span": 300,
-                     "power3s": False, "hr_lock": None,
+                     "power3s": False, "hr_lock": None, "autopause": True, "fuel_g_h": 60,
                      "ftp_history": None}     # [[from_day, ftp], ...]: each FTP change, so past rides keep theirs
 PREFS = {"theme": ("dark", "lcd"), "span": (300, 1800, 0), "power3s": (True, False)}
 
@@ -145,6 +147,11 @@ class Engine(threading.Thread):
         self.mcheck: Optional[mo.Check] = None
         self.mresult: Optional[dict] = None
         self.morning_version = 0
+        self.notice = ""                     # a one-off word for the page (a recovered ride)
+        self.fuel_log: list = []             # [[ride s, grams]] eaten on this ride (_fuel)
+        self.fuel_later: Optional[int] = None
+        self.keep_awake = None               # keepawake.KeepAwake, set by main(): no sleep while recording
+        self._autopaused, self._still_since = False, None   # auto-pause (_autopause)
         self.step_log: list = []             # [ride second, step, intensity] as the workout went
         # the VT1 ceiling (a toggle on the ride screen): ERG targets trimmed while you're above VT1
         self.ceiling = False
@@ -252,7 +259,7 @@ class Engine(threading.Thread):
             elif name == "wo_delete" and isinstance(arg, str) and arg.startswith("zwo:") and "/" not in arg and "\\" not in arg:
                 path = os.path.join(WORKOUT_DIR, arg[4:] + ".zwo")
                 if os.path.isfile(path):
-                    os.remove(path)
+                    keep.set_aside(path, os.path.join(WORKOUT_DIR, "deleted"))   # off the list, kept
                     self.plan_version += 1
             elif name == "home":
                 self.screen = "home"
@@ -271,6 +278,8 @@ class Engine(threading.Thread):
                     rs.save_meta(self.out_dir, self.summary_id, upd)
                     self.rides_version += 1
         elif self.screen == "ride" and s is not None:
+            if name in ("pause", "resume", "toggle", "stop"):
+                self._autopaused = False             # yours from here: auto-pause doesn't undo it
             if name == "pause":
                 s.pause(now)
             elif name == "resume":
@@ -295,6 +304,15 @@ class Engine(threading.Thread):
                 kept = s.discard()                     # moved to rides/discarded/, its meta with it
                 self.worker.log(f"ride discarded: kept in {kept}" if kept else "ride discarded: nothing recorded")
                 self._leave_ride("home")
+            elif name == "fuel_done":
+                f = self._fuel()
+                if f:
+                    self.fuel_log.append([len(s.seconds), f["grams"]])
+                    self.fuel_later = None
+                    self.worker.log(f"fuel: {f['grams']} g at {len(s.seconds) // 60} min")
+                    self._meta(s)                          # kept at once: a crash mustn't lose it
+            elif name == "fuel_later":
+                self.fuel_later = len(s.seconds) + 5 * 60
             elif name == "save":
                 self._save()
             elif name == "wo_ceiling" and self.player is not None:
@@ -528,6 +546,26 @@ class Engine(threading.Thread):
         """The morning check and the watch's nights, read together (morning.trend)."""
         return mo.trend(self.mornings, garmin=self.garmin)
 
+    def recover_rides(self) -> list:
+        """Rides the app closed or crashed in the middle of (assioma_recorder.unfinished): finished
+        from their raw logs now, with a word on the page. Run once at launch, in the background."""
+        busy = self.session.base if self.session is not None else None
+        done = []
+        for base in ar_unfinished(self.out_dir, busy):
+            try:
+                res = ar_recover(base)
+            except Exception as e:
+                self.worker.log(f"recover {os.path.basename(base)}: {type(e).__name__}: {e}")
+                continue
+            if res:
+                done.append(os.path.basename(base))
+                self.worker.log(f"recovered unfinished ride: {os.path.basename(base)} ({res[2] // 60} min)")
+        if done:
+            self.rides_version += 1
+            self.notice = (f"Recovered {len(done)} ride{'s' if len(done) > 1 else ''} the app closed in the middle of "
+                           f"({', '.join(d[5:15] + ' ' + d[16:21].replace('-', ':') for d in done)}).")
+        return done
+
     def rides(self) -> list[dict]:
         """The ride list, each ride scored at the FTP it was ridden at (ride_summary.ride_ftp)."""
         return rs.ride_list(self.out_dir, self.settings.get("ftp"), self.settings.get("ftp_history") or [])
@@ -708,6 +746,8 @@ class Engine(threading.Thread):
                 m["hr_strap"] = {"name": status.split(": ", 1)[-1], "link": link}
         if self._wo_meta:
             m["workout"] = {**self._wo_meta, "log": self.step_log}
+        if self.fuel_log:
+            m["fuel"] = [list(x) for x in self.fuel_log]             # [[ride s, grams]]: what you ate, when
         try:
             rs.save_meta(self.out_dir, os.path.basename(s.base), m)
         except OSError as e:
@@ -727,6 +767,9 @@ class Engine(threading.Thread):
 
     def _start_ride(self, now) -> None:
         self._wake("ride")
+        self.notice = ""
+        self.fuel_log, self.fuel_later = [], None
+        self._autopaused, self._still_since = False, None
         self._a1_low_since = None
         self.step_log, self._wo_meta = [], None
         self.cap, self._cap_t = 1.0, 0.0                 # (the ceiling toggle itself stays as you left it)
@@ -740,6 +783,7 @@ class Engine(threading.Thread):
             else:
                 self.error = "Set your FTP on the home screen to ride a workout."
         self.session = Session(self.out_dir)
+        self.session.live_target = []               # (s since t0, target W): the chart's target line
         for n in self.pmd_setup:                     # how the strap's streams were set up, from before
             self.session.log_raw(n)
         self.session.pedal_name = self.worker.pedal_name or "Assioma"
@@ -761,11 +805,8 @@ class Engine(threading.Thread):
         self._drain()
         self._meta(s)                                    # with the workout's step log
         result = s.finish()
-        if not result:                             # nothing recorded
-            try:
-                os.remove(rs.meta_path(self.out_dir, os.path.basename(s.base)))
-            except OSError:
-                pass
+        if not result:                             # nothing recorded: its meta goes aside with its logs
+            keep.set_aside(rs.meta_path(self.out_dir, os.path.basename(s.base)), os.path.join(self.out_dir, s.DISCARDED))
             self._leave_ride("home")
             return
         ride_id = os.path.basename(s.base)
@@ -781,20 +822,21 @@ class Engine(threading.Thread):
         self._leave_ride("summary", ride_id)
 
     def _delete_ride(self, ride_id: Optional[str]) -> None:
-        """Every file of a ride: the recorder's raw log, per-second CSV and FIT, or another app's FIT
-        file; and its cached summary."""
+        """Out of your rides, never off the disk: every file of the ride (the recorder's raw log,
+        per-second CSV and FIT, or another app's FIT file) moves to rides/deleted/ (keep.py). Only
+        the cached summary, which is worked out again from them, goes."""
         path = rs.find_ride(self.out_dir, ride_id)
         if path is None:
             return
         base = os.path.join(self.out_dir, ride_id)
         exts = (("_raw.csv", rs.SUFFIX, ".fit", "_summary.json", "_log.txt") + STRAP_FILES if path.endswith(rs.SUFFIX)
                 else (".fit",)) + (rs.META,)
-        for f in [base + e for e in exts] + [rs.cache_path(self.out_dir, ride_id)]:
-            try:
-                os.remove(f)
-            except OSError:
-                pass
-        self.worker.log(f"ride deleted: {ride_id}")
+        keep.set_aside_all([base + e for e in exts], os.path.join(self.out_dir, "deleted"))
+        try:
+            os.remove(rs.cache_path(self.out_dir, ride_id))
+        except OSError:
+            pass
+        self.worker.log(f"ride deleted: {ride_id} (kept in rides/deleted)")
         self.rides_version += 1
 
     def _show_file(self) -> None:
@@ -1021,12 +1063,16 @@ class Engine(threading.Thread):
                 save_settings(self.settings_path, self.settings)
         self._morning_tick(now)
         self._sensor_tick(now)
+        if self.keep_awake is not None:              # a ride or a morning check: the computer stays awake
+            (self.keep_awake.hold if self.session is not None or self.mcheck is not None else self.keep_awake.release)()
         self._sync_poke()
         if self.screen in PAGES:
             self._plan_today()
         self._log_step()
         self._drive_trainer()
         if self.session is not None:
+            self._autopause(now)
+            self._log_target(now)
             self.session.tick(now)
             if self.worker.pedal_name:
                 self.session.pedal_name = self.worker.pedal_name
@@ -1042,6 +1088,75 @@ class Engine(threading.Thread):
                 self.quiet_since = self.quiet_since or now
                 if (now - self.quiet_since).total_seconds() >= REARM_S:
                     self.armed = True
+
+    def _log_target(self, now) -> None:
+        """The workout's target each second, on the graphs' clock (s since the first notification):
+        the power chart draws it as a stepped line. What the trainer is asked for (intensity, VT1
+        cap included); None for a free-ride step or no workout."""
+        s = self.session
+        lt = getattr(s, "live_target", None)
+        if lt is None or s.t0 is None or s.state != "recording":
+            return
+        t = int((now - s.t0).total_seconds())
+        if lt and lt[-1][0] >= t:
+            return
+        tgt = None
+        if self.player is not None:
+            a = self.player.at(len(s.seconds))
+            if not a.get("done") and a.get("target_w") is not None:
+                tgt = a["target_w"] * (self.cap if self.ceiling else 1.0)
+        if tgt is not None or (lt and lt[-1][1] is not None):
+            lt.append((t, tgt))
+
+    FUEL_FROM_S, FUEL_EVERY_S, FUEL_LONG_S, FUEL_FREE_S = 45 * 60, 20 * 60, 90 * 60, 75 * 60
+
+    def _fuel(self) -> Optional[dict]:
+        """Fuelling on long rides: a workout of 90 min or more, or a free ride past 75 min. From
+        45 min a quiet prompt every 20 min for a share of your hourly carbs (settings fuel_g_h,
+        60 g/h = 20 g a prompt); Done logs it (kept with the ride: what you ate, when), Later asks
+        again in 5 min. None when the ride is too short for it."""
+        s = self.session
+        if s is None or s.state == "ready":
+            return None
+        t = len(s.seconds)
+        long = (self.player is not None and self.player.total >= self.FUEL_LONG_S) or t >= self.FUEL_FREE_S \
+            or bool(self.fuel_log)
+        if not long:
+            return None
+        g = round((self.settings.get("fuel_g_h") or 60) * self.FUEL_EVERY_S / 3600)
+        due_at = self.fuel_log[-1][0] + self.FUEL_EVERY_S if self.fuel_log else self.FUEL_FROM_S
+        if self.fuel_later is not None and self.fuel_later > due_at:            # "later": 5 min on
+            due_at = self.fuel_later
+        eaten = sum(x[1] for x in self.fuel_log)
+        return {"due": t >= due_at, "in_s": max(0, due_at - t), "grams": g, "eaten": eaten,
+                "g_h": round(eaten / (t / 3600)) if t >= 1800 else None}
+
+    AUTOPAUSE_S = 20         # no pedalling this long while recording: paused for you (you mostly pause yourself)
+
+    def _autopause(self, now) -> None:
+        """The fallback for a pause you forgot: AUTOPAUSE_S without a pedal stroke pauses the ride,
+        the first strokes after it resume it. Never undoes a pause of yours, never acts while a
+        dialog is open, off with settings autopause = false. Nothing is lost: the raw log keeps
+        every notification, paused or not."""
+        s = self.session
+        if not self.settings.get("autopause", True) or self.dialog is not None or s.t0 is None:
+            self._still_since = None
+            return
+        p = self._power_3s(now)
+        moving = bool(p and p > 0)
+        if s.state == "recording":
+            if moving:
+                self._still_since = None
+            else:
+                self._still_since = self._still_since or now
+                if (now - self._still_since).total_seconds() >= self.AUTOPAUSE_S:
+                    s.pause(now)
+                    self._autopaused, self._still_since = True, None
+                    self.worker.log(f"auto-paused after {self.AUTOPAUSE_S} s without pedalling")
+        elif s.state == "paused" and self._autopaused and moving:
+            s.resume(now)
+            self._autopaused = False
+            self.worker.log("auto-resumed: pedalling again")
 
     def _power_3s(self, now):
         """Time-weighted mean power over exactly the last 3 s (each notification's power holds until
@@ -1082,7 +1197,7 @@ class Engine(threading.Thread):
             "devices": {k: sensor(kind) for k, kind in (("pedals", "pedal"), ("hr", "hr"), ("trainer", "trainer"))}
                        if sensor else None,
             "awake": self.awake or not hasattr(w, "set_want"),     # False: waiting for the pedals (_wake)
-            "error": self.error, "dialog": self.dialog, "rides_version": self.rides_version,
+            "error": self.error, "notice": self.notice, "dialog": self.dialog, "rides_version": self.rides_version,
             # what the pages' numbers depend on: the rides, the day (form, "this week" roll over at
             # midnight with the app open) and the FTP (every TSS): a change reloads them
             "data_key": f"{self.rides_version}|{date.today().isoformat()}|{self.settings.get('ftp')}",
@@ -1119,7 +1234,8 @@ class Engine(threading.Thread):
             no_beat = (now - beats[-1].time).total_seconds() if beats else quiet
             strap = {"warn": f"no data {quiet:.0f} s" if quiet > 3 else f"no beats {no_beat:.0f} s" if no_beat > 4 else ""}
         t0 = s.t0
-        ride = {"state": s.state, "clock": hms(len(s.seconds)), "elapsed": None}
+        ride = {"state": s.state, "clock": hms(len(s.seconds)), "elapsed": None, "autopaused": self._autopaused,
+                "fuel": self._fuel()}
         if s.started is not None:
             ride["elapsed"] = hms(int((now - s.started).total_seconds()))
         return {
@@ -1253,7 +1369,7 @@ def make_handler(engine: Engine, app_mode: dict):
                 s.pop("fit_path", None)
                 self._json(s)
             elif u.path == "/api/state":
-                self._json(state(engine, app_mode, *(int(q.get(k, ["0"])[0]) for k in ("p", "h", "a", "b", "e", "x"))))
+                self._json(state(engine, app_mode, *(int(q.get(k, ["0"])[0]) for k in ("p", "h", "a", "b", "e", "x", "g"))))
             else:
                 rel = "index.html" if u.path in ("/", "") else u.path.lstrip("/")
                 path = os.path.normpath(os.path.join(WEB, rel))
@@ -1278,18 +1394,22 @@ def make_handler(engine: Engine, app_mode: dict):
     return Handler
 
 
-def state(engine: Engine, app_mode: dict, p: int, h: int, a: int, b: int, e: int = 0, x: int = 0) -> dict:
+def state(engine: Engine, app_mode: dict, p: int, h: int, a: int, b: int, e: int = 0, x: int = 0, g: int = 0) -> dict:
     """The snapshot plus the graph points of the current ride that arrived since the page's counts
     (no ride: zero counts, which tells the page to clear its graphs)."""
     out = {**engine.snap, "app": app_mode["app"], "viewer": bool(app_mode.get("viewer")), "closed": engine.quit.is_set()}
     session = engine.session                       # may end while we read: keep this one
     if session is None or session.t0 is None:
-        return {**out, "pn": 0, "hn": 0, "an": 0, "bn": 0, "power": [], "hr": [], "a1": [], "beats_rr": [], "strap": None}
+        return {**out, "pn": 0, "hn": 0, "an": 0, "bn": 0, "gn": 0, "power": [], "hr": [], "a1": [], "beats_rr": [],
+                "target": [], "strap": None}
     lp, lh, la, lb = session.live_power, session.live_hr, session.hrv.series, session.hrv.beats
     pn, hn, an, bn = len(lp), len(lh), len(la), session.hrv._judged
     t0 = session.t0
     (en, ecg), (xn, acc) = engine.strap_since("ecg", e, t0), engine.strap_since("acc", x, t0)
-    return {**out, "pn": pn, "hn": hn, "an": an, "bn": bn,
+    lt = getattr(session, "live_target", [])
+    gn = len(lt)
+    return {**out, "pn": pn, "hn": hn, "an": an, "bn": bn, "gn": gn,
+            "target": [[t, None if w is None else _r(w)] for t, w in lt[g:gn]] if g <= gn else [],
             # the strap's raw streams: ECG [s, uV], accelerometer [s, x, y, z mG]
             "strap": {"en": en, "xn": xn, "ecg": ecg, "acc": acc},
             # beats once judged: [s since t0, RR ms, artifact]
@@ -1302,13 +1422,64 @@ def state(engine: Engine, app_mode: dict, p: int, h: int, a: int, b: int, e: int
 
 
 # --------------------------------------------------------------------------- #
+class MonthlyLog:
+    """The app's log, one file a month in rides/logs/ (app_log_2026-10.txt), never deleted; a new
+    month starts a new file even with the app open. The old single app_log.txt becomes its month's
+    file the first time (moved, not copied)."""
+
+    def __init__(self, folder: str, legacy: Optional[str] = None) -> None:
+        self.folder, self._month, self._fh = folder, None, None
+        os.makedirs(folder, exist_ok=True)
+        if legacy and os.path.exists(legacy) and not os.path.exists(self._path(self._now())):
+            os.replace(legacy, self._path(self._now()))
+
+    @staticmethod
+    def _now() -> str:
+        return datetime.now().strftime("%Y-%m")
+
+    def _path(self, month: str) -> str:
+        return os.path.join(self.folder, f"app_log_{month}.txt")
+
+    def _file(self):
+        m = self._now()
+        if m != self._month:
+            if self._fh:
+                self._fh.close()
+            self._fh, self._month = open(self._path(m), "a", buffering=1), m
+        return self._fh
+
+    def write(self, text: str) -> int:
+        return self._file().write(text)
+
+    def flush(self) -> None:
+        self._file().flush()
+
+    def fileno(self) -> int:                          # faulthandler writes straight to the file
+        return self._file().fileno()
+
+
 def _only_instance() -> bool:
     """One app at a time: two would fight over the pedals and the ANT+ stick. Windows: a named
     mutex the app owns until its process ends (even on a crash). A start right after closing the
     app waits for it to finish shutting down (disconnecting the sensors takes a few seconds);
-    a start while it is really open says so and quits."""
+    a start while it is really open says so and quits. Linux/macOS: an exclusive lock on a file
+    next to the app, held until the process ends (the system lets go of it even on a crash)."""
     if os.name != "nt":
-        return True
+        import fcntl
+        fh = open(os.path.join(HERE, ".app.lock"), "a")
+        globals()["_LOCK"] = fh
+        for _ in range(48):                        # 12 s for one that is still closing
+            try:
+                fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return True
+            except OSError:
+                time.sleep(0.25)
+        print("Assioma Recorder is already open.", file=sys.stderr)
+        import shutil
+        if shutil.which("notify-send"):
+            import subprocess
+            subprocess.run(["notify-send", "Assioma Recorder", "Assioma Recorder is already open."], check=False)
+        return False
     import ctypes
     k32 = ctypes.windll.kernel32
     k32.CreateMutexW.restype = ctypes.c_void_p
@@ -1363,7 +1534,7 @@ def main() -> None:
     os.makedirs(args.out, exist_ok=True)
     # one log per run: connection events, rides started and saved, and on a hard crash the stack
     # of every thread (faulthandler)
-    log = open(os.path.join(args.out, "app_log.txt"), "a", buffering=1)
+    log = MonthlyLog(os.path.join(args.out, "logs"), os.path.join(args.out, "app_log.txt"))
     if sys.stderr is None:                          # started without a console (pythonw): errors go to the log
         sys.stderr = log
     import faulthandler
@@ -1371,7 +1542,12 @@ def main() -> None:
 
     engine = Engine(args.out, settings, make_worker, settings_path, log)
     engine.worker.log(f"app started, {sys.version.split()[0]}")
+    if not args.replay:
+        import keepawake
+        engine.keep_awake = keepawake.KeepAwake(engine.worker.log)
     engine.start()
+    if not args.replay:                             # a ride the app closed in the middle of: finished now
+        threading.Thread(target=engine.recover_rides, daemon=True).start()
     engine.start_sync()                             # your server, when sync.json says where
     app_mode: dict = {"app": not args.browser, "window": None}
     server = make_server(engine, app_mode)

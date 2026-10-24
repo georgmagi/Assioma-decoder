@@ -1,7 +1,8 @@
 #!/bin/sh
 # A dated snapshot of the synced data every night: unchanged files are hard links to the previous
-# night's (rides never change, so 30 nights cost little more than one copy). Keeps 30 snapshots and
-# 90 days of the sync history (every version a sync replaced or deleted).
+# night's (rides never change, so 30 nights cost little more than one copy). Keeps 30 snapshots;
+# the sync history (every version a sync replaced or deleted) is kept forever: nothing you record
+# is ever thrown away.
 set -eu
 DATA=/var/lib/assioma/data
 DEST=/var/lib/assioma/backups
@@ -15,6 +16,5 @@ else
   rsync -a --delete --exclude 'rides/.cache/' "$DATA"/ "$DEST/$TODAY"/
 fi
 ls -1d "$DEST"/20* | head -n -30 | xargs -r rm -rf
-find "$HIST" -mindepth 1 -maxdepth 1 -type d -mtime +90 -exec rm -rf {} +
 chown -R assioma:assioma "$DEST"
 echo "backup $TODAY: $(du -sh "$DEST/$TODAY" | cut -f1), $(ls -1d "$DEST"/20* | wc -l) snapshots"

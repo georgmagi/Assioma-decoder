@@ -96,12 +96,12 @@ def test_discard_needs_a_second_yes_and_keeps_the_files_aside(tmp_path):
     assert [r["id"] for r in rs.ride_list(str(tmp_path), 200)] == [os.path.basename(s.base)]
 
 
-def test_discarding_an_empty_ride_leaves_nothing(tmp_path):
+def test_discarding_an_empty_ride_still_keeps_its_log_aside(tmp_path):
     e = _engine(tmp_path)
     s = _ride(e, 0)
     e._do("stop"); e._do("discard"); e._do("discard_confirm")
-    assert not os.path.exists(os.path.join(str(tmp_path), "discarded", os.path.basename(s.base) + "_raw.csv"))
-    assert not os.path.exists(s.base + "_raw.csv")
+    assert os.path.exists(os.path.join(str(tmp_path), "discarded", os.path.basename(s.base) + "_raw.csv"))
+    assert not os.path.exists(s.base + "_raw.csv") and rs.ride_list(str(tmp_path), 200) == []
 
 
 def test_space_does_nothing_while_a_dialog_is_open(tmp_path):
@@ -162,8 +162,10 @@ def test_deleting_a_ride_from_its_summary_asks_first(tmp_path):
     assert e.dialog is None and os.path.exists(s.base + ".fit")
     e._do("delete")
     e._do("delete_confirm")
-    assert e.screen == "home" and not [f for f in os.listdir(tmp_path) if f != ".cache"]
+    assert e.screen == "home" and not [f for f in os.listdir(tmp_path) if f not in (".cache", "deleted")]
     assert not os.listdir(tmp_path / ".cache")
+    kept = os.listdir(tmp_path / "deleted")                     # never off the disk
+    assert os.path.basename(s.base) + ".fit" in kept and os.path.basename(s.base) + "_raw.csv" in kept
 
 
 def test_rides_can_be_deleted_from_the_history_and_the_list_learns_of_it(tmp_path):
@@ -582,3 +584,82 @@ def test_stopping_a_ride_under_a_minute_asks_nothing_and_keeps_it_aside(tmp_path
     s = _ride(e, 60)                                             # a minute or more: asks as always
     e._do("stop")
     assert e.screen == "ride" and e.dialog == "finish"
+
+
+
+def test_auto_pause_is_a_fallback_that_never_undoes_your_own_pause(tmp_path, monkeypatch):
+    from datetime import datetime
+    e = _engine(tmp_path)
+    s = _ride(e, 5)
+    s.t0 = s.t0 or datetime.now()
+    t, power = datetime.now(), [150]
+    monkeypatch.setattr(e, "_power_3s", lambda now: power[0])
+    at = lambda sec: t + timedelta(seconds=sec)
+    e._autopause(at(0))
+    power[0] = 0
+    e._autopause(at(1)); e._autopause(at(1 + e.AUTOPAUSE_S - 1))
+    assert s.state == "recording"                               # a short stop is nothing
+    e._autopause(at(1 + e.AUTOPAUSE_S))
+    assert s.state == "paused" and e._snapshot()["ride"]["autopaused"]
+    power[0] = 160
+    e._autopause(at(40))
+    assert s.state == "recording" and not e._autopaused          # pedalling again: going on by itself
+    e._do("pause")                                                # yours: stays paused while you pedal
+    e._autopause(at(41)); e._autopause(at(60))
+    assert s.state == "paused"
+
+
+def test_auto_pause_can_be_turned_off(tmp_path, monkeypatch):
+    from datetime import datetime
+    e = _engine(tmp_path, autopause=False)
+    s = _ride(e, 5)
+    s.t0 = s.t0 or datetime.now()
+    monkeypatch.setattr(e, "_power_3s", lambda now: 0)
+    t = datetime.now()
+    for i in range(0, 200, 5):
+        e._autopause(t + timedelta(seconds=i))
+    assert s.state == "recording"
+
+
+def test_fuelling_prompts_on_long_rides_and_is_kept_with_the_ride(tmp_path):
+    e = _engine(tmp_path, fuel_g_h=60)
+    s = _ride(e, 30 * 60)
+    assert e._fuel() is None                                     # a free ride under 75 min: nothing
+    for i in range(30 * 60, 76 * 60):
+        s._second({"time": s.started + timedelta(seconds=i), "power_w": 150, "heart_rate_bpm": 130})
+    f = e._fuel()
+    assert f["due"] and f["grams"] == 20
+    e._do("fuel_later")
+    assert not e._fuel()["due"] and e._fuel()["in_s"] == 300
+    e._do("fuel_done")
+    f = e._fuel()
+    assert not f["due"] and f["eaten"] == 20 and f["in_s"] == 20 * 60
+    meta = json.load(open(os.path.join(str(tmp_path), os.path.basename(s.base) + rs.META)))
+    assert meta["fuel"] == [[76 * 60, 20]]
+
+
+def test_the_log_is_one_file_a_month_and_the_old_one_is_kept(tmp_path):
+    legacy = tmp_path / "app_log.txt"
+    legacy.write_text("old lines\n")
+    log = app.MonthlyLog(str(tmp_path / "logs"), str(legacy))
+    log.write("new line\n"); log.flush()
+    month = app.datetime.now().strftime("%Y-%m")
+    text = (tmp_path / "logs" / f"app_log_{month}.txt").read_text()
+    assert text == "old lines\nnew line\n" and not legacy.exists()
+
+
+def test_an_unfinished_ride_is_found_and_never_touched_when_there_is_nothing_in_it(tmp_path):
+    import assioma_recorder as ar
+    raw = tmp_path / "ride_2026-10-24_10-00-00_raw.csv"
+    raw.write_text("time_utc,char,hex\n")
+    (tmp_path / "ride_2026-10-23_10-00-00_raw.csv").write_text("x")
+    (tmp_path / "ride_2026-10-23_10-00-00.fit").write_text("x")                 # finished: not one of them
+    assert ar.unfinished(str(tmp_path)) == [str(raw)[: -len("_raw.csv")]]
+    assert ar.unfinished(str(tmp_path), busy=str(raw)[: -len("_raw.csv")]) == []
+    e = _engine(tmp_path)
+    assert e.recover_rides() == [] and raw.read_text() == "time_utc,char,hex\n" and not e.notice
+
+
+def test_an_older_app_is_refused_by_the_sync_server():
+    import cloud_sync as cs
+    assert cs.FORMAT >= 2 and "update" in cs.OUTDATED

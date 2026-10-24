@@ -151,7 +151,7 @@ function renderTiles(s) {
   // the warm-up readiness (checks.warmup): heart rate at 125 W early on against your normal, for the
   // first 40 min; it decides whether today is a day for the hard session
   const w = s.warmup, wUp = w && r.state === "recording" && s.now < 2400 ? w.hr - (w.normal ?? w.hr) : null;
-  cs.textContent = { ready: "not started", paused: "paused", finished: "saved" }[r.state]
+  cs.textContent = { ready: "not started", paused: r.autopaused ? "auto-paused · pedal to go on" : "paused", finished: "saved" }[r.state]
     || (wUp != null ? `warm-up ${fmt(w.hr)} bpm @125 W${w.normal ? ` · normal ${fmt(w.normal)}` : ""}` : `elapsed ${r.elapsed}`);
   cs.title = wUp != null ? `Heart rate at 125 W in minutes 6-15, against the median of your last rides. ` +
     `${wUp >= 8 ? "Well above: tired or getting ill, keep today easy." : wUp >= 4 ? "A little high: go by how the first interval feels." : "Normal: good to go."}` : "";
@@ -280,10 +280,10 @@ function drawBeatLines(ctx, s, now, xa, xb, hgt) {
 // Power and heart rate are binned per second: power as the second's mean (a faint line, 5 min view
 // only) and a centred 10 s average (the main line), heart rate as a 3 s mean (15 s when zoomed
 // out). Short gaps are bridged; a longer one breaks the line.
-const G = { x: [], pw: [], pa: [], hr: [], hz: [], ps: [], pn: [], hs: [], hn: [], lastP: -1, lastH: -1 };
+const G = { x: [], pw: [], pa: [], hr: [], hz: [], tg: [], ps: [], pn: [], hs: [], hn: [], lastP: -1, lastH: -1 };
 function grow(i) {
   for (let k = G.x.length; k <= i; k++) {
-    G.x.push(k); G.pw.push(null); G.pa.push(null); G.hr.push(null); G.hz.push(null);
+    G.x.push(k); G.pw.push(null); G.pa.push(null); G.hr.push(null); G.hz.push(null); G.tg.push(null);
     G.ps.push(0); G.pn.push(0); G.hs.push(0); G.hn.push(0);
   }
 }
@@ -292,9 +292,9 @@ function grow(i) {
 // breaks the line (strap dropout, alpha 1 missing for over 15 s).
 const B = { x: [], rr: [], ra: [], ag: [], ab: [], lastBeat: null, lastA: null };
 function resetGraph() {
-  for (const k of ["x", "pw", "pa", "hr", "hz", "ps", "pn", "hs", "hn"]) G[k] = [];
+  for (const k of ["x", "pw", "pa", "hr", "hz", "tg", "ps", "pn", "hs", "hn"]) G[k] = [];
   for (const k of ["x", "rr", "ra", "ag", "ab"]) B[k] = [];
-  G.lastP = G.lastH = -1; B.lastBeat = B.lastA = null; S.p = S.h = S.a = S.b = 0;
+  G.lastP = G.lastH = -1; B.lastBeat = B.lastA = null; S.p = S.h = S.a = S.b = S.g = 0;
   for (const k in HELD) delete HELD[k];                          // a new ride gets its own scales
 }
 const niceUp = (v, step) => step * Math.ceil(v / step);
@@ -429,7 +429,8 @@ const RANGES = {
   pw: () => {
     const ftp = S.snap?.config.ftp, st = spread(visVals(G.x, G.pa));
     if (!st) return [0, niceUp(ftp ? 1.5 * ftp : 300, 50)];
-    const top = S.span === 300 ? (visible(G.x, G.pw) || [0, 0])[1] : st.max;     // the 1 s line too when shown
+    const top = Math.max(S.span === 300 ? (visible(G.x, G.pw) || [0, 0])[1] : st.max,   // the 1 s line too when shown
+                         (visible(G.x, G.tg) || [0, 0])[1]);                          // and the target
     const hi = Math.max(top * 1.05, st.med / LOW_AT, ftp ? 0.8 * ftp : 0, 100);
     return held("pw", { ...st, min: 0, max: top }, [0, hi], 50, LOW_AT);
   },
@@ -519,9 +520,9 @@ function makeCharts() {
     ctx.beginPath(); ctx.moveTo(u.bbox.left, y); ctx.lineTo(u.bbox.left + u.bbox.width, y); ctx.stroke();
     ctx.restore();
   };
-  const drawZ2 = (u) => {                                          // the Z2 band (56-75 % of FTP)
+  const drawZ2 = (u) => {                                          // the Z2 band (56-75 % of FTP); a workout draws its target instead
     const ftp = S.snap?.config.ftp;
-    if (!ftp) return;
+    if (!ftp || S.snap?.workout) return;
     const y1 = u.valToPos(0.75 * ftp, "pw", true), y0 = u.valToPos(0.56 * ftp, "pw", true);
     u.ctx.fillStyle = C.z2;
     u.ctx.fillRect(u.bbox.left, y1, u.bbox.width, y0 - y1);
@@ -565,9 +566,11 @@ function makeCharts() {
       { scale: "pw", stroke: blend(C.power, C.panel, 0.55), width: lcd ? 1 : 1.25, points: { show: false } },   // 1 s
       { scale: "pw", stroke: C.power, width: 2.25, paths: smooth, points: { show: false },                       // 10 s
         ...(lcd ? { fill: dither } : {}) },                   // LCD: a dithered area, told apart from HR by fill
-      { scale: "hr", stroke: C.hr, width: lcd ? 2 : 2.25, paths: smooth, points: { show: false } }],
+      { scale: "hr", stroke: C.hr, width: lcd ? 2 : 2.25, paths: smooth, points: { show: false } },
+      { scale: "pw", stroke: lcd ? C.fg : blend(C.fg, C.panel, 0.15), width: 1.5, dash: [6, 4],   // the workout's target
+        paths: uPlot.paths.stepped({ align: 1 }), points: { show: false } }],
     hooks: { drawClear: [drawZ2, vt1Line], setCursor: [readout] },
-  }, [G.x, G.pw, G.pa, hrLine()], elP);
+  }, [G.x, G.pw, G.pa, hrLine(), G.tg], elP);
   plots.beats = new uPlot({
     ...common(elB),
     scales: { x: { time: false, range: xRange }, rr: { range: RANGES.rr }, a1: { range: RANGES.a1 } },
@@ -611,7 +614,7 @@ function renderGraph() {
   const fine = S.span === 300;                      // the 1 s line only in the 5 min view: noise further out
   if (plots.power.series[1].show !== fine) plots.power.setSeries(1, { show: fine });
   $("key-1s").hidden = !fine;
-  plots.power.setData([G.x, G.pw, G.pa, hrLine()]);
+  plots.power.setData([G.x, G.pw, G.pa, hrLine(), G.tg]);
   plots.beats.setData([B.x, B.rr, B.ra, B.ag, B.ab]);
 }
 for (const b of $("views").querySelectorAll("button")) {
@@ -628,7 +631,7 @@ for (const b of $("views").querySelectorAll("button")) {
 // --------------------------------------------------------------------------- bottom bar
 function renderBar(s) {
   const box = $("sensors");
-  box.hidden = s.screen !== "ride" && !s.error;     // the pages have the Connections pane on Home
+  box.hidden = s.screen !== "ride" && !s.error && !s.notice;     // the pages have the Connections pane on Home
   // every sensor, always: a dot per state (connected, looking, not found, not used) and its name
   const items = s.devices ? [["Pedals", "pedals", true], ["Strap", "hr", s.settings.hr], ["Trainer", "trainer", s.settings.trainer]]
     .map(([label, key, used]) => {
@@ -654,6 +657,12 @@ function renderBar(s) {
     const el = document.createElement("span");
     el.className = "sensor";
     el.textContent = `Battery L ${s.battery[0]} % · R ${s.battery[1]} %`;
+    box.append(el);
+  }
+  if (s.notice) {
+    const el = document.createElement("span");
+    el.className = "sensor notice";
+    el.textContent = s.notice;
     box.append(el);
   }
   if (s.error) {
@@ -754,6 +763,26 @@ function showScreen(name) {
 }
 for (const b of $("topnav").querySelectorAll("button[data-page]"))
   b.addEventListener("click", () => { act("nav", b.dataset.page); b.blur(); });
+// fuelling (Engine._fuel): due = a pill with Done / Later; otherwise a quiet line with the next one
+function renderFuel(f) {
+  const el = $("fuel");
+  el.hidden = !f;
+  if (!f) return;
+  el.classList.toggle("quiet", !f.due);
+  $("fuel-txt").textContent = f.due ? `Eat ~${f.grams} g carbs` + (f.eaten ? ` · ${f.eaten} g so far` : "")
+    : `fuel in ${Math.ceil(f.in_s / 60)} min` + (f.g_h != null ? ` · ${f.g_h} g/h` : "");
+}
+$("fuel-done").addEventListener("click", (e) => { e.currentTarget.blur(); act("fuel_done"); });
+$("fuel-later").addEventListener("click", (e) => { e.currentTarget.blur(); act("fuel_later"); });
+
+// what the ride screen shows most (layout C): a workout reaching 80 % FTP is intervals (power vs
+// target big), an easier one is Z2 (HR + DFA a1 with the VT1 line big), no workout a free ride (dynamics)
+function layoutKind(w) {
+  if (!w || !w.steps || !w.steps.length) return "free";
+  const top = Math.max(...w.steps.map((st) => Math.max(st[1] ?? 0, st[2] ?? 0)));
+  return top >= 0.8 ? "intervals" : top > 0 ? "z2" : "free";
+}
+
 function apply(s) {
   if (!s || !s.screen) return;
   if (s.pn != null) {
@@ -762,7 +791,8 @@ function apply(s) {
     for (const [t, b] of s.hr) addHr(t, b);
     for (const [t, rr, art] of s.beats_rr) addBeat(t, rr, art);
     for (const [t, v, art] of s.a1) addA1(t, v, art);
-    S.p += s.power.length; S.h += s.hr.length; S.a += s.a1.length; S.b += s.beats_rr.length;
+    for (const [t, w] of s.target || []) { if (t >= 0) { grow(t); G.tg[t] = w; } }      // the workout's target
+    S.p += s.power.length; S.h += s.hr.length; S.a += s.a1.length; S.b += s.beats_rr.length; S.g = (S.g || 0) + (s.target || []).length;
   }
   if (s.pn != null) takeStrap(s.strap);         // (action answers carry no streams)
   if (s.now != null) {                                             // smoothed server clock for the animations
@@ -778,11 +808,16 @@ function apply(s) {
   renderDialog(s);
   renderMorningRun(s);
   if (!$("topnav").hidden) renderNavStart(s);
+  renderFuel(s.screen === "ride" && s.ride ? s.ride.fuel : null);
   if (s.screen === "ride" && s.ride) {
     renderTiles(s);
     renderWorkout(s);
+    const kind = layoutKind(s.workout);
+    if ($("scr-ride").dataset.kind !== kind) $("scr-ride").dataset.kind = kind;
+    $("dyn-row").hidden = kind === "free";
     renderDyn(s);
-    $("z2-key").hidden = !s.config.ftp;
+    $("z2-key").hidden = !s.config.ftp || !!s.workout;
+    $("tg-key").hidden = !s.workout;
     if (s.pn != null) renderGraph();
   } else if (s.screen === "home") {
     renderHome(s);
@@ -800,7 +835,7 @@ function apply(s) {
 }
 async function poll() {
   try {
-    const r = await fetch(`/api/state?p=${S.p}&h=${S.h}&a=${S.a}&b=${S.b}&e=${SD.e}&x=${SD.x}`);
+    const r = await fetch(`/api/state?p=${S.p}&h=${S.h}&a=${S.a}&b=${S.b}&e=${SD.e}&x=${SD.x}&g=${S.g || 0}`);
     if (r.status === 401) { location.href = "/login"; return; }      // the web view: signed out
     apply(await r.json());
     S.fails = 0;
