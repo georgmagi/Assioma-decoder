@@ -120,76 +120,49 @@ async function loadMorning(s) {
     : o.checked ? `ECG: no early beats.${o.real ? ` ${n(o.real, "long or quick beat was", "long or quick beats were")} real and counted.` : ""}` +
       `${o.mistimed ? ` ${n(o.mistimed, "strap error", "strap errors")} left out.` : ""}${o.unclear ? ` ${o.unclear} too noisy to tell, left out.` : ""} `
     : "ECG: every beat clean. ";
-  $("mc-note").textContent = (ns.length || days.length ? "Left scale, bpm: line = asleep, lowest 30 min (dashed: its normal); rings = strap check. "
-      + (days.length ? "Right scale: squares = ln RMSSD, dashed = its 7-day mean, band = its normal. " : "") : "")
-    + (ns.length ? "Asleep: the watch's lowest 30 minutes of heart rate each night (Garmin; daytime readings aren't kept). 5+ bpm over your normal = not recovered. " : "")
-    + (days.length ? odd + "ln RMSSD (strap check): higher means more recovered; the band is your normal, after 7 checks." : "");
+  $("mc-note").textContent = ns.length || days.length
+    ? "Resting heart rate each morning: lowest 30 min asleep (watch), or your strap check. Shaded = your normal; 5+ bpm over it = not recovered."
+      + (recent ? " " + odd.trim() : "") : "";
   drawMorning(m);
 }
 function drawMorning(m) {
+  // one line, one scale: your resting heart rate each morning. The watch's night (lowest 30 min
+  // asleep) where there is one, else that morning's strap check. The shaded band is your normal;
+  // the last two weeks get their numbers written on. HRV stays in the numbers above, not here.
   const cv = $("mc-chart");
-  // the last 30 days of either: strap checks (ln RMSSD lane) and the watch's nights (heart-rate lane)
-  const endT = Math.max(...[...(m.days || []), ...(m.nights || [])].map((d) => dayOf(d.date).getTime()), 0);
-  const inWin = (d) => endT - dayOf(d.date).getTime() < 30 * 86400e3;
-  const days = (m.days || []).filter(inWin), ns = (m.nights || []).filter(inWin);
-  if (!days.length && !ns.length) { cv.hidden = true; return; }
+  const by = {};
+  for (const d of m.days || []) by[d.date] = { date: d.date, hr: d.hr, src: "strap" };
+  for (const n of m.nights || []) by[n.date] = { date: n.date, hr: n.low30, src: "watch", base: n.base, up: n.up };
+  const pts = Object.values(by).sort((a, b) => (a.date < b.date ? -1 : 1));
+  const endT = pts.length ? dayOf(pts[pts.length - 1].date).getTime() : 0;
+  const win = pts.filter((p) => endT - dayOf(p.date).getTime() < 30 * 86400e3);
+  if (!win.length) { cv.hidden = true; return; }
   cv.hidden = false;
-  const lcd = THEME === "lcd";
-  const t1 = endT, t0 = Math.min(...[...days, ...ns].map((d) => dayOf(d.date).getTime()), t1 - 13 * 86400e3);
-  const hv = [...days.map((d) => d.hr), ...ns.flatMap((n) => [n.low30, n.base].filter((x) => x != null))];
-  const [h0, h1] = niceRange(hv, 5, 2);
-  // one chart: heart rate on the left scale (the watch's nights as a line, the strap's checks as
-  // rings), the strap's ln RMSSD on the right scale (dots, its 7-day mean and the normal band)
-  const ch = laneChart(cv, 200, [{ label: "", weight: 1, y0: h0, y1: h1, step: h1 - h0 > 20 ? 10 : 5, fmt: (v) => `${Math.round(v)}` }],
-                       t0, t1, { mr: days.length ? 40 : 14 });
+  const lcd = THEME === "lcd", ink = lcd ? C.fg : C.hr;
+  const t1 = endT, t0 = Math.min(dayOf(win[0].date).getTime(), t1 - 13 * 86400e3);
+  const vals = win.flatMap((p) => [p.hr, p.base].filter((x) => x != null)), [h0, h1] = niceRange(vals, 5, 3);
+  const ch = laneChart(cv, 210, [{ label: "", weight: 1, y0: h0, y1: h1, step: 5, fmt: (v) => `${Math.round(v)}` }], t0, t1);
   if (!ch) return;
-  const { ctx, X } = ch, L2 = ch.lanes[0];
-  let L1 = null;
-  if (days.length) {
-    const lv = days.flatMap((d) => [d.ln_rmssd, d.lo, d.hi].filter((x) => x != null)), [l0, l1] = niceRange(lv, 0.25, 0.1);
-    L1 = { Y: (v) => L2.top + L2.h - ((v - l0) / (l1 - l0)) * L2.h };
-    ctx.font = "11px Bahnschrift, 'Segoe UI', sans-serif"; ctx.textAlign = "left";       // its scale, on the right
-    ctx.fillStyle = lcd ? C.fg : C.rr;
-    const st = l1 - l0 > 1.5 ? 0.5 : 0.25;
-    for (let v = Math.ceil(l0 / st) * st; v <= l1 + 1e-9; v += st) ctx.fillText(v.toFixed(2), ch.ml + ch.W + 6, L1.Y(v) + 4);
+  const { ctx, X } = ch, L = ch.lanes[0], mid = (p) => X(dayOf(p.date).getTime() + 43200e3);
+  const nb = win.filter((p) => p.base != null);                      // your normal: base + 3 bpm wide
+  if (nb.length) {
+    ctx.fillStyle = blend(lcd ? C.fg : C.good, C.panel, 0.84);
+    ctx.beginPath();
+    nb.forEach((p, i) => (i ? ctx.lineTo(mid(p), L.Y(p.base + 3)) : ctx.moveTo(mid(p), L.Y(p.base + 3))));
+    for (const p of [...nb].reverse()) ctx.lineTo(mid(p), L.Y(p.base - 2));
+    ctx.closePath(); ctx.fill();
   }
-  const mid = (d) => X(dayOf(d.date).getTime() + 43200e3);
-  if (L1) {                                                          // the HRV normal, under everything
-    const band = days.filter((d) => d.lo != null);                     // the normal range
-    if (band.length) {
-      ctx.fillStyle = blend(lcd ? C.fg : C.good, C.panel, 0.85);
-      ctx.beginPath();
-      band.forEach((d, i) => (i ? ctx.lineTo(mid(d), L1.Y(d.hi)) : ctx.moveTo(mid(d), L1.Y(d.hi))));
-      for (const d of [...band].reverse()) ctx.lineTo(mid(d), L1.Y(d.lo));
-      ctx.closePath(); ctx.fill();
+  ctx.strokeStyle = ink; ctx.lineWidth = 2.5; ctx.beginPath();
+  win.forEach((p, i) => (i ? ctx.lineTo(mid(p), L.Y(p.hr)) : ctx.moveTo(mid(p), L.Y(p.hr)))); ctx.stroke();
+  ctx.font = "600 12px Bahnschrift, 'Segoe UI', sans-serif"; ctx.textAlign = "center";
+  for (const p of win) {
+    const high = p.up != null && p.up >= 5;
+    ctx.beginPath(); ctx.arc(mid(p), L.Y(p.hr), high ? 5 : 4, 0, 2 * Math.PI);
+    ctx.fillStyle = high && !lcd ? C.bad : ink; ctx.fill();
+    if (endT - dayOf(p.date).getTime() < 14 * 86400e3) {             // the numbers, recent days
+      ctx.fillStyle = high && !lcd ? C.bad : C.fg;
+      ctx.fillText(`${Math.round(p.hr)}`, mid(p), L.Y(p.hr) - 9);
     }
-  }
-  if (ns.length) {                                                   // the nights: normal (dashed) and lowest 30 min
-    const nb = ns.filter((n) => n.base != null);
-    ctx.setLineDash([3, 3]); ctx.strokeStyle = blend(lcd ? C.fg : C.hr, C.panel, 0.45); ctx.lineWidth = 1.2; ctx.beginPath();
-    nb.forEach((n, i) => (i ? ctx.lineTo(mid(n), L2.Y(n.base)) : ctx.moveTo(mid(n), L2.Y(n.base)))); ctx.stroke(); ctx.setLineDash([]);
-    ctx.strokeStyle = lcd ? C.fg : C.hr; ctx.lineWidth = 2; ctx.beginPath();
-    ns.forEach((n, i) => (i ? ctx.lineTo(mid(n), L2.Y(n.low30)) : ctx.moveTo(mid(n), L2.Y(n.low30)))); ctx.stroke();
-    for (const n of ns) {
-      ctx.beginPath(); ctx.arc(mid(n), L2.Y(n.low30), 3, 0, 2 * Math.PI);
-      ctx.fillStyle = n.up != null && n.up >= 5 ? (lcd ? C.fg : C.bad) : (lcd ? C.fg : C.hr); ctx.fill();
-    }
-  }
-  if (!days.length) return;
-  const line = (lane, key, colour, width) => {
-    ctx.strokeStyle = colour; ctx.lineWidth = width; ctx.beginPath();
-    days.forEach((d, i) => (i ? ctx.lineTo(mid(d), lane.Y(d[key])) : ctx.moveTo(mid(d), lane.Y(d[key]))));
-    ctx.stroke();
-  };
-  ctx.setLineDash([6, 4]);
-  line(L1, "ln7", lcd ? C.fg : C.rr, 1.5);                            // the 7-day mean: dashed, apart from the nights' line
-  ctx.setLineDash([]);
-  for (const d of days) {                                            // each check's ln RMSSD: squares
-    ctx.fillStyle = lcd ? C.fg : C.rr; ctx.fillRect(mid(d) - 3.5, L1.Y(d.ln_rmssd) - 3.5, 7, 7);
-  }
-  for (const d of days) {                                            // the strap's resting HR: open rings
-    ctx.beginPath(); ctx.arc(mid(d), L2.Y(d.hr), 3.5, 0, 2 * Math.PI);
-    ctx.strokeStyle = lcd ? C.fg : blend(C.hr, C.panel, 0.3); ctx.lineWidth = 1.5; ctx.stroke();
   }
 }
 // the countdown while it runs (on any page): lie still, breathe normally
