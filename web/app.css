@@ -289,11 +289,17 @@ main { min-height: 0; display: grid; grid-template-columns: var(--col1) minmax(0
   min-height: 44px;
   flex-wrap: wrap;
 }
+.tod { margin-left: 6px; font: 600 15px var(--num); font-variant-numeric: tabular-nums; letter-spacing: 0; text-transform: none; }
 .sensors { display: flex; gap: 22px; flex-wrap: wrap; color: var(--dim); font-size: 13px; min-width: 0; }
 .sensor { display: inline-flex; align-items: center; gap: 8px; }
 .sensor b { color: var(--fg); font-weight: 600; }
-.sensor .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--warn); }
-.sensor.ok .dot { background: var(--good); }
+.sensor .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--warn); box-sizing: border-box; }
+.sensor.ok .dot, .sensor.s-ok .dot { background: var(--good); }
+.sensor.s-wait .dot { animation: dot-blink 1.2s ease-in-out infinite; }
+.sensor.s-bad .dot { background: var(--bad); }
+.sensor.s-bad span { color: var(--bad); }
+.sensor.s-off .dot { background: transparent; border: 1.5px solid var(--dim); }
+@keyframes dot-blink { 50% { opacity: 0.25; } }
 .sensor.err { color: var(--bad); }
 /* how a sensor is connected */
 .link {
@@ -894,7 +900,10 @@ body:has(#topnav:not([hidden])) { grid-template-rows: auto minmax(0, 1fr) auto; 
 [data-theme="lcd"] .bar .sensors { color: #a3a7ac; }
 [data-theme="lcd"] .bar .sensor b { color: #e2e4e6; }
 [data-theme="lcd"] .bar .sensor .dot { background: #8c9096; }
-[data-theme="lcd"] .bar .sensor.ok .dot { background: #e2e4e6; }
+[data-theme="lcd"] .bar .sensor.ok .dot, [data-theme="lcd"] .bar .sensor.s-ok .dot { background: #e2e4e6; }
+[data-theme="lcd"] .bar .sensor.s-off .dot { background: transparent; border-color: #8c9096; }
+[data-theme="lcd"] .bar .sensor.s-bad .dot { background: #ff8a8d; }
+[data-theme="lcd"] .bar .sensor.s-bad span { color: #ff8a8d; }
 [data-theme="lcd"] .bar .link { border-color: #5d6166; color: #a3a7ac; }
 [data-theme="lcd"] .bar .link.ant { border-color: #a3a7ac; color: #e2e4e6; }
 [data-theme="lcd"] .rec, [data-theme="lcd"] .rec.ready { color: #c9ccd0; }

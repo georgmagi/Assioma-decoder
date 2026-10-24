@@ -143,6 +143,8 @@ function renderTiles(s) {
   }
 
   const r = s.ride;
+  const now = new Date();                            // the time of day, beside the ride time
+  $("tod").textContent = `· ${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
   $("clock").textContent = r.clock;
   $("clock").style.color = r.state === "recording" ? C.fg : C.dim;
   const cs = $("clock-sub");
@@ -627,13 +629,25 @@ for (const b of $("views").querySelectorAll("button")) {
 function renderBar(s) {
   const box = $("sensors");
   box.hidden = s.screen !== "ride" && !s.error;     // the pages have the Connections pane on Home
-  box.replaceChildren(...s.sensors.map(({ label, status, link }) => {
-    const ok = status.startsWith("connected");
+  // every sensor, always: a dot per state (connected, looking, not found, not used) and its name
+  const items = s.devices ? [["Pedals", "pedals", true], ["Strap", "hr", s.settings.hr], ["Trainer", "trainer", s.settings.trainer]]
+    .map(([label, key, used]) => {
+      const d = s.devices[key] || {}, st = d.state || "off";
+      const name = d.status && d.status.includes(": ") ? d.status.split(": ")[1] : "";
+      const text = st === "connected" ? name || "connected" : st === "failed" ? "not found"
+        : st === "searching" || st === "connecting" ? "looking…" : used ? "off" : "not used";
+      return { label, st: st === "connected" ? "ok" : st === "failed" ? "bad" : st === "off" ? "off" : "wait", text, link: st === "connected" ? d.link : "" };
+    })
+    : s.sensors.map(({ label, status, link }) => {           // a worker without a lifecycle (a replay)
+      const ok = status.startsWith("connected");
+      return { label, st: ok ? "ok" : "wait", text: ok && status.includes(": ") ? status.split(": ")[1] : status, link };
+    });
+  box.replaceChildren(...items.map(({ label, st, text, link }) => {
     const el = document.createElement("span");
-    el.className = "sensor" + (ok ? " ok" : "");
-    el.innerHTML = `<i class="dot"></i><b></b><span></span>${linkTag(link)}`;
+    el.className = `sensor s-${st}`;
+    el.innerHTML = `<i class="dot"></i><b></b><span></span>${link ? linkTag(link) : ""}`;
     el.querySelector("b").textContent = label;
-    el.querySelector("span").textContent = ok && status.includes(": ") ? status.split(": ")[1] : status;
+    el.querySelector("span").textContent = text;
     return el;
   }));
   if (s.battery) {
