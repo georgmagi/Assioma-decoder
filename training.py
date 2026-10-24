@@ -103,6 +103,49 @@ def fitness_checks(rides: list[dict]) -> dict:
     return {"checks": out, "ref_w": ref, "heat": heat}
 
 
+def _at(history: Optional[list], day: str):
+    """The value of a [[from_day, value], ...] history on a day (the first one before it begins)."""
+    hist = sorted(history or [])
+    out = hist[0][1] if hist else None
+    for d, v in hist:
+        if d <= day:
+            out = v
+    return out
+
+
+def goal(settings: dict, eftp_hist: dict, today: date) -> dict:
+    """Your W/kg goal: FTP and eFTP in W/kg over time (each day with that day's FTP and weight), the
+    watts the goal needs at today's weight, and the pace: watts a week still needed up to the goal
+    date, beside the pace between your last two tests (a fact, not a forecast: early gains come fastest)."""
+    kg, g, gd = settings.get("weight_kg"), settings.get("goal_wkg") or 4.0, settings.get("goal_date")
+    if not kg:
+        return {"need_weight": True, "goal_wkg": g}
+    weights = settings.get("weight_history") or [["0001-01-01", kg]]
+    ftps = settings.get("ftp_history") or ([["0001-01-01", settings["ftp"]]] if settings.get("ftp") else [])
+    ftp = settings.get("ftp")
+    target_w = g * kg
+    out = {"goal_wkg": g, "goal_date": gd, "kg": kg, "target_w": round(target_w), "ftp": ftp,
+           "wkg": ftp / kg if ftp else None, "need_w": round(target_w - ftp) if ftp else None,
+           "ftp_steps": [[d, v / _at(weights, d)] for d, v in sorted(ftps) if d > "0001-01-01"],
+           "eftp": [[s["day"], s["ftp"] / _at(weights, s["day"]), s["method"]] for s in eftp_hist.get("series", [])]}
+    cur = eftp_hist.get("current")
+    out["eftp_wkg"] = cur["ftp"] / kg if cur else None
+    if gd and ftp:
+        days = (date.fromisoformat(gd) - today).days
+        out["days_left"] = days
+        out["need_w_week"] = (target_w - ftp) / (days / 7) if days > 0 else None
+    # the last two tests (ramps): watts a week between them
+    tests = []
+    for s in eftp_hist.get("series", []):
+        if s["method"] == "ramp" and (not tests or s["ftp"] != tests[-1][1]):
+            tests.append((s["day"], s["ftp"]))
+    if len(tests) >= 2:
+        (d0, f0), (d1, f1) = tests[-2], tests[-1]
+        wk = (date.fromisoformat(d1) - date.fromisoformat(d0)).days / 7
+        out["test_pace"] = {"from": d0, "to": d1, "w_week": (f1 - f0) / wk if wk else None, "w": f1 - f0}
+    return out
+
+
 DUR_DAYS = 90                                   # the window, as power-duration models use
 DUR_FLOOR = {"60": 1.20, "300": 1.00, "1200": 0.88}   # a hard effort for its length, × the ride's FTP
 

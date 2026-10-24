@@ -33,6 +33,7 @@ function renderProgress() {
   $("prog-totals").innerHTML = [["Rides", t.rides], ["Time", hm(t.time_s)], ["TSS", fmt(t.tss)], ["Work", `${fmt(t.work_kj / 1000, 1)} MJ`]]
     .map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join("");
   renderNow(d.pmc);
+  drawGoal();
   makePmc(d.pmc);
   renderCalendar();
   makeWeekly(d.weeks);
@@ -555,4 +556,62 @@ function drawDurability() {
     "(Spragg 2023, Mateo-March 2024). Each column takes efforts that started after that much work in the ride (1000 kJ ≈ 1 h 45 min of your Z2). " +
     "A cell counts once the effort was hard for its length (1 min ≥ 120 %, 5 min ≥ 100 %, 20 min ≥ 88 % FTP). " +
     "Fill it with the Durability test workout, or by putting a session's intervals at the end of a long ride. Last 90 days.";
+}
+
+// ---- the goal (training.goal): W/kg now, the watts the goal needs at your weight, the pace still
+// needed to the goal date beside the pace between your last two tests; FTP and eFTP in W/kg over time
+function drawGoal() {
+  const g = PROG.data && PROG.data.goal;
+  if (!g) return;
+  const day = (iso) => SHORT_DAY.format(dayOf(iso));
+  if (g.need_weight) {
+    $("goal-num").textContent = "--"; $("goal-sub").textContent = ""; $("goal-ev").innerHTML = ""; $("goal-readout").textContent = "";
+    $("goal-note").textContent = "Set your weight on Home (Your numbers) to see your W/kg and the goal.";
+    laneChart($("goal-chart"), 220, [], 0, 1); return;
+  }
+  $("goal-num").textContent = g.wkg != null ? g.wkg.toFixed(2) : "--";
+  $("goal-sub").innerHTML = `FTP <b>${fmt(g.ftp)}</b> W at ${fmt(g.kg, 1)} kg · goal <b>${g.goal_wkg.toFixed(1)}</b> W/kg = ${fmt(g.target_w)} W`;
+  $("goal-readout").innerHTML = g.need_w != null ? (g.need_w > 0 ? `<b>+${fmt(g.need_w)} W</b> to go` : "<b>reached</b>") : "";
+  const ev = [];
+  if (g.goal_date && g.days_left != null) ev.push(g.days_left > 0
+    ? [`By ${day(g.goal_date)}: ${fmt(g.days_left / 7, 0)} weeks left`, g.need_w_week > 0 ? `+${g.need_w_week.toFixed(1)} W a week` : "on it"]
+    : [`Goal date ${day(g.goal_date)} has passed`, ""]);
+  if (g.test_pace) ev.push([`Your last two ramp tests (${day(g.test_pace.from)} → ${day(g.test_pace.to)})`, `+${fmt(g.test_pace.w)} W, ${g.test_pace.w_week.toFixed(1)} W a week`]);
+  if (g.eftp_wkg != null) ev.push(["eFTP", `${g.eftp_wkg.toFixed(2)} W/kg`]);
+  $("goal-ev").innerHTML = ev.map(([a, b]) => `<li><span>${a}</span><b>${b}</b></li>`).join("");
+  $("goal-note").textContent = (g.goal_date ? "" : "Set a goal date on Home to see the pace it needs. ") +
+    "Each day in W/kg with that day's FTP and weight. The pace between tests is what happened, not a forecast: the first months' gains come fastest. " +
+    "Solid line: your FTP setting; dots: eFTP; dashed: the goal, and the straight way to it.";
+  // chart: from the first FTP change (or 8 weeks back) to the goal date
+  const t1 = g.goal_date ? dayOf(g.goal_date).getTime() + 7 * 86400e3 : dayOf(PROG.data.today).getTime() + 28 * 86400e3;
+  const firstDay = g.ftp_steps.length ? g.ftp_steps[0][0] : PROG.data.today;
+  const t0 = Math.min(dayOf(firstDay).getTime(), dayOf(PROG.data.today).getTime() - 56 * 86400e3) - 7 * 86400e3;
+  const vals = [g.goal_wkg, ...g.ftp_steps.map((s) => s[1]), ...g.eftp.map((s) => s[1])];
+  const y0 = Math.floor((Math.min(...vals) - 0.2) * 2) / 2, y1 = Math.ceil((Math.max(...vals) + 0.2) * 2) / 2;
+  const ch = laneChart($("goal-chart"), 240, [{ label: "W/kg", weight: 1, y0, y1, step: 0.5, fmt: (v) => v.toFixed(1) }], t0, t1);
+  if (!ch) return;
+  const { ctx, X } = ch, L = ch.lanes[0], lcd = THEME === "lcd", now = dayOf(PROG.data.today).getTime();
+  const ink = lcd ? C.fg : C.power;
+  ctx.setLineDash([6, 5]); ctx.strokeStyle = lcd ? C.fg : C.good; ctx.lineWidth = 1.5;          // the goal
+  ctx.beginPath(); ctx.moveTo(X(t0), L.Y(g.goal_wkg)); ctx.lineTo(X(t1), L.Y(g.goal_wkg)); ctx.stroke();
+  if (g.goal_date && g.wkg != null && g.days_left > 0) {                                        // the straight way there
+    ctx.strokeStyle = lcd ? C.fg : blend(ink, C.panel, 0.4);
+    ctx.beginPath(); ctx.moveTo(X(now), L.Y(g.wkg)); ctx.lineTo(X(dayOf(g.goal_date).getTime()), L.Y(g.goal_wkg)); ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  if (g.ftp_steps.length) {                                                                      // your FTP setting, as steps
+    ctx.strokeStyle = ink; ctx.lineWidth = 2; ctx.beginPath();
+    g.ftp_steps.forEach(([d, v], i) => {
+      const x = X(dayOf(d).getTime());
+      if (i) ctx.lineTo(x, L.Y(g.ftp_steps[i - 1][1]));
+      i ? ctx.lineTo(x, L.Y(v)) : ctx.moveTo(x, L.Y(v));
+    });
+    ctx.lineTo(X(now), L.Y(g.ftp_steps[g.ftp_steps.length - 1][1])); ctx.stroke();
+  }
+  ctx.fillStyle = lcd ? C.fg : C.warn;                                                           // eFTP
+  for (const [d, v] of g.eftp) { ctx.beginPath(); ctx.arc(X(dayOf(d).getTime() + 43200e3), L.Y(v), 3, 0, 2 * Math.PI); ctx.fill(); }
+  if (g.goal_date) {
+    ctx.fillStyle = C.dim; ctx.textAlign = "right"; ctx.font = "11px Bahnschrift, 'Segoe UI', sans-serif";
+    ctx.fillText(`${g.goal_wkg.toFixed(1)} W/kg by ${day(g.goal_date)}`, X(dayOf(g.goal_date).getTime()), L.Y(g.goal_wkg) - 6);
+  }
 }

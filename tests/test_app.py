@@ -684,3 +684,14 @@ def test_red_alert_for_a_lost_sensor_after_a_grace_and_for_pedalling_while_you_p
     assert e._alerts(s, at(8), dev, None) == ["Paused, but you're pedalling: press Resume"]
     e._autopaused = True                                              # auto-pause resumes by itself
     assert e._alerts(s, at(9), dev, None) == []
+
+
+def test_weight_and_goal_settings_are_checked_and_weight_is_kept_by_day(tmp_path):
+    e = _engine(tmp_path)
+    e._settings({"weight_kg": 73, "goal_wkg": 4.0, "goal_date": "2027-06-01"})
+    assert e.settings["weight_kg"] == 73 and e.settings["weight_history"][-1][1] == 73
+    assert e.settings["goal_date"] == "2027-06-01"
+    e._settings({"weight_kg": 500, "goal_wkg": 20, "goal_date": "soon"})        # nonsense: ignored
+    assert e.settings["weight_kg"] == 73 and e.settings["goal_wkg"] == 4.0 and e.settings["goal_date"] == "2027-06-01"
+    e._settings({"goal_date": None})
+    assert e.settings["goal_date"] is None

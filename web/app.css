@@ -614,7 +614,7 @@ body:has(#topnav:not([hidden])) { grid-template-rows: auto minmax(0, 1fr) auto; 
 .srow .val { font: 20px var(--num); font-variant-numeric: tabular-nums; }
 .settings { display: grid; gap: 12px; }
 .settings label { display: grid; grid-template-columns: 1fr auto auto; align-items: center; gap: 10px; color: var(--dim); }
-.settings input[type="number"] {
+.settings input[type="number"], .settings input[type="date"] {
   width: 5.5em; padding: 7px 10px; border-radius: 6px; border: 1px solid var(--grid);
   background: var(--bg); color: var(--fg); font: 17px var(--num); text-align: right;
 }
@@ -622,7 +622,7 @@ body:has(#topnav:not([hidden])) { grid-template-rows: auto minmax(0, 1fr) auto; 
 .settings input[type="number"] { appearance: textfield; -moz-appearance: textfield; }
 .settings input[type="number"]::-webkit-inner-spin-button,
 .settings input[type="number"]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
-.settings input[type="number"]:focus { outline: 2px solid var(--power); outline-offset: 1px; }
+.settings input[type="number"]:focus, .settings input[type="date"]:focus { outline: 2px solid var(--power); outline-offset: 1px; }
 .settings .u { width: 2.4em; }
 .switch { cursor: pointer; }
 .switch input { position: absolute; opacity: 0; pointer-events: none; }
@@ -952,7 +952,7 @@ body:has(#topnav:not([hidden])) { grid-template-rows: auto minmax(0, 1fr) auto; 
 [data-theme="lcd"] .sum-head h1 .sub-title { color: #a3a7ac; }
 [data-theme="lcd"] .ride-table th { background: #aab59f; }
 [data-theme="lcd"] .ride-table tbody tr:hover, [data-theme="lcd"] .ride-table tbody tr:focus-visible { background: rgba(27, 30, 25, 0.08); }
-[data-theme="lcd"] .srow, [data-theme="lcd"] .settings input[type="number"] { background: rgba(27, 30, 25, 0.06); border-color: rgba(27, 30, 25, 0.35); }
+[data-theme="lcd"] .srow, [data-theme="lcd"] .settings input[type="number"], [data-theme="lcd"] .settings input[type="date"] { background: rgba(27, 30, 25, 0.06); border-color: rgba(27, 30, 25, 0.35); }
 [data-theme="lcd"] .srow .dot { background: transparent; border: 1.5px solid var(--fg); }
 [data-theme="lcd"] .srow.ok .dot { background: var(--fg); }
 [data-theme="lcd"] .srow .link { border-color: rgba(27, 30, 25, 0.35); color: var(--fg); }
@@ -1215,3 +1215,5 @@ body.alerting::after { content: ""; position: fixed; inset: 0; pointer-events: n
 .dur-table td.dim { color: var(--faint); }
 .dur-table small { color: var(--dim); font-size: 11px; }
 .dur-table td.dim small { color: var(--faint); }
+.settings input[type="date"] { width: auto; font-size: 15px; color-scheme: dark; }
+[data-theme="lcd"] .settings input[type="date"] { color-scheme: light; }

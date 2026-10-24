@@ -408,6 +408,9 @@ function renderSettings(s) {
     $("set-plan").value = s.settings.plan_min ?? "";
     $("set-temp").value = s.settings.room_temp ?? "";
     $("set-rh").value = s.settings.room_rh ?? "";
+    $("set-kg").value = s.settings.weight_kg ?? "";
+    $("set-goal").value = s.settings.goal_wkg ?? "";
+    $("set-goal-date").value = s.settings.goal_date ?? "";
   }
   // empty VT1 = your latest ride that crossed it (vt1.py): shown as the placeholder
   const auto = s.vt1 && s.vt1.source === "ride" ? s.vt1 : null;
@@ -419,7 +422,8 @@ function sendSettings() {
   const num = (id) => { const v = parseFloat($(id).value); return Number.isFinite(v) ? v : null; };
   const plan = num("set-plan");
   act("settings", { ftp: num("set-ftp"), max_hr: num("set-maxhr"), vt1_hr: num("set-vt1"), plan_min: plan ?? undefined,
-                    room_temp: num("set-temp"), room_rh: num("set-rh") });
+                    room_temp: num("set-temp"), room_rh: num("set-rh"), weight_kg: num("set-kg") ?? undefined,
+                    goal_wkg: num("set-goal") ?? undefined, goal_date: $("set-goal-date").value || null });
 }
 // ---- sync with your server (cloud_sync.py): the state, and pasting the code once per device
 function renderSync(s) {
@@ -449,7 +453,7 @@ $("sync-save").addEventListener("click", () => {
 });
 $("sync-code").addEventListener("keydown", (e) => { if (e.key === "Enter") $("sync-save").click(); e.stopPropagation(); });
 
-for (const id of ["set-ftp", "set-maxhr", "set-vt1", "set-plan", "set-temp", "set-rh"]) {
+for (const id of ["set-ftp", "set-maxhr", "set-vt1", "set-plan", "set-temp", "set-rh", "set-kg", "set-goal", "set-goal-date"]) {
   $(id).addEventListener("change", sendSettings);
   $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") e.target.blur(); e.stopPropagation(); });
 }

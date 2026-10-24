@@ -117,3 +117,19 @@ def test_durability_profile_counts_only_hard_efforts_and_compares_with_fresh():
     c = p["cells"]
     assert c["300"]["0"]["w"] == 290 and c["300"]["1000"]["tested"] and round(c["300"]["1000"]["pct"]) == 90
     assert not c["1200"]["1500"]["tested"] and c["1200"]["1500"]["pct"] is None   # Z2 is no limit
+
+
+def test_goal_in_w_per_kg_with_the_pace_needed_and_between_tests():
+    from datetime import date
+    s = {"ftp": 240, "weight_kg": 73, "goal_wkg": 4.0, "goal_date": "2027-06-01",
+         "ftp_history": [["0001-01-01", 149], ["2026-09-12", 199], ["2026-10-19", 240]],
+         "weight_history": [["2026-10-24", 73]]}
+    hist = {"current": {"ftp": 249.0}, "series": [{"day": "2026-09-11", "ftp": 198.5, "method": "ramp"},
+                                                  {"day": "2026-09-20", "ftp": 198.5, "method": "ramp"},
+                                                  {"day": "2026-10-19", "ftp": 249.0, "method": "ramp"}]}
+    g = tr.goal(s, hist, date(2026, 10, 24))
+    assert g["target_w"] == 292 and g["need_w"] == 52 and abs(g["wkg"] - 240 / 73) < 1e-9
+    assert abs(g["need_w_week"] - 52 / (220 / 7)) < 0.01                  # 220 days to 1 June
+    assert g["test_pace"]["w"] == 50.5 and g["test_pace"]["from"] == "2026-09-11"
+    assert [d for d, _ in g["ftp_steps"]] == ["2026-09-12", "2026-10-19"]    # the "always" entry isn't a day
+    assert tr.goal({"ftp": 240}, hist, date(2026, 10, 24))["need_weight"]

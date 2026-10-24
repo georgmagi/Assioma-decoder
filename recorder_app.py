@@ -73,7 +73,9 @@ PAGES = ("home", "plan", "workouts", "stats")   # the app's pages (top bar); plu
 SETTINGS_DEFAULTS = {"ftp": None, "max_hr": None, "vt1_hr": None, "room_temp": None, "room_rh": None,
                      "plan_min": 60, "hr": True, "trainer": False, "theme": "dark", "span": 300,
                      "power3s": False, "hr_lock": None, "autopause": True, "fuel_g_h": 60, "layout": "auto",
-                     "ftp_history": None}     # [[from_day, ftp], ...]: each FTP change, so past rides keep theirs
+                     "ftp_history": None,     # [[from_day, ftp], ...]: each FTP change, so past rides keep theirs
+                     "weight_kg": None, "weight_history": None,    # [[from_day, kg], ...]: W/kg on each day
+                     "goal_wkg": 4.0, "goal_date": None}           # the goal (training.goal)
 PREFS = {"theme": ("dark", "lcd"), "layout": ("auto", "intervals", "z2", "free"), "span": (300, 1800, 0), "power3s": (True, False)}
 
 
@@ -862,6 +864,20 @@ class Engine(threading.Thread):
             self.settings["ftp"] = ftp
         if max_hr is None or (isinstance(max_hr, (int, float)) and 120 <= max_hr <= 230):
             self.settings["max_hr"] = max_hr
+        kg = new.get("weight_kg")
+        if isinstance(kg, (int, float)) and 35 <= kg <= 150 and kg != self.settings.get("weight_kg"):
+            today = date.today().isoformat()            # by day, like the FTP: W/kg on each day uses that day's
+            hist = [h for h in (self.settings.get("weight_history") or []) if h[0] != today]
+            self.settings["weight_history"] = sorted(hist + [[today, kg]])
+            self.settings["weight_kg"] = kg
+        g = new.get("goal_wkg")
+        if isinstance(g, (int, float)) and 1.5 <= g <= 7:
+            self.settings["goal_wkg"] = g
+        if "goal_date" in new:
+            try:
+                self.settings["goal_date"] = date.fromisoformat(new["goal_date"]).isoformat() if new["goal_date"] else None
+            except (TypeError, ValueError):
+                pass
         for key, lo, hi in (("room_temp", 5, 40), ("room_rh", 5, 100)):     # the room, from your hygrometer
             if key in new and (new[key] is None or (isinstance(new[key], (int, float)) and lo <= new[key] <= hi)):
                 self.settings[key] = new[key]
@@ -1381,7 +1397,9 @@ def make_handler(engine: Engine, app_mode: dict):
                 self._json({**over, "status_text": pl.status_text(prog, rides, engine.settings, over, engine.morning_trend()),
                             "pmc_now": prog["pmc"]})
             elif u.path == "/api/progress":
-                self._json(training.progress(engine.rides()))
+                prog = training.progress(engine.rides())
+                prog["goal"] = training.goal(engine.settings, prog["eftp"], date.today())
+                self._json(prog)
             elif u.path == "/api/ride":
                 rid = q.get("id", [""])[0]
                 rides = engine.rides()
