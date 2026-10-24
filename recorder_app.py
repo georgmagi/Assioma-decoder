@@ -1179,6 +1179,33 @@ class Engine(threading.Thread):
                 break
         return total / covered if covered > 0 else lp[-1][1]
 
+    ALERT_GRACE_S = 5        # a sensor gone this long during a ride: the red alert (a blip isn't one)
+
+    def _alerts(self, s, now, devices, strap) -> list:
+        """The ride screen's red flashing alert: a sensor you use that isn't connected (after
+        ALERT_GRACE_S), the strap connected but silent, or pedalling while you paused the ride."""
+        out = []
+        if s.state not in ("recording", "paused"):
+            self._lost = {}
+            return out
+        lost = getattr(self, "_lost", {})
+        if devices:
+            used = (("pedals", "Pedals", True), ("hr", "Strap", self.settings.get("hr")),
+                    ("trainer", "Trainer", self.settings.get("trainer")))
+            for key, label, on in used:
+                if on and (devices.get(key) or {}).get("state") != "connected":
+                    lost.setdefault(key, now)
+                    if (now - lost[key]).total_seconds() >= self.ALERT_GRACE_S:
+                        out.append(f"{label} not connected")
+                else:
+                    lost.pop(key, None)
+        self._lost = lost
+        if strap and strap.get("warn", "").startswith("no data") and "Strap not connected" not in out:
+            out.append(f"Strap: {strap['warn']}")
+        if s.state == "paused" and not self._autopaused and (self._power_3s(now) or 0) > 0:
+            out.append("Paused, but you're pedalling: press Resume")
+        return out
+
     def _snapshot(self) -> dict:
         w, now = self.worker, utcnow()
         view = getattr(w, "view", lambda k: (w.status.get(k, ""), ""))   # (status, "ANT+" / "Bluetooth")
@@ -1247,7 +1274,7 @@ class Engine(threading.Thread):
             "stats": {k: st.get(k) for k in ("avg_power", "np", "avg_cadence", "balance_right", "avg_hr",
                                              "pco_left", "pco_right", "pco_left_range", "pco_right_range")},
             "dyn": {k: live.get(k) for k in DYN_KEYS},
-            "hrv": h, "strap": strap, "ride": ride,
+            "hrv": h, "strap": strap, "ride": ride, "alerts": self._alerts(s, now, base.get("devices"), strap),
             "guard": self._guard(s, now, h.get("alpha1"), h.get("cov")) if s.state != "finished" else None,
             "wbal": self._wbal_live(s),
             "warmup": self._warmup_live(s),

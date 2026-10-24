@@ -663,3 +663,24 @@ def test_an_unfinished_ride_is_found_and_never_touched_when_there_is_nothing_in_
 def test_an_older_app_is_refused_by_the_sync_server():
     import cloud_sync as cs
     assert cs.FORMAT >= 2 and "update" in cs.OUTDATED
+
+
+def test_red_alert_for_a_lost_sensor_after_a_grace_and_for_pedalling_while_you_paused(tmp_path, monkeypatch):
+    from datetime import datetime
+    e = _engine(tmp_path)
+    s = _ride(e, 5)
+    t = datetime.now()
+    at = lambda sec: t + timedelta(seconds=sec)
+    dev = {"pedals": {"state": "connected"}, "hr": {"state": "searching"}, "trainer": {"state": "off"}}
+    e.settings.update(hr=True, trainer=False)
+    monkeypatch.setattr(e, "_power_3s", lambda now: 0)
+    assert e._alerts(s, at(0), dev, None) == []                       # a blip: nothing yet
+    assert e._alerts(s, at(e.ALERT_GRACE_S), dev, None) == ["Strap not connected"]
+    dev["hr"] = {"state": "connected"}                                # trainer off and not used: fine
+    assert e._alerts(s, at(6), dev, None) == []
+    e._do("pause")
+    assert e._alerts(s, at(7), dev, None) == []                       # paused and still: fine
+    monkeypatch.setattr(e, "_power_3s", lambda now: 150)
+    assert e._alerts(s, at(8), dev, None) == ["Paused, but you're pedalling: press Resume"]
+    e._autopaused = True                                              # auto-pause resumes by itself
+    assert e._alerts(s, at(9), dev, None) == []

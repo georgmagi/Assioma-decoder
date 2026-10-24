@@ -799,6 +799,14 @@ function layoutKind(w) {
   return top >= 0.8 ? "intervals" : top > 0 ? "z2" : "free";
 }
 
+// red, flashing, over the whole ride screen: a sensor gone, or pedalling while paused (Engine._alerts)
+function renderAlert(list) {
+  const el = $("alert"), text = list.join(" · ");
+  el.hidden = !list.length;
+  if (el.textContent !== text) el.textContent = text;
+  document.body.classList.toggle("alerting", !!list.length);
+}
+
 function applyLayout(s) {
   const kind = S.layout && S.layout !== "auto" ? S.layout : layoutKind(s.workout);
   if ($("scr-ride").dataset.kind !== kind) $("scr-ride").dataset.kind = kind;
@@ -832,6 +840,7 @@ function apply(s) {
   if (!$("topnav").hidden) renderNavStart(s);
   renderFuel(s.screen === "ride" && s.ride ? s.ride.fuel : null);
   $("layouts").hidden = s.screen !== "ride";
+  renderAlert(s.screen === "ride" && s.ride ? s.alerts || [] : []);
   if (s.screen === "ride" && s.ride) {
     renderTiles(s);
     renderWorkout(s);

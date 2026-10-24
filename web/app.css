@@ -1201,3 +1201,12 @@ body.viewer .home-row.three { grid-template-columns: minmax(0, 1fr) minmax(0, 1f
   .table-wrap, .screen.progress .panel.rides .table-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
   .screen.summary, .screen.plan, .screen.progress, .screen.workouts { overflow-x: hidden; }
 }
+
+/* the ride's red alert (renderAlert): a banner over the tiles and a red frame, both flashing */
+.alert { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); z-index: 50;
+  padding: 14px 28px; border-radius: 10px; background: #d92f37; color: #fff; font-size: 22px; font-weight: 700;
+  letter-spacing: 0.02em; box-shadow: 0 6px 30px rgba(217, 47, 55, 0.55); animation: alert-blink 1s steps(2, jump-none) infinite; }
+.alert[hidden] { display: none; }
+body.alerting::after { content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 49;
+  box-shadow: inset 0 0 0 6px #d92f37; animation: alert-blink 1s steps(2, jump-none) infinite; }
+@keyframes alert-blink { 0% { opacity: 1; } 100% { opacity: 0.25; } }
