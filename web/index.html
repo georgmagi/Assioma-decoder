@@ -82,17 +82,24 @@
     <section class="panel set-panel">
       <div class="panel-head"><h2>Your numbers</h2></div>
       <form class="settings" id="set-form" onsubmit="return false">
-        <label><span>FTP</span><input id="set-ftp" type="number" min="50" max="600" step="1" inputmode="numeric"><span class="u">W</span></label>
-        <label><span>Max heart rate</span><input id="set-maxhr" type="number" min="120" max="230" step="1" inputmode="numeric"><span class="u">bpm</span></label>
-        <label><span>Weight</span><input id="set-kg" type="number" min="35" max="150" step="0.1" inputmode="decimal"><span class="u">kg</span></label>
-        <label><span>Goal</span><input id="set-goal" type="number" min="1.5" max="7" step="0.1" inputmode="decimal"><span class="u">W/kg</span></label>
-        <label><span>Goal date</span><input id="set-goal-date" type="date"><span class="u"></span></label>
-        <label><span>VT1 heart rate</span><input id="set-vt1" type="number" min="90" max="210" step="1" inputmode="numeric" placeholder="auto"><span class="u">bpm</span></label>
-        <label><span>Planned ride</span><input id="set-plan" type="number" min="10" max="600" step="5" inputmode="numeric"><span class="u">min</span></label>
-        <label><span>Room temperature</span><input id="set-temp" type="number" min="5" max="40" step="0.5" inputmode="decimal"><span class="u">°C</span></label>
-        <label><span>Humidity</span><input id="set-rh" type="number" min="5" max="100" step="1" inputmode="numeric"><span class="u">%</span></label>
+        <div class="set-group">
+          <h3>You</h3>
+          <label><span>FTP</span><input id="set-ftp" type="number" min="50" max="600" step="1" inputmode="numeric"><span class="u">W</span></label>
+          <label><span>Weight<small id="set-wkg"></small></span><input id="set-kg" type="number" min="35" max="150" step="0.1" inputmode="decimal"><span class="u">kg</span></label>
+          <label><span>Max heart rate</span><input id="set-maxhr" type="number" min="120" max="230" step="1" inputmode="numeric"><span class="u">bpm</span></label>
+          <label><span>VT1 heart rate</span><input id="set-vt1" type="number" min="90" max="210" step="1" inputmode="numeric" placeholder="auto"><span class="u">bpm</span></label>
+        </div>
+        <div class="set-group">
+          <h3>Goal</h3>
+          <label><span>Power<small id="set-goal-w"></small></span><input id="set-goal" type="number" min="1.5" max="7" step="0.1" inputmode="decimal"><span class="u">W/kg</span></label>
+          <label><span>By</span><input id="set-goal-date" type="date"><span class="u"></span></label>
+        </div>
+        <div class="set-group">
+          <h3>Next ride</h3>
+          <label><span>Planned</span><input id="set-plan" type="number" min="10" max="600" step="5" inputmode="numeric"><span class="u">min</span></label>
+          <label class="two" title="Saved with each ride: heat raises heart rate at the same power. Update from your hygrometer before you ride."><span>Room</span><input id="set-temp" type="number" min="5" max="40" step="0.5" inputmode="decimal"><span class="u">°C</span><input id="set-rh" type="number" min="5" max="100" step="1" inputmode="numeric"><span class="u">%</span></label>
+        </div>
       </form>
-      <p class="hint set-hint">Room temperature and humidity are saved with each ride (heat raises heart rate at the same power): update them from your hygrometer before you ride.</p>
       <div class="sync-row" id="sync-row">
         <span class="sync-lab">Sync</span><span class="sync-state" id="sync-state">off</span>
         <button class="btn" id="sync-setup">Set up</button>

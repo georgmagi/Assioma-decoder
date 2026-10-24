@@ -409,9 +409,13 @@ function renderSettings(s) {
     $("set-temp").value = s.settings.room_temp ?? "";
     $("set-rh").value = s.settings.room_rh ?? "";
     $("set-kg").value = s.settings.weight_kg ?? "";
-    $("set-goal").value = s.settings.goal_wkg ?? "";
+    $("set-goal").value = s.settings.goal_wkg != null ? Number(s.settings.goal_wkg).toFixed(1) : "";
     $("set-goal-date").value = s.settings.goal_date ?? "";
   }
+  // what the numbers mean together: W/kg now, the goal in watts at your weight
+  const kg = s.settings.weight_kg, ftpNow = s.settings.ftp, g = s.settings.goal_wkg;
+  $("set-wkg").textContent = kg && ftpNow ? `${(ftpNow / kg).toFixed(2)} W/kg` : "";
+  $("set-goal-w").textContent = kg && g ? `${Math.round(g * kg)} W` : "";
   // empty VT1 = your latest ride that crossed it (vt1.py): shown as the placeholder
   const auto = s.vt1 && s.vt1.source === "ride" ? s.vt1 : null;
   $("set-vt1").placeholder = auto ? `auto ${fmt(auto.hr)}` : "auto";

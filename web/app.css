@@ -1294,3 +1294,19 @@ body.page .bar .ride-ctl { display: none; }
 
 /* two lit toggles side by side (ERG, Match): a gap between them so they stay two */
 .wseg .tg.on + .tg.on { border-left: 2px solid var(--panel); }
+
+/* ---- Your numbers: three short groups, one row per number, units in their own column */
+.set-panel .settings { display: grid; gap: 14px; }
+.set-group { display: grid; gap: 6px; }
+.set-group + .set-group { padding-top: 12px; border-top: 1px solid var(--grid); }
+.set-group h3 { margin: 0 0 2px; font: 600 11px/1 var(--ui); letter-spacing: 0.08em; text-transform: uppercase; color: var(--dim); }
+.set-panel .settings label { grid-template-columns: minmax(0, 1fr) 6.2em 2.6em; gap: 8px; min-height: 34px; color: var(--fg); font-size: 14px; }
+.set-panel .settings label > span:first-child { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
+.set-panel .settings label small { color: var(--dim); font: 12.5px var(--num); white-space: nowrap; }
+.set-panel .settings input[type="number"], .set-panel .settings input[type="date"] { width: 100%; padding: 6px 9px; font-size: 16px; }
+.set-panel .settings input[type="date"] { font: 14px var(--num); text-align: right; }
+.set-panel .settings label:has(input[type="date"]) { grid-template-columns: minmax(0, 1fr) 9.6em 0; }
+.set-panel .settings label.two { grid-template-columns: minmax(0, 1fr) 4.6em 1.4em 4.6em 1.4em; }
+.set-panel .settings .u { width: auto; color: var(--dim); font-size: 13px; }
+[data-theme="lcd"] .set-panel .settings label, [data-theme="lcd"] .set-group h3 { color: var(--fg); }
+[data-theme="lcd"] .set-group + .set-group { border-top-color: rgba(27, 30, 25, 0.3); }
