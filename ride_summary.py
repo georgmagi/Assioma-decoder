@@ -434,15 +434,77 @@ def summarize_file(folder: str, ride_id: str, ftp=None, max_hr=None, w_prime=Non
         s["breathing"] = None
     raw = os.path.join(folder, ride_id + "_raw.csv")
     if os.path.exists(raw):                                  # recorded over ANT+ and Bluetooth at once
-        import linkcheck
-        try:
-            s["links"] = linkcheck.compare(raw)
-        except Exception:
-            s["links"] = None
+        s["links"] = _links(folder, ride_id, raw)
     name, source = ride_name(ride_id)
     own_fit = os.path.join(folder, ride_id + ".fit")
     return {"id": ride_id, "name": meta.get("workout", {}).get("name") or name, "source": source,
             "fit": os.path.exists(own_fit), "fit_path": own_fit, "meta": meta, **s}
+
+
+LINKS_V = 1
+
+
+def _links(folder: str, ride_id: str, raw: str) -> Optional[dict]:
+    """The strap's two links compared (linkcheck.py): seconds of work per ride and the answer never
+    changes, so it's worked out once and kept in .cache, redone only if the raw log changes."""
+    import linkcheck
+    cache = os.path.join(os.path.dirname(cache_path(folder, ride_id)), ride_id + "_links.json")
+    st = os.stat(raw)
+    sig = [LINKS_V, st.st_mtime, st.st_size]
+    try:
+        with open(cache, encoding="utf-8") as fh:
+            got = json.load(fh)
+        if got.get("sig") == sig:
+            return got.get("links")
+    except (OSError, ValueError):
+        pass
+    try:
+        links = linkcheck.compare(raw)
+    except Exception:
+        return None
+    _write_json(cache, {"sig": sig, "links": links})
+    return links
+
+
+def _write_json(path: str, obj, gz: bool = False) -> None:
+    """Whole or not at all: a temporary file renamed over the old one."""
+    import gzip
+    tmp = path + ".tmp"
+    try:
+        data = json.dumps(obj, separators=(",", ":")).encode("utf-8")
+        with open(tmp, "wb") as fh:
+            fh.write(gzip.compress(data, 5) if gz else data)
+        os.replace(tmp, path)
+    except (OSError, TypeError, ValueError):
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+
+
+FULL_V = 1                                    # bump when the full summary changes (with SUMMARY_VERSION)
+
+
+def summary_cached(folder: str, ride_id: str, ftp=None, max_hr=None, w_prime=None) -> Optional[dict]:
+    """summarize_file, kept in .cache (gzipped) and served from there while nothing it depends on
+    changed: the ride's files (any of them, the meta included), the FTP, max heart rate and W'
+    given, and the code's versions. Opening a ride the second time is instant."""
+    import gzip
+    files = sorted(glob.glob(os.path.join(glob.escape(folder), glob.escape(ride_id) + "*")))
+    sig = [SUMMARY_VERSION, FULL_V, ftp, max_hr, w_prime,
+           [[os.path.basename(f), os.path.getmtime(f), os.path.getsize(f)] for f in files if os.path.isfile(f)]]
+    cache = os.path.join(os.path.dirname(cache_path(folder, ride_id)), ride_id + "_full.json.gz")
+    try:
+        with open(cache, "rb") as fh:
+            got = json.loads(gzip.decompress(fh.read()))
+        if got.get("sig") == json.loads(json.dumps(sig)):
+            return got["s"]
+    except (OSError, ValueError, KeyError, EOFError):
+        pass
+    s = summarize_file(folder, ride_id, ftp, max_hr, w_prime)
+    if s is not None:
+        _write_json(cache, {"sig": sig, "s": s}, gz=True)
+    return s
 
 
 META = "_meta.json"      # beside a ride: room conditions and the workout ridden (written by the app)

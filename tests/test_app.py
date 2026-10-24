@@ -748,3 +748,24 @@ def test_power_match_holds_still_on_swinging_pedals_and_restarts_after_a_stop(tm
     assert e.pm_k == 1.04                                    # settled = still
     e._power_match(163, 5, 150, 5000.0)                      # stopped pedalling: starts over
     assert e._pm == [] and e._pm_tgt == (163, 5000.0)
+
+
+def test_full_summary_is_cached_and_redone_when_anything_it_depends_on_changes(tmp_path, monkeypatch):
+    import ride_summary as rs2
+    e = _engine(tmp_path)
+    s = _ride(e, 90)
+    _stop_and_save(e)
+    rid = os.path.basename(s.base)
+    calls = []
+    real = rs2.summarize_file
+    monkeypatch.setattr(rs2, "summarize_file", lambda *a, **k: calls.append(1) or real(*a, **k))
+    a = rs2.summary_cached(str(tmp_path), rid, 200, 190, None)
+    b = rs2.summary_cached(str(tmp_path), rid, 200, 190, None)
+    assert len(calls) == 1 and a == b                                       # the second time from the cache
+    rs2.summary_cached(str(tmp_path), rid, 210, 190, None)                  # another FTP: worked out again
+    assert len(calls) == 2
+    import time as _t
+    _t.sleep(0.01)
+    rs2.save_meta(str(tmp_path), rid, {"temp_c": 22})                       # the ride's meta changed
+    c = rs2.summary_cached(str(tmp_path), rid, 210, 190, None)
+    assert len(calls) == 3 and c["meta"]["temp_c"] == 22

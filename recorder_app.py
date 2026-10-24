@@ -163,6 +163,8 @@ class Engine(threading.Thread):
         self.pm_k = float(self.settings.get("power_match_k") or 1.0)   # power match (_power_match)
         self._pm, self._pm_tgt, self._pm_last = [], None, 0.0
         self.trainer_log: list = []          # [ride s, trainer's W, W asked of it] every 5 s in ERG
+        self._sum_locks: dict = {}           # one lock per ride being summarised (summary)
+        self._sum_locks_lock = threading.Lock()
         self._wo_meta: Optional[dict] = None
         self.error = ""
         self.pedal_since = None
@@ -558,6 +560,28 @@ class Engine(threading.Thread):
     def morning_trend(self) -> dict:
         """The morning check and the watch's nights, read together (morning.trend)."""
         return mo.trend(self.mornings, garmin=self.garmin)
+
+    def summary(self, ride_id: str, ftp) -> Optional[dict]:
+        """A ride's full summary from the cache (rs.summary_cached). One ride is worked out by one
+        thread at a time: a page asking while the warm-up is on it waits and then reads the cache."""
+        with self._sum_locks_lock:
+            lock = self._sum_locks.setdefault(ride_id, threading.Lock())
+        with lock:
+            return rs.summary_cached(self.out_dir, ride_id, ftp, self.settings.get("max_hr"), self.w_prime_at(ftp))
+
+    WARM_RIDES = 12
+
+    def warm_summaries(self) -> None:
+        """At launch, in the background: the newest rides' summaries into the cache, so opening one
+        is instant (the first time costs seconds: the strap's links compared, the ECG read)."""
+        try:
+            rides = sorted(self.rides(), key=lambda r: r["start_utc"], reverse=True)[: self.WARM_RIDES]
+            for r in rides:
+                if self.quit.is_set():
+                    return
+                self.summary(r["id"], r.get("ftp") or self.settings.get("ftp"))
+        except Exception as e:
+            self.worker.log(f"warm summaries: {type(e).__name__}: {e}")
 
     def recover_rides(self) -> list:
         """Rides the app closed or crashed in the middle of (assioma_recorder.unfinished): finished
@@ -1473,7 +1497,7 @@ def make_handler(engine: Engine, app_mode: dict):
                 rid = q.get("id", [""])[0]
                 rides = engine.rides()
                 ftp = next((r.get("ftp") for r in rides if r["id"] == rid), None) or engine.settings.get("ftp")
-                s = rs.summarize_file(engine.out_dir, rid, ftp, engine.settings.get("max_hr"), engine.w_prime_at(ftp))
+                s = engine.summary(rid, ftp)
                 if s is not None:                            # your normal warm-up from the rides before this one
                     s["warmup_normal"] = checks.warmup_normal([r.get("warmup") for r in rides if r.get("source") == "Assioma"
                                                               and r["start_utc"] < s["start_utc"] and r["id"] != rid])
@@ -1661,7 +1685,7 @@ def main() -> None:
         engine.keep_awake = keepawake.KeepAwake(engine.worker.log)
     engine.start()
     if not args.replay:                             # a ride the app closed in the middle of: finished now
-        threading.Thread(target=engine.recover_rides, daemon=True).start()
+        threading.Thread(target=lambda: (engine.recover_rides(), engine.warm_summaries()), daemon=True).start()
     engine.start_sync()                             # your server, when sync.json says where
     app_mode: dict = {"app": not args.browser, "window": None}
     server = make_server(engine, app_mode)

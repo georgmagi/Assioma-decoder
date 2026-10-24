@@ -43,18 +43,27 @@ def dfa_alpha1(rr: list) -> Optional[float]:
     for x in rr:
         acc += x - mean
         y.append(acc)
+    # running sums of y, y² and k·y, so each box's least-squares line and residual come in O(1):
+    # residual = Σ(y − ȳ)² − slope²·Sxx, slope = Σ(x − x̄)(y − ȳ) / Sxx (the same numbers as fitting
+    # every box point by point, without adding the boxes up again for every scale)
+    S1, S2, SK = [0.0], [0.0], [0.0]
+    for k, v in enumerate(y):
+        S1.append(S1[-1] + v)
+        S2.append(S2[-1] + v * v)
+        SK.append(SK[-1] + k * v)
     log_n, log_f = [], []
     for s in SCALES:
         boxes = n // s
         # detrend each box with a least-squares line; x = 0..s-1 is the same for every box
         xm = (s - 1) / 2
-        sxx = sum((i - xm) ** 2 for i in range(s))
+        sxx = s * (s * s - 1) / 12
         total = 0.0
         for start in [b * s for b in range(boxes)] + [n - (b + 1) * s for b in range(boxes)]:
-            seg = y[start:start + s]
-            ym = sum(seg) / s
-            slope = sum((i - xm) * (v - ym) for i, v in enumerate(seg)) / sxx
-            total += sum((v - ym - slope * (i - xm)) ** 2 for i, v in enumerate(seg))
+            end = start + s
+            sy, syy = S1[end] - S1[start], S2[end] - S2[start]
+            sxy = (SK[end] - SK[start]) - start * sy - xm * sy          # Σ (i − x̄)·y over the box, i = k − start
+            ss = syy - sy * sy / s
+            total += max(0.0, ss - sxy * sxy / sxx)
         f = math.sqrt(total / (2 * boxes * s))
         if f <= 0:
             return None
