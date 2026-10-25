@@ -893,6 +893,7 @@ function chime() {
     });
   } catch (e) { /* no audio: the flash still shows */ }
 }
+$("nudge-test").addEventListener("click", (e) => { e.currentTarget.blur(); nudge("Hydrate + fuel"); });
 // browsers may hold audio until a click: any click or key unlocks it for the rest of the session
 for (const ev of ["pointerdown", "keydown"])
   addEventListener(ev, () => { try { (S.ac || (S.ac = new AudioContext())).resume(); } catch (e) {} }, { once: true });

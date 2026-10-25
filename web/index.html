@@ -100,6 +100,10 @@
           <label class="two" title="Saved with each ride: heat raises heart rate at the same power. Update from your hygrometer before you ride."><span>Room</span><input id="set-temp" type="number" min="5" max="40" step="0.5" inputmode="decimal"><span class="u">°C</span><input id="set-rh" type="number" min="5" max="100" step="1" inputmode="numeric"><span class="u">%</span></label>
         </div>
       </form>
+      <div class="sync-row">
+        <span class="sync-lab">Hydrate alert</span><span class="sync-state">flash + chime 10 min in, then every 15 min</span>
+        <button class="btn" id="nudge-test">Test</button>
+      </div>
       <div class="sync-row" id="sync-row">
         <span class="sync-lab">Sync</span><span class="sync-state" id="sync-state">off</span>
         <button class="btn" id="sync-setup">Set up</button>
@@ -115,7 +119,6 @@
 
 <div class="screen ride" id="scr-ride" hidden>
 <div class="alert" id="alert" role="alert" hidden></div>
-<div class="nudge" id="nudge" hidden><div class="nudge-card"><b id="nudge-txt">Hydrate</b></div></div>
 <header class="tiles">
   <div class="tile pc" id="t-power">
     <div class="col">
@@ -543,6 +546,7 @@
 </div>
 <div class="offline" id="offline" hidden>The recorder isn't answering. Your ride keeps recording in the background.</div>
 
+<div class="nudge" id="nudge" hidden><div class="nudge-card"><b id="nudge-txt">Hydrate</b></div></div>
 <script src="vendor/uPlot.iife.min.js"></script>
 <script src="dynamics.js"></script>
 <script src="app.js"></script>
