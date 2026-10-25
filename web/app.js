@@ -871,7 +871,7 @@ function nudge(fuel) {
   el.hidden = false;
   el.classList.remove("go"); void el.offsetWidth; el.classList.add("go");      // restart the animation
   clearTimeout(S.nudgeT);
-  S.nudgeT = setTimeout(() => { el.hidden = true; el.classList.remove("go"); }, 4600);
+  S.nudgeT = setTimeout(() => { el.hidden = true; el.classList.remove("go"); }, 3000);
   if (!document.body.classList.contains("viewer")) chime();
 }
 

@@ -1229,31 +1229,20 @@ body.alerting::after { content: ""; position: fixed; inset: 0; pointer-events: n
   box-shadow: inset 0 0 0 6px #d92f37; animation: alert-blink 1s steps(2, jump-none) infinite; }
 @keyframes alert-blink { 0% { opacity: 1; } 100% { opacity: 0.25; } }
 
-/* the hydrate nudge (renderFuel/nudge): a soft light breathing in from the screen's edge twice and a
-   frosted card in the middle with a draining time line, ~4.5 s, nothing to click */
-.nudge { --nc: 90, 184, 255; position: fixed; inset: 0; z-index: 60; pointer-events: none; display: grid; place-items: center; }
+/* the hydrate nudge (renderFuel/nudge): a plain card in the middle, snaps in and out, ~3 s */
+.nudge { position: fixed; inset: 0; z-index: 60; pointer-events: none; display: grid; place-items: center; }
 .nudge[hidden] { display: none; }
-.nudge::before { content: ""; position: absolute; inset: 0; opacity: 0;
-  box-shadow: inset 0 0 0 1.5px rgba(var(--nc), 0.85), inset 0 0 140px 0 rgba(var(--nc), 0.22); }
-.nudge.go::before { animation: nudge-edge 2.2s ease-in-out 2; }
-.nudge-card { position: relative; overflow: hidden; display: flex; align-items: center; gap: 18px;
-  padding: 22px 34px 24px 24px; border-radius: 18px; color: #f2f5f8; opacity: 0; transform: translateY(10px);
-  background: rgba(14, 18, 24, 0.72); backdrop-filter: blur(22px) saturate(150%); -webkit-backdrop-filter: blur(22px) saturate(150%);
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(var(--nc), 0.12); }
-.nudge.go .nudge-card { animation: nudge-card 4.6s cubic-bezier(.2, .7, .2, 1) forwards; }
-.nudge-ico { display: grid; place-items: center; width: 52px; height: 52px; border-radius: 50%;
-  color: rgb(var(--nc)); background: rgba(var(--nc), 0.12); box-shadow: inset 0 0 0 1px rgba(var(--nc), 0.35); }
-.nudge-txt { display: flex; flex-direction: column; gap: 4px; }
-.nudge-txt b { font: 600 30px/1.1 var(--ui); letter-spacing: -0.01em; }
-.nudge-txt small { font: 400 15px/1.2 var(--ui); color: rgba(242, 245, 248, 0.62); }
-.nudge-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: rgba(var(--nc), 0.8);
-  transform-origin: left; transform: scaleX(1); }
-.nudge.go .nudge-bar { animation: nudge-bar 4.2s linear 0.3s forwards; }
-@keyframes nudge-edge { 0%, 100% { opacity: 0; } 50% { opacity: 1; } }
-@keyframes nudge-card { 0% { opacity: 0; transform: translateY(10px) scale(0.98); }
-  7%, 88% { opacity: 1; transform: none; } 100% { opacity: 0; transform: translateY(-6px); } }
-@keyframes nudge-bar { to { transform: scaleX(0); } }
+.nudge-card { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 22px 44px;
+  border-radius: 14px; color: #f2f5f8; background: rgba(14, 18, 24, 0.9); border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5); opacity: 0; }
+.nudge-card b { font: 600 34px/1.1 var(--ui); letter-spacing: -0.01em; }
+.nudge-card small { font: 400 15px/1.2 var(--ui); color: rgba(242, 245, 248, 0.6); }
+.nudge.go .nudge-card { animation: nudge-card 3s forwards; }
+@keyframes nudge-card {
+  0% { opacity: 0; transform: scale(0.94); animation-timing-function: cubic-bezier(.2, 1.4, .4, 1); }
+  4% { opacity: 1; transform: scale(1); }
+  95% { opacity: 1; transform: scale(1); animation-timing-function: ease-in; }
+  100% { opacity: 0; transform: scale(0.97); } }
 
 /* the Durability table (progress.js drawDurability): untested cells dim */
 .dur-table td.dim { color: var(--faint); }
