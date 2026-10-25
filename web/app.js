@@ -865,13 +865,14 @@ function renderFuel(f) {
 }
 
 function nudge(fuel) {
-  const el = $("nudge");
+  const el = $("nudge"), r = S.snap && S.snap.screen === "ride" && S.snap.ride;
+  $("nudge-at").textContent = r && r.clock ? `Ride ${r.clock}` : "Test";
   $("nudge-title").textContent = fuel ? "Hydrate & fuel" : "Hydrate";
   $("nudge-sub").textContent = fuel ? "Drink, and eat something" : "Take a few sips";
   el.hidden = false;
   el.classList.remove("go"); void el.offsetWidth; el.classList.add("go");      // restart the animation
   clearTimeout(S.nudgeT);
-  S.nudgeT = setTimeout(() => { el.hidden = true; el.classList.remove("go"); }, 3000);
+  S.nudgeT = setTimeout(() => { el.hidden = true; el.classList.remove("go"); }, 3200);
   if (!document.body.classList.contains("viewer")) chime();
 }
 

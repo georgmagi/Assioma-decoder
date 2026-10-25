@@ -304,7 +304,7 @@ function drawHero() {
       zt7 && ["easy", Math.round(100 * zs(["Z1", "Z2"])), "%"], zt7 && ["hard", Math.round(100 * zs(["Z4", "Z5", "Z6"])), "%"]] : [["", "no ride", ""]]) });
     if (v > 0) {
       ctx.save();
-      ctx.beginPath(); ctx.roundRect(cx - bw / 2, y, bw, mt + H - y, [4, 4, 0, 0]); ctx.clip();
+      ctx.beginPath(); ctx.rect(cx - bw / 2, y, bw, mt + H - y); ctx.clip();
       const ztime = Object.values(x.zones).reduce((a, b) => a + b, 0);
       if (HERO.metric === "time_s" && ztime && !lcd) {             // stacked by zone, Z1 at the bottom
         let yy = mt + H;
