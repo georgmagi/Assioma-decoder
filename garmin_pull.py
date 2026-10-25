@@ -31,7 +31,27 @@ REL = "garmin.json"
 SLEEP_MAX = 110          # bpm: above this during the night it's the optics, not you
 PULL_EVERY_S = 2 * 3600
 DAYS_BACK = 3            # each pull refreshes the last few days (the watch syncs late)
-LOGIN_CHECK_S = 60       # before the login: look for the tokens this often
+LOGIN_CHECK_S = 60
+# mornings: the watch reaches Garmin Connect when you pick up the phone, so from 06:00 to 11:00 (your
+# time) the server looks every 20 min until that morning's night is in, then back to every 2 h
+MORNING = (6, 11)
+MORNING_EVERY_S = 20 * 60
+LOCAL_TZ = "Europe/Tallinn"
+
+
+def next_wait(every: float, have: dict, now: Optional[datetime] = None) -> float:
+    """Seconds to the next pull: `every`, or MORNING_EVERY_S in the morning window while today's
+    night (sleep heart rate) isn't in yet; never past the window's start (so 06:00 isn't missed)."""
+    from zoneinfo import ZoneInfo
+    now = (now or datetime.now(timezone.utc)).astimezone(ZoneInfo(LOCAL_TZ))
+    today = now.date().isoformat()
+    got = bool((have.get(today) or {}).get("sleep_hr"))
+    if MORNING[0] <= now.hour < MORNING[1] and not got:
+        return min(every, MORNING_EVERY_S)
+    start = now.replace(hour=MORNING[0], minute=0, second=0, microsecond=0)
+    if start <= now:
+        start += timedelta(days=1)
+    return max(60.0, min(every, (start - now).total_seconds() + 30))       # before the login: look for the tokens this often
 FIRST_DAYS = 14          # the first pull fills two weeks
 TOKENS = os.environ.get("GARMINTOKENS", "/var/lib/assioma/garmin")
 
@@ -120,7 +140,7 @@ def pull_loop(read: Callable[[], Optional[bytes]], write: Callable[[bytes], None
     until you've logged in; a failed pull waits for the next round."""
     said = None
     while not stop.is_set():
-        g = None
+        g, days = None, {}
         try:
             g = client_from_tokens(tokens)
             if g is None:
@@ -128,6 +148,7 @@ def pull_loop(read: Callable[[], Optional[bytes]], write: Callable[[bytes], None
             else:
                 old = read()
                 new = pull(g, json.loads(old) if old else {}, log=log)
+                days = new["days"]
                 body = json.dumps(new, indent=1).encode()
                 if old is None or json.loads(old).get("days") != new["days"]:
                     write(body)
@@ -139,7 +160,7 @@ def pull_loop(read: Callable[[], Optional[bytes]], write: Callable[[bytes], None
         if msg != said:
             log(msg)
             said = msg
-        stop.wait(every if g is not None else min(every, LOGIN_CHECK_S))   # logged in a minute ago: pull now
+        stop.wait(next_wait(every, days) if g is not None else min(every, LOGIN_CHECK_S))   # logged in a minute ago: pull now
 
 
 def _login() -> None:

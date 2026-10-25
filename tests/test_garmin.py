@@ -85,3 +85,15 @@ def test_before_the_login_nothing_is_written(tmp_path):
     threading.Event().wait(0.2)
     stop.set(); t.join(2)
     assert wrote == [] and lines == ["garmin: not logged in (garmin_pull.py login)"]
+
+
+def test_mornings_look_every_20_minutes_until_the_night_is_in():
+    from datetime import datetime, timezone
+    import garmin_pull as gp
+    utc = lambda h, m=0: datetime(2026, 10, 25, h, m, tzinfo=timezone.utc)      # Tallinn = UTC+2 that day
+    two_h = 2 * 3600
+    assert gp.next_wait(two_h, {}, utc(5, 10)) == 20 * 60                       # 07:10, no night yet
+    assert gp.next_wait(two_h, {"2026-10-25": {"sleep_hr": {"low30": 50}}}, utc(5, 10)) == two_h   # in: back to 2 h
+    assert gp.next_wait(two_h, {}, utc(9, 30)) == two_h                         # 11:30: the window is over
+    w = gp.next_wait(two_h, {}, utc(3, 30))                                     # 05:30: wait only to 06:00
+    assert 29 * 60 < w < 32 * 60
