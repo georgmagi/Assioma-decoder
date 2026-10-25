@@ -159,7 +159,7 @@ function drawMorning(m) {
   }
   ctx.strokeStyle = ink; ctx.lineWidth = 2.5; ctx.beginPath();
   win.forEach((p, i) => (i ? ctx.lineTo(mid(p), L.Y(p.hr)) : ctx.moveTo(mid(p), L.Y(p.hr)))); ctx.stroke();
-  ctx.font = "600 12px Barlow, 'IBM Plex Sans', sans-serif"; ctx.textAlign = "center";
+  ctx.font = "600 12px 'Barlow Semi Condensed', 'IBM Plex Sans', sans-serif"; ctx.textAlign = "center";
   const MK = marksOf(cv);
   for (const p of win) {
     MK.push({ x: mid(p), y: L.Y(p.hr), html: tipHtml(SHORT_DAY.format(dayOf(p.date)), [
@@ -292,7 +292,7 @@ function drawHero() {
   const top = Math.max(HERO.metric === "tss" ? 60 : 1, ...vals) * 1.2;     // an empty week still has a scale
   const mb = 20, mt = 16, H = ht - mb - mt, slot = wd / 7, bw = Math.min(64, slot * 0.62);
   const WD = new Intl.DateTimeFormat("en-GB", { weekday: "short" });
-  ctx.font = "11px Barlow, 'IBM Plex Sans', sans-serif"; ctx.textAlign = "center";
+  ctx.font = "11px 'Barlow Semi Condensed', 'IBM Plex Sans', sans-serif"; ctx.textAlign = "center";
   ctx.strokeStyle = C.grid; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(0, mt + H + 0.5); ctx.lineTo(wd, mt + H + 0.5); ctx.stroke();
   const MK = marksOf(cv), DF = new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "short" });
@@ -682,7 +682,7 @@ function drawVt1(e, unit) {
   const y0 = Math.min(0.3, Math.floor(Math.min(...ys) * 10) / 10), y1 = Math.max(1.6, Math.ceil(Math.max(...ys) * 10) / 10);
   const ml = 34, mr = 10, mt = 8, mb = 22, W = wd - ml - mr, H = ht - mt - mb;
   const X = (v) => ml + ((v - x0) / (x1 - x0)) * W, Y = (v) => mt + H - ((v - y0) / (y1 - y0)) * H;
-  ctx.font = "11px Barlow, 'IBM Plex Sans', sans-serif";
+  ctx.font = "11px 'Barlow Semi Condensed', 'IBM Plex Sans', sans-serif";
   ctx.strokeStyle = C.grid; ctx.fillStyle = C.dim; ctx.lineWidth = 1;
   for (let v = Math.ceil(y0 / 0.25) * 0.25; v <= y1 + 1e-9; v += 0.25) {
     ctx.beginPath(); ctx.moveTo(ml, Y(v)); ctx.lineTo(ml + W, Y(v)); ctx.stroke();
@@ -758,7 +758,7 @@ function drawBreathing(d) {
     ctx.lineTo(X(t), m.t + ph - (k ? s / k / pmax : 0) * ph * 0.9);
   }
   ctx.lineTo(X(n - 1), m.t + ph); ctx.closePath(); ctx.fill();
-  ctx.font = "11px Barlow, 'IBM Plex Sans', sans-serif"; ctx.lineWidth = 1;
+  ctx.font = "11px 'Barlow Semi Condensed', 'IBM Plex Sans', sans-serif"; ctx.lineWidth = 1;
   for (let v = 10; v <= top; v += 10) {
     ctx.strokeStyle = C.grid; ctx.beginPath(); ctx.moveTo(m.l, Y(v) + 0.5); ctx.lineTo(m.l + pw, Y(v) + 0.5); ctx.stroke();
     ctx.fillStyle = C.dim; ctx.textAlign = "right"; ctx.fillText(`${v}`, m.l - 6, Y(v) + 4);
@@ -894,7 +894,7 @@ function drawWbal(d) {
   const lcd = THEME === "lcd", ser = w.series, n = ser.length;
   const m = { l: 40, r: 8, t: 8, b: 22 }, pw = W - m.l - m.r, ph = H - m.t - m.b;
   const X = (i) => m.l + (i / Math.max(1, n - 1)) * pw, Y = (pct) => m.t + ph - (Math.max(0, Math.min(100, pct)) / 100) * ph;
-  ctx.font = "11px Barlow, 'IBM Plex Sans', sans-serif";
+  ctx.font = "11px 'Barlow Semi Condensed', 'IBM Plex Sans', sans-serif";
   ctx.lineWidth = 1;
   for (const v of [0, 25, 50, 75, 100]) {
     ctx.strokeStyle = C.grid; ctx.beginPath(); ctx.moveTo(m.l, Y(v) + 0.5); ctx.lineTo(m.l + pw, Y(v) + 0.5); ctx.stroke();
@@ -954,7 +954,7 @@ function drawPoincare(p) {
   const padv = Math.max(20, (hi - lo) * 0.1); lo -= padv; hi += padv;
   const m = 34, w = size - m - 8, X = (v) => m + ((v - lo) / (hi - lo)) * w, Y = (v) => 8 + w - ((v - lo) / (hi - lo)) * w;
   const ink = C.fg, grid = C.grid;
-  ctx.font = "11px Barlow, 'IBM Plex Sans', sans-serif";
+  ctx.font = "11px 'Barlow Semi Condensed', 'IBM Plex Sans', sans-serif";
   ctx.fillStyle = C.dim; ctx.strokeStyle = grid; ctx.lineWidth = 1;
   const step = [10, 20, 25, 50, 100, 200].find((s) => (hi - lo) / s <= 5) || 250;
   for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) {
@@ -991,7 +991,7 @@ function makeSummaryCharts(d) {
   const p30 = smooth(ser.power, 15), hr15 = smooth(ser.hr, 7);
   const t0 = new Date(d.start_utc).getTime();
   const clock = (s) => TIME.format(new Date(t0 + s * 1000));
-  const axisFont = "12px Barlow, 'IBM Plex Sans', sans-serif";
+  const axisFont = "12px 'Barlow Semi Condensed', 'IBM Plex Sans', sans-serif";
   const smoothPath = uPlot.paths.spline();
   const round = (r, step) => [Math.floor(r[0] / step) * step, Math.ceil(r[1] / step) * step];
   const pwSt = spread(p30.filter((v) => v != null)), hrSt = spread(hr15.filter((v) => v != null), 0.03);
@@ -1127,7 +1127,7 @@ function drawEftp(prog, s) {
   const ps = pts.map(([, p]) => p).concat(f ? [f.cp, f.cp + f.w_prime / 150] : [], val ? [val] : []);
   const step = 25, y0 = Math.floor((Math.min(...ps) - 10) / step) * step, y1 = Math.ceil((Math.max(...ps) + 10) / step) * step;
   const X = (t) => ml + ((Math.log(t) - t0) / (t1 - t0)) * W, Y = (p) => mt + H - ((p - y0) / (y1 - y0)) * H;
-  ctx.font = "11px Barlow, 'IBM Plex Sans', sans-serif"; ctx.strokeStyle = C.grid; ctx.fillStyle = C.dim; ctx.lineWidth = 1;
+  ctx.font = "11px 'Barlow Semi Condensed', 'IBM Plex Sans', sans-serif"; ctx.strokeStyle = C.grid; ctx.fillStyle = C.dim; ctx.lineWidth = 1;
   ctx.textAlign = "right";
   const ys = (y1 - y0) / step > 5 ? step * 2 : step;
   for (let p = y0; p <= y1; p += ys) { ctx.beginPath(); ctx.moveTo(ml, Y(p)); ctx.lineTo(ml + W, Y(p)); ctx.stroke(); ctx.fillText(p, ml - 5, Y(p) + 4); }

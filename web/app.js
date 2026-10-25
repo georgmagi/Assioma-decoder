@@ -495,7 +495,7 @@ function dither(u) {                            // LCD fill: a 50 % checkerboard
 }
 function makeCharts() {
   const lcd = THEME === "lcd";
-  const axisFont = "12px Barlow, 'IBM Plex Sans', sans-serif";
+  const axisFont = "12px 'Barlow Semi Condensed', 'IBM Plex Sans', sans-serif";
   const common = (el) => ({
     width: el.clientWidth, height: el.clientHeight,
     legend: { show: false },
@@ -539,7 +539,7 @@ function makeCharts() {
     hline(u, "hr", ref.hr, blend(C.hr, C.panel, 0.4), true);
     const dpr = devicePixelRatio || 1;
     u.ctx.save();
-    u.ctx.font = `${11 * dpr}px Barlow, 'IBM Plex Sans', sans-serif`;
+    u.ctx.font = `${11 * dpr}px 'Barlow Semi Condensed', 'IBM Plex Sans', sans-serif`;
     u.ctx.fillStyle = blend(C.hr, C.panel, 0.25); u.ctx.textAlign = "left";
     u.ctx.fillText(`VT1 ${Math.round(ref.hr)}`, u.bbox.left + 6 * dpr, u.valToPos(ref.hr, "hr", true) - 4 * dpr);
     u.ctx.restore();
@@ -1160,7 +1160,7 @@ function drawMove(now) {
     ctx.strokeStyle = C.grid; ctx.lineWidth = 1;                          // frame and cross-hair
     ctx.strokeRect(cx - r + 0.5, cy - r + 0.5, 2 * r - 1, 2 * r - 1);
     ctx.beginPath(); ctx.moveTo(cx - r, cy); ctx.lineTo(cx + r, cy); ctx.moveTo(cx, cy - r); ctx.lineTo(cx, cy + r); ctx.stroke();
-    ctx.fillStyle = C.dim; ctx.font = "10px Barlow, 'IBM Plex Sans', sans-serif"; ctx.textAlign = "left";
+    ctx.fillStyle = C.dim; ctx.font = "10px 'Barlow Semi Condensed', 'IBM Plex Sans', sans-serif"; ctx.textAlign = "left";
     ctx.fillText(vi ? "side" : "front", cx - r + 5, cy - r + 13);
     const hx = vi ? 3 : 1;                                                  // front: side-to-side; side: fore-aft
     for (let i = 1; i < trail.length; i++) {

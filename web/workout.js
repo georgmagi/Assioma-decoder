@@ -58,7 +58,7 @@ function drawProfile(cv, steps, opts = {}) {
     ctx.beginPath(); ctx.moveTo(0, Y(1)); ctx.lineTo(w, Y(1)); ctx.stroke(); ctx.setLineDash([]);
   }
   if (opts.watts) {                                                // the ride strip: watts on the work steps that fit
-    ctx.font = "600 11px Barlow, 'IBM Plex Sans', sans-serif";
+    ctx.font = "600 11px 'Barlow Semi Condensed', 'IBM Plex Sans', sans-serif";
     ctx.textAlign = "center"; ctx.textBaseline = "top";
     let t2 = 0;
     for (const [dur, lo, hi] of steps) {

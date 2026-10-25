@@ -59,7 +59,7 @@ function drawPlanChart(d) {
   (d.blocks || [{ start: d.start, end: d.end }]).forEach((b, i) => {          // each block shaded, every other one lighter
     ctx.fillStyle = lcd ? `rgba(27,30,25,${i % 2 ? 0.03 : 0.07})` : blend(C.power, C.panel, i % 2 ? 0.96 : 0.92);
     ctx.fillRect(x(b.start), L1.top, x(b.end) - x(b.start) + 1, L2.top + L2.h - L1.top);
-    ctx.fillStyle = C.dim; ctx.textAlign = "left"; ctx.font = "11px Barlow, 'IBM Plex Sans', sans-serif";
+    ctx.fillStyle = C.dim; ctx.textAlign = "left"; ctx.font = "11px 'Barlow Semi Condensed', 'IBM Plex Sans', sans-serif";
     if (d.blocks && d.blocks.length > 1) ctx.fillText(`Block ${b.n}`, x(b.start) + 4, L1.top + 12);
   });
   if (A.days.length) {

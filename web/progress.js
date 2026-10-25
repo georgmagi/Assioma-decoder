@@ -76,7 +76,7 @@ function makePmc(p) {
   const lcd = THEME === "lcd";
   const x = p.days.map((iso) => dayOf(iso).getTime() / 1000);
   const pos = p.tsb.map((v) => (v >= 0 ? v : null)), neg = p.tsb.map((v) => (v < 0 ? v : null));
-  const axisFont = "12px Barlow, 'IBM Plex Sans', sans-serif";
+  const axisFont = "12px 'Barlow Semi Condensed', 'IBM Plex Sans', sans-serif";
   const bars = uPlot.paths.bars({ size: [0.7, 12] });
   // placed apart like the ride graphs: form's zero line at a quarter of the height (its bars
   // between the bottom and the middle), fitness and fatigue in the upper part
@@ -176,7 +176,7 @@ function makeWeekly(weeks) {
   if (PROG.plots.wk) { PROG.plots.wk.destroy(); delete PROG.plots.wk; }
   const el = $("wk-chart"), lcd = THEME === "lcd", [unit, conv, show] = WK[PROG.metric];
   const x = weeks.map((w) => dayOf(w.start).getTime() / 1000), y = weeks.map((w) => conv(w[PROG.metric]));
-  const axisFont = "12px Barlow, 'IBM Plex Sans', sans-serif";
+  const axisFont = "12px 'Barlow Semi Condensed', 'IBM Plex Sans', sans-serif";
   const readout = (u) => {
     const i = u.cursor.idx;
     if (i == null || u.cursor.left < 0) { uTip(u, null); return; }
@@ -230,7 +230,7 @@ function laneChart(cv, height, lanes, t0, t1, opts = {}) {
   const ml = 46, mr = opts.mr ?? 14, mt = 8, mb = 22, gap = 30, W = wd - ml - mr;   // opts.mr: room for a right scale
   const total = height - mt - mb - gap * (lanes.length - 1), wsum = lanes.reduce((a, l) => a + l.weight, 0);
   const X = (t) => ml + ((t - t0) / (t1 + 86400e3 - t0)) * W;
-  ctx.font = "11px Barlow, 'IBM Plex Sans', sans-serif";
+  ctx.font = "11px 'Barlow Semi Condensed', 'IBM Plex Sans', sans-serif";
   let top = mt;
   for (const l of lanes) {
     const h = (total * l.weight) / wsum, y0 = l.y0, y1 = l.y1, base = top + h;
@@ -593,7 +593,7 @@ function drawGoal() {
   if (g.goal_date) MK.push({ x: X(dayOf(g.goal_date).getTime()), y: L.Y(g.goal_wkg), html: tipHtml(`Goal, ${SHORT_DAY.format(dayOf(g.goal_date))}`,
     [["", g.goal_wkg.toFixed(1), "W/kg", C.good], ["", fmt(g.target_w), "W"], g.need_w_week > 0 && ["needs", `+${g.need_w_week.toFixed(1)}`, "W/week"]]) });
   if (g.goal_date) {
-    ctx.fillStyle = C.dim; ctx.textAlign = "right"; ctx.font = "11px Barlow, 'IBM Plex Sans', sans-serif";
+    ctx.fillStyle = C.dim; ctx.textAlign = "right"; ctx.font = "11px 'Barlow Semi Condensed', 'IBM Plex Sans', sans-serif";
     ctx.fillText(`${g.goal_wkg.toFixed(1)} W/kg by ${day(g.goal_date)}`, X(dayOf(g.goal_date).getTime()), L.Y(g.goal_wkg) - 6);
   }
 }
