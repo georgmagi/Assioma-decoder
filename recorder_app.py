@@ -73,7 +73,7 @@ PAGES = ("home", "plan", "workouts", "stats")   # the app's pages (top bar); plu
 # remembered from the page (its own browser storage is lost: the port changes every run)
 SETTINGS_DEFAULTS = {"ftp": None, "max_hr": None, "vt1_hr": None, "room_temp": None, "room_rh": None,
                      "plan_min": 60, "hr": True, "trainer": False, "theme": "dark", "span": 300,
-                     "power3s": False, "hr_lock": None, "autopause": True, "fuel_g_h": 60, "layout": "auto",
+                     "power3s": False, "hr_lock": None, "autopause": True, "drink_ml_h": 600, "layout": "auto",
                      "ftp_history": None,     # [[from_day, ftp], ...]: each FTP change, so past rides keep theirs
                      "weight_kg": None, "weight_history": None,    # [[from_day, kg], ...]: W/kg on each day
                      "goal_wkg": 4.0, "goal_date": None,           # the goal (training.goal)
@@ -153,6 +153,7 @@ class Engine(threading.Thread):
         self.morning_version = 0
         self.notice = ""                     # a one-off word for the page (a recovered ride)
         self.fuel_log: list = []             # [[ride s, grams]] eaten on this ride (_fuel)
+        self.drink_log: list = []            # [[ride s, ml]] drunk on this ride (_fuel)
         self.fuel_later: Optional[int] = None
         self.keep_awake = None               # keepawake.KeepAwake, set by main(): no sleep while recording
         self._autopaused, self._still_since = False, None   # auto-pause (_autopause)
@@ -316,9 +317,12 @@ class Engine(threading.Thread):
             elif name == "fuel_done":
                 f = self._fuel()
                 if f:
-                    self.fuel_log.append([len(s.seconds), f["grams"]])
+                    self.drink_log.append([len(s.seconds), f["ml"]])
+                    if f["grams"]:
+                        self.fuel_log.append([len(s.seconds), f["grams"]])
                     self.fuel_later = None
-                    self.worker.log(f"fuel: {f['grams']} g at {len(s.seconds) // 60} min")
+                    self.worker.log(f"drink: {f['ml']} ml" + (f", fuel: {f['grams']} g" if f["grams"] else "")
+                                    + f" at {len(s.seconds) // 60} min")
                     self._meta(s)                          # kept at once: a crash mustn't lose it
             elif name == "fuel_later":
                 self.fuel_later = len(s.seconds) + 5 * 60
@@ -868,6 +872,8 @@ class Engine(threading.Thread):
             m["trainer"] = self.trainer_log                        # [ride s, trainer W, asked W]: the second meter
         if self.fuel_log:
             m["fuel"] = [list(x) for x in self.fuel_log]             # [[ride s, grams]]: what you ate, when
+        if self.drink_log:
+            m["drink"] = [list(x) for x in self.drink_log]           # [[ride s, ml]]: what you drank, when
         try:
             rs.save_meta(self.out_dir, os.path.basename(s.base), m)
         except OSError as e:
@@ -888,7 +894,7 @@ class Engine(threading.Thread):
     def _start_ride(self, now) -> None:
         self._wake("ride")
         self.notice = ""
-        self.fuel_log, self.fuel_later = [], None
+        self.fuel_log, self.drink_log, self.fuel_later = [], [], None
         self._autopaused, self._still_since = False, None
         self._a1_low_since = None
         self.step_log, self._wo_meta = [], None
@@ -1243,28 +1249,42 @@ class Engine(threading.Thread):
         if tgt is not None or (lt and lt[-1][1] is not None):
             lt.append((t, tgt))
 
-    FUEL_FROM_S, FUEL_EVERY_S, FUEL_LONG_S, FUEL_FREE_S = 45 * 60, 20 * 60, 90 * 60, 75 * 60
+    DRINK_FROM_S, DRINK_EVERY_S, FUEL_FROM_S, LATER_S = 10 * 60, 15 * 60, 20 * 60, 5 * 60
+    QUALITY_FRAC, QUALITY_G, QUALITY_G_H_MAX = 0.88, 40, 60
+
+    def _fuel_g_h(self, t: int) -> float:
+        """Carbs per hour for this ride: 2 h or more (the workout's length, or a free ride past it)
+        70 g/h, 75 min or more 50 g/h, a shorter quality workout (a step at 88 % FTP or more) a
+        bottle of ~40 g over the session, anything else nothing."""
+        total = self.player.total if self.player is not None else None
+        if (total or 0) >= 120 * 60 or t >= 120 * 60:
+            return 70
+        if (total or 0) >= 75 * 60 or t >= 75 * 60:
+            return 50
+        if total and any(max(st.get("lo") or 0, st.get("hi") or 0) >= self.QUALITY_FRAC
+                         for st in self.player.w["steps"]):
+            return min(self.QUALITY_G_H_MAX, self.QUALITY_G * 3600 / total)
+        return 0
 
     def _fuel(self) -> Optional[dict]:
-        """Fuelling on long rides: a workout of 90 min or more, or a free ride past 75 min. From
-        45 min a quiet prompt every 20 min for a share of your hourly carbs (settings fuel_g_h,
-        60 g/h = 20 g a prompt); Done logs it (kept with the ride: what you ate, when), Later asks
-        again in 5 min. None when the ride is too short for it."""
+        """Drinking and fuelling, one quiet prompt: every ride from 10 min, every 15 min after the
+        last Done, a share of settings drink_ml_h (600 ml/h = 150 ml), plus from 20 min the carbs
+        for that share of _fuel_g_h. Done logs both (kept with the ride), Later asks again in 5 min."""
         s = self.session
         if s is None or s.state == "ready":
             return None
         t = len(s.seconds)
-        long = (self.player is not None and self.player.total >= self.FUEL_LONG_S) or t >= self.FUEL_FREE_S \
-            or bool(self.fuel_log)
-        if not long:
-            return None
-        g = round((self.settings.get("fuel_g_h") or 60) * self.FUEL_EVERY_S / 3600)
-        due_at = self.fuel_log[-1][0] + self.FUEL_EVERY_S if self.fuel_log else self.FUEL_FROM_S
+        ml = round((self.settings.get("drink_ml_h") or 600) * self.DRINK_EVERY_S / 3600)
+        due_at = self.drink_log[-1][0] + self.DRINK_EVERY_S if self.drink_log else self.DRINK_FROM_S
         if self.fuel_later is not None and self.fuel_later > due_at:            # "later": 5 min on
             due_at = self.fuel_later
+        g_h = self._fuel_g_h(max(t, due_at))
+        grams = round(g_h * self.DRINK_EVERY_S / 3600) if max(t, due_at) >= self.FUEL_FROM_S else 0
         eaten = sum(x[1] for x in self.fuel_log)
-        return {"due": t >= due_at, "in_s": max(0, due_at - t), "grams": g, "eaten": eaten,
-                "g_h": round(eaten / (t / 3600)) if t >= 1800 else None}
+        drunk = sum(x[1] for x in self.drink_log)
+        return {"due": t >= due_at, "in_s": max(0, due_at - t), "ml": ml, "grams": grams,
+                "drunk": drunk, "eaten": eaten, "plan_g_h": round(g_h),
+                "g_h": round(eaten / (t / 3600)) if t >= 1800 and eaten else None}
 
     AUTOPAUSE_S = 20         # no pedalling this long while recording: paused for you (you mostly pause yourself)
 

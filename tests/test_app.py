@@ -10,6 +10,7 @@ from datetime import date, timedelta
 
 import recorder_app as app
 import plan as pl
+import workout as wk
 import ride_summary as rs
 
 
@@ -621,21 +622,59 @@ def test_auto_pause_can_be_turned_off(tmp_path, monkeypatch):
     assert s.state == "recording"
 
 
-def test_fuelling_prompts_on_long_rides_and_is_kept_with_the_ride(tmp_path):
-    e = _engine(tmp_path, fuel_g_h=60)
-    s = _ride(e, 30 * 60)
-    assert e._fuel() is None                                     # a free ride under 75 min: nothing
-    for i in range(30 * 60, 76 * 60):
-        s._second({"time": s.started + timedelta(seconds=i), "power_w": 150, "heart_rate_bpm": 130})
+def _more(s, a, b, w=150):
+    for i in range(a, b):
+        s._second({"time": s.started + timedelta(seconds=i), "power_w": w, "heart_rate_bpm": 130})
+
+
+def test_drink_prompts_on_every_ride_and_are_kept_with_the_ride(tmp_path):
+    e = _engine(tmp_path, drink_ml_h=600)
+    s = _ride(e, 9 * 60)
     f = e._fuel()
-    assert f["due"] and f["grams"] == 20
+    assert not f["due"] and f["in_s"] == 60 and f["ml"] == 150 and f["grams"] == 0   # a short free ride: water only
+    _more(s, 9 * 60, 10 * 60)
+    assert e._fuel()["due"]
     e._do("fuel_later")
     assert not e._fuel()["due"] and e._fuel()["in_s"] == 300
     e._do("fuel_done")
     f = e._fuel()
-    assert not f["due"] and f["eaten"] == 20 and f["in_s"] == 20 * 60
+    assert not f["due"] and f["drunk"] == 150 and f["in_s"] == 15 * 60 and f["eaten"] == 0
     meta = json.load(open(os.path.join(str(tmp_path), os.path.basename(s.base) + rs.META)))
-    assert meta["fuel"] == [[76 * 60, 20]]
+    assert meta["drink"] == [[10 * 60, 150]] and "fuel" not in meta
+
+
+def test_free_ride_starts_eating_past_75_min_and_more_past_2_h(tmp_path):
+    e = _engine(tmp_path)
+    s = _ride(e, 76 * 60)
+    f = e._fuel()
+    assert f["due"] and f["grams"] == 12 and f["plan_g_h"] == 50                # 50 g/h -> 12 g a prompt
+    e._do("fuel_done")
+    _more(s, 76 * 60, 121 * 60)
+    f = e._fuel()
+    assert f["due"] and f["grams"] == 18 and f["plan_g_h"] == 70                # 70 g/h -> 18 g a prompt
+    e._do("fuel_done")
+    meta = json.load(open(os.path.join(str(tmp_path), os.path.basename(s.base) + rs.META)))
+    assert meta["fuel"] == [[76 * 60, 12], [121 * 60, 18]] and len(meta["drink"]) == 2
+
+
+def test_workout_length_and_intensity_set_the_carbs(tmp_path):
+    e = _engine(tmp_path)
+    e.player = wk.Player({"steps": [{"dur": 7200, "lo": 0.71, "hi": 0.71}]}, 200)
+    assert e._fuel_g_h(0) == 70
+    e.player = wk.Player({"steps": [{"dur": 5400, "lo": 0.71, "hi": 0.71}]}, 200)
+    assert e._fuel_g_h(0) == 50
+    e.player = wk.Player({"steps": [{"dur": 3600, "lo": 0.68, "hi": 0.68}]}, 200)
+    assert e._fuel_g_h(0) == 0                                                  # an hour of Z2: water
+    e.player = wk.Player({"steps": [{"dur": 1800, "lo": 0.5, "hi": 0.5}, {"dur": 1800, "lo": 1.12, "hi": 1.12}]}, 200)
+    assert e._fuel_g_h(0) == 40                                                 # 60-min VO2: a 40 g bottle
+    e.player = wk.Player({"steps": [{"dur": 1800, "lo": None, "hi": None}, {"dur": 900, "lo": 0.95, "hi": 0.95}]}, 200)
+    assert round(e._fuel_g_h(0)) == 53
+    s = _ride(e, 10 * 60)
+    e.player = wk.Player({"steps": [{"dur": 1800, "lo": 0.5, "hi": 0.5}, {"dur": 1800, "lo": 1.12, "hi": 1.12}]}, 200)
+    assert e._fuel()["grams"] == 0                                              # nothing to eat before 20 min
+    e._do("fuel_done")
+    _more(s, 10 * 60, 25 * 60)
+    assert e._fuel()["grams"] == 10                                             # 40 g/h -> 10 g with each drink
 
 
 def test_the_log_is_one_file_a_month_and_the_old_one_is_kept(tmp_path):

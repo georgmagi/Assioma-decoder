@@ -348,7 +348,7 @@ main { min-height: 0; display: grid; grid-template-columns: var(--col1) minmax(0
 .sensor .link { margin-left: 0; }
 .link.ant { border-color: color-mix(in srgb, var(--good) 55%, transparent); color: var(--good); }
 .ride-ctl { margin-left: auto; display: flex; align-items: center; gap: 12px; }
-/* fuelling on long rides (Engine._fuel): a pill in the bar when it's time, quiet otherwise */
+/* drinking + fuelling (Engine._fuel): a pill in the bar when it's time, quiet otherwise */
 .fuel { display: flex; align-items: center; gap: 8px; padding: 4px 6px 4px 14px; border-radius: 999px;
         background: color-mix(in srgb, var(--warn) 18%, transparent); box-shadow: inset 0 0 0 1px var(--warn); color: var(--fg); font-size: 13px; }
 .fuel.quiet { background: none; box-shadow: none; color: var(--dim); padding-left: 0; }

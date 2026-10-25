@@ -849,14 +849,16 @@ function showScreen(name) {
 }
 for (const b of $("topnav").querySelectorAll("button[data-page]"))
   b.addEventListener("click", () => { act("nav", b.dataset.page); b.blur(); });
-// fuelling (Engine._fuel): due = a pill with Done / Later; otherwise a quiet line with the next one
+// drinking + fuelling (Engine._fuel): due = a pill with Done / Later; otherwise a quiet line with the next one
 function renderFuel(f) {
   const el = $("fuel");
   el.hidden = !f;
   if (!f) return;
   el.classList.toggle("quiet", !f.due);
-  $("fuel-txt").textContent = f.due ? `Eat ~${f.grams} g carbs` + (f.eaten ? ` · ${f.eaten} g so far` : "")
-    : `fuel in ${Math.ceil(f.in_s / 60)} min` + (f.g_h != null ? ` · ${f.g_h} g/h` : "");
+  const so = [f.drunk ? `${f.drunk} ml` : "", f.eaten ? `${f.eaten} g` : ""].filter(Boolean).join(", ");
+  $("fuel-txt").textContent = f.due
+    ? `Drink ~${f.ml} ml` + (f.grams ? ` · eat ~${f.grams} g carbs` : "") + (so ? ` · ${so} so far` : "")
+    : `drink in ${Math.ceil(f.in_s / 60)} min` + (so ? ` · ${so}` : "") + (f.g_h != null ? ` · ${f.g_h} g/h` : "");
 }
 $("fuel-done").addEventListener("click", (e) => { e.currentTarget.blur(); act("fuel_done"); });
 $("fuel-later").addEventListener("click", (e) => { e.currentTarget.blur(); act("fuel_later"); });
