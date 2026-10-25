@@ -860,40 +860,64 @@ function renderFuel(f) {
   if (S.nudgeN == null || f.n < S.nudgeN) S.nudgeN = f.n && f.since_s < 15 ? f.n - 1 : f.n;   // a page opened mid-ride: no old flash
   if (f.n > S.nudgeN) {
     S.nudgeN = f.n;
-    if (f.since_s < 15) nudge(f.fuel ? "Hydrate + fuel" : "Hydrate");
+    if (f.since_s < 15) nudge(f.fuel);
   }
 }
 
-function nudge(text) {
+function nudge(fuel) {
   const el = $("nudge");
-  $("nudge-txt").textContent = text;
+  $("nudge-title").textContent = fuel ? "Hydrate & fuel" : "Hydrate";
+  $("nudge-sub").textContent = fuel ? "Drink, and eat something" : "Take a few sips";
   el.hidden = false;
   el.classList.remove("go"); void el.offsetWidth; el.classList.add("go");      // restart the animation
   clearTimeout(S.nudgeT);
-  S.nudgeT = setTimeout(() => { el.hidden = true; el.classList.remove("go"); }, 4200);
+  S.nudgeT = setTimeout(() => { el.hidden = true; el.classList.remove("go"); }, 4600);
   if (!document.body.classList.contains("viewer")) chime();
 }
 
-// a soft rising three-note chime, made on the spot (no sound files)
+// the chime: two struck-glass notes a fifth apart (A5, E6), played twice, built from bell-like
+// partials so it carries over fan noise (energy at 0.9-5 kHz, where a fan is weakest), then a
+// compressor, make-up gain and a soft limiter: full scale (peak 0.98), as loud as the system volume allows.
 function chime() {
   try {
     const ac = S.ac || (S.ac = new (window.AudioContext || window.webkitAudioContext)());
     if (ac.state === "suspended") ac.resume();
-    const t0 = ac.currentTime + 0.02;
-    [[784, 0], [1047, 0.16], [1568, 0.32]].forEach(([hz, dt]) => {
-      for (const [mul, vol] of [[1, 0.22], [2, 0.05]]) {
-        const o = ac.createOscillator(), g = ac.createGain();
-        o.type = "sine"; o.frequency.value = hz * mul;
-        g.gain.setValueAtTime(0, t0 + dt);
-        g.gain.linearRampToValueAtTime(vol, t0 + dt + 0.015);
-        g.gain.exponentialRampToValueAtTime(0.0001, t0 + dt + 0.9);
-        o.connect(g).connect(ac.destination);
-        o.start(t0 + dt); o.stop(t0 + dt + 1);
-      }
-    });
+    chimeInto(ac, ac.destination, ac.currentTime + 0.03);
   } catch (e) { /* no audio: the flash still shows */ }
 }
-$("nudge-test").addEventListener("click", (e) => { e.currentTarget.blur(); nudge("Hydrate + fuel"); });
+
+function chimeInto(ac, out, t0) {
+  const comp = ac.createDynamicsCompressor();
+  comp.threshold.value = -30; comp.knee.value = 6; comp.ratio.value = 20;
+  comp.attack.value = 0; comp.release.value = 0.25;
+  const master = ac.createGain();
+  master.gain.value = 4;                                     // make-up gain into a soft limiter:
+  const lim = ac.createWaveShaper(), n = 2048, curve = new Float32Array(n);
+  for (let i = 0; i < n; i++) {                             // peaks round off just under full scale
+    const x = (i / (n - 1)) * 4 - 2;
+    curve[i] = 0.98 * Math.tanh(Math.max(-1.4, Math.min(1.4, x))) / Math.tanh(1.4);
+  }
+  lim.curve = curve; lim.oversample = "4x";
+  comp.connect(master).connect(lim).connect(out);
+  const PARTIALS = [[1, 1, 1.6], [2.0, 0.42, 0.9], [3.0, 0.2, 0.55], [4.16, 0.12, 0.35], [5.43, 0.07, 0.22]];
+  const strike = (hz, at, amp) => {
+    for (const [r, a, dec] of PARTIALS) {
+      const o = ac.createOscillator(), g = ac.createGain();
+      o.type = "sine"; o.frequency.value = hz * r;
+      g.gain.setValueAtTime(0.0001, at);
+      g.gain.exponentialRampToValueAtTime(a * amp, at + 0.004);
+      g.gain.exponentialRampToValueAtTime(0.0001, at + dec);
+      o.connect(g).connect(comp);
+      o.start(at); o.stop(at + dec + 0.05);
+    }
+  };
+  for (const rep of [0, 1.15]) {
+    strike(880, t0 + rep, 0.5);
+    strike(1318.5, t0 + rep + 0.14, 0.5);
+  }
+  return t0 + 1.15 + 0.14 + 1.7;
+}
+$("nudge-test").addEventListener("click", (e) => { e.currentTarget.blur(); nudge(true); });
 // browsers may hold audio until a click: any click or key unlocks it for the rest of the session
 for (const ev of ["pointerdown", "keydown"])
   addEventListener(ev, () => { try { (S.ac || (S.ac = new AudioContext())).resume(); } catch (e) {} }, { once: true });
