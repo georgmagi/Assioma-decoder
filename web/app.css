@@ -1232,7 +1232,8 @@ body.alerting::after { content: ""; position: fixed; inset: 0; pointer-events: n
   box-shadow: inset 0 0 0 6px #d92f37; animation: alert-blink 1s steps(2, jump-none) infinite; }
 @keyframes alert-blink { 0% { opacity: 1; } 100% { opacity: 0.25; } }
 
-/* the hydrate nudge (renderFuel/nudge): the screen inverts twice (60 ms each), then a plain box,
+/* the hydrate nudge (renderFuel/nudge): the screen inverts twice (60 ms each), then a plain box that
+   flashes inverted once on the same beat,
    text left, hard cuts in and out, 3.2 s in all */
 .nudge { position: fixed; inset: 0; z-index: 60; pointer-events: none; display: grid; place-items: center; }
 .nudge.go { animation: nudge-dim 3.2s steps(1, end) forwards; }
@@ -1245,10 +1246,13 @@ body.alerting::after { content: ""; position: fixed; inset: 0; pointer-events: n
   min-width: 380px; padding: 20px 26px 22px; border-radius: var(--rp); background: var(--panel); color: var(--fg);
   border: 1px solid var(--fg); visibility: hidden; }
 .nudge.go .nudge-card { animation: nudge-card 3.2s steps(1, end) forwards; }
-@keyframes nudge-card { 0% { visibility: hidden; } 7.5%, 100% { visibility: visible; } }
-.nudge-card small { font: 500 11px/1 var(--ui); letter-spacing: 0.12em; text-transform: uppercase; color: var(--dim); }
+@keyframes nudge-card {                    /* in on the flash's beat: 240 ms, inverted for one 60-ms beat */
+  0% { visibility: hidden; }
+  7.5% { visibility: visible; background-color: var(--fg); color: var(--panel); border-color: var(--fg); }
+  9.375%, 100% { visibility: visible; background-color: var(--panel); color: var(--fg); border-color: var(--fg); } }
+.nudge-card small { font: 500 11px/1 var(--ui); letter-spacing: 0.12em; text-transform: uppercase; color: color-mix(in srgb, currentColor 55%, transparent); }
 .nudge-card b { font: 600 36px/1.05 var(--ui); letter-spacing: -0.01em; margin-top: 4px; }
-.nudge-card span { font: 400 15px/1.3 var(--ui); color: var(--dim); }
+.nudge-card span { font: 400 15px/1.3 var(--ui); color: color-mix(in srgb, currentColor 60%, transparent); }
 
 /* the Durability table (progress.js drawDurability): untested cells dim */
 .dur-table td.dim { color: var(--faint); }
