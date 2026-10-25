@@ -849,19 +849,53 @@ function showScreen(name) {
 }
 for (const b of $("topnav").querySelectorAll("button[data-page]"))
   b.addEventListener("click", () => { act("nav", b.dataset.page); b.blur(); });
-// drinking + fuelling (Engine._fuel): due = a pill with Done / Later; otherwise a quiet line with the next one
+// hydrate (+ fuel) nudge (Engine._fuel): no clicks. A new nudge, still fresh, flashes the screen's
+// edge with the word in the middle for a few seconds and chimes; between them a quiet countdown.
 function renderFuel(f) {
   const el = $("fuel");
   el.hidden = !f;
-  if (!f) return;
-  el.classList.toggle("quiet", !f.due);
-  const so = [f.drunk ? `${f.drunk} ml` : "", f.eaten ? `${f.eaten} g` : ""].filter(Boolean).join(", ");
-  $("fuel-txt").textContent = f.due
-    ? `Drink ~${f.ml} ml` + (f.grams ? ` · eat ~${f.grams} g carbs` : "") + (so ? ` · ${so} so far` : "")
-    : `drink in ${Math.ceil(f.in_s / 60)} min` + (so ? ` · ${so}` : "") + (f.g_h != null ? ` · ${f.g_h} g/h` : "");
+  if (!f) { S.nudgeN = null; return; }
+  const what = (fuel) => fuel ? "hydrate + fuel" : "hydrate";
+  $("fuel-txt").textContent = `${what(f.next_fuel)} in ${Math.ceil(f.in_s / 60)} min`;
+  if (S.nudgeN == null || f.n < S.nudgeN) S.nudgeN = f.n && f.since_s < 15 ? f.n - 1 : f.n;   // a page opened mid-ride: no old flash
+  if (f.n > S.nudgeN) {
+    S.nudgeN = f.n;
+    if (f.since_s < 15) nudge(f.fuel ? "Hydrate + fuel" : "Hydrate");
+  }
 }
-$("fuel-done").addEventListener("click", (e) => { e.currentTarget.blur(); act("fuel_done"); });
-$("fuel-later").addEventListener("click", (e) => { e.currentTarget.blur(); act("fuel_later"); });
+
+function nudge(text) {
+  const el = $("nudge");
+  $("nudge-txt").textContent = text;
+  el.hidden = false;
+  el.classList.remove("go"); void el.offsetWidth; el.classList.add("go");      // restart the animation
+  clearTimeout(S.nudgeT);
+  S.nudgeT = setTimeout(() => { el.hidden = true; el.classList.remove("go"); }, 4200);
+  if (!document.body.classList.contains("viewer")) chime();
+}
+
+// a soft rising three-note chime, made on the spot (no sound files)
+function chime() {
+  try {
+    const ac = S.ac || (S.ac = new (window.AudioContext || window.webkitAudioContext)());
+    if (ac.state === "suspended") ac.resume();
+    const t0 = ac.currentTime + 0.02;
+    [[784, 0], [1047, 0.16], [1568, 0.32]].forEach(([hz, dt]) => {
+      for (const [mul, vol] of [[1, 0.22], [2, 0.05]]) {
+        const o = ac.createOscillator(), g = ac.createGain();
+        o.type = "sine"; o.frequency.value = hz * mul;
+        g.gain.setValueAtTime(0, t0 + dt);
+        g.gain.linearRampToValueAtTime(vol, t0 + dt + 0.015);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + dt + 0.9);
+        o.connect(g).connect(ac.destination);
+        o.start(t0 + dt); o.stop(t0 + dt + 1);
+      }
+    });
+  } catch (e) { /* no audio: the flash still shows */ }
+}
+// browsers may hold audio until a click: any click or key unlocks it for the rest of the session
+for (const ev of ["pointerdown", "keydown"])
+  addEventListener(ev, () => { try { (S.ac || (S.ac = new AudioContext())).resume(); } catch (e) {} }, { once: true });
 
 // what the ride screen shows most (layout C): a workout reaching 80 % FTP is intervals (power vs
 // target big), an easier one is Z2 (HR + DFA a1 with the VT1 line big), no workout a free ride (dynamics)

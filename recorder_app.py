@@ -73,7 +73,7 @@ PAGES = ("home", "plan", "workouts", "stats")   # the app's pages (top bar); plu
 # remembered from the page (its own browser storage is lost: the port changes every run)
 SETTINGS_DEFAULTS = {"ftp": None, "max_hr": None, "vt1_hr": None, "room_temp": None, "room_rh": None,
                      "plan_min": 60, "hr": True, "trainer": False, "theme": "dark", "span": 300,
-                     "power3s": False, "hr_lock": None, "autopause": True, "drink_ml_h": 600, "layout": "auto",
+                     "power3s": False, "hr_lock": None, "autopause": True, "layout": "auto",
                      "ftp_history": None,     # [[from_day, ftp], ...]: each FTP change, so past rides keep theirs
                      "weight_kg": None, "weight_history": None,    # [[from_day, kg], ...]: W/kg on each day
                      "goal_wkg": 4.0, "goal_date": None,           # the goal (training.goal)
@@ -152,9 +152,6 @@ class Engine(threading.Thread):
         self.mresult: Optional[dict] = None
         self.morning_version = 0
         self.notice = ""                     # a one-off word for the page (a recovered ride)
-        self.fuel_log: list = []             # [[ride s, grams]] eaten on this ride (_fuel)
-        self.drink_log: list = []            # [[ride s, ml]] drunk on this ride (_fuel)
-        self.fuel_later: Optional[int] = None
         self.keep_awake = None               # keepawake.KeepAwake, set by main(): no sleep while recording
         self._autopaused, self._still_since = False, None   # auto-pause (_autopause)
         self.step_log: list = []             # [ride second, step, intensity] as the workout went
@@ -314,18 +311,6 @@ class Engine(threading.Thread):
                 kept = s.discard()                     # moved to rides/discarded/, its meta with it
                 self.worker.log(f"ride discarded: kept in {kept}" if kept else "ride discarded: nothing recorded")
                 self._leave_ride("home")
-            elif name == "fuel_done":
-                f = self._fuel()
-                if f:
-                    self.drink_log.append([len(s.seconds), f["ml"]])
-                    if f["grams"]:
-                        self.fuel_log.append([len(s.seconds), f["grams"]])
-                    self.fuel_later = None
-                    self.worker.log(f"drink: {f['ml']} ml" + (f", fuel: {f['grams']} g" if f["grams"] else "")
-                                    + f" at {len(s.seconds) // 60} min")
-                    self._meta(s)                          # kept at once: a crash mustn't lose it
-            elif name == "fuel_later":
-                self.fuel_later = len(s.seconds) + 5 * 60
             elif name == "save":
                 self._save()
             elif name == "wo_match":                     # power match on/off, kept for the next ride too
@@ -870,10 +855,6 @@ class Engine(threading.Thread):
                 m["power_match_k"] = self.pm_k                     # ERG was asked for target × this
         if self.trainer_log:
             m["trainer"] = self.trainer_log                        # [ride s, trainer W, asked W]: the second meter
-        if self.fuel_log:
-            m["fuel"] = [list(x) for x in self.fuel_log]             # [[ride s, grams]]: what you ate, when
-        if self.drink_log:
-            m["drink"] = [list(x) for x in self.drink_log]           # [[ride s, ml]]: what you drank, when
         try:
             rs.save_meta(self.out_dir, os.path.basename(s.base), m)
         except OSError as e:
@@ -894,7 +875,6 @@ class Engine(threading.Thread):
     def _start_ride(self, now) -> None:
         self._wake("ride")
         self.notice = ""
-        self.fuel_log, self.drink_log, self.fuel_later = [], [], None
         self._autopaused, self._still_since = False, None
         self._a1_low_since = None
         self.step_log, self._wo_meta = [], None
@@ -1249,7 +1229,7 @@ class Engine(threading.Thread):
         if tgt is not None or (lt and lt[-1][1] is not None):
             lt.append((t, tgt))
 
-    DRINK_FROM_S, DRINK_EVERY_S, FUEL_FROM_S, LATER_S = 10 * 60, 15 * 60, 20 * 60, 5 * 60
+    DRINK_FROM_S, DRINK_EVERY_S, FUEL_FROM_S = 10 * 60, 15 * 60, 20 * 60
     QUALITY_FRAC, QUALITY_G, QUALITY_G_H_MAX = 0.88, 40, 60
 
     def _fuel_g_h(self, t: int) -> float:
@@ -1267,24 +1247,20 @@ class Engine(threading.Thread):
         return 0
 
     def _fuel(self) -> Optional[dict]:
-        """Drinking and fuelling, one quiet prompt: every ride from 10 min, every 15 min after the
-        last Done, a share of settings drink_ml_h (600 ml/h = 150 ml), plus from 20 min the carbs
-        for that share of _fuel_g_h. Done logs both (kept with the ride), Later asks again in 5 min."""
+        """The hydrate (+ fuel) nudge: every ride at 10 min and then every 15 min of ride time, no
+        clicks. n = the latest nudge (0 = none yet), since_s = how long ago it fell due (the page
+        flashes + chimes once for a new n that's still fresh), fuel = this nudge says eat too
+        (from 20 min, when _fuel_g_h gives this ride carbs), in_s / next_fuel = the coming one."""
         s = self.session
         if s is None or s.state == "ready":
             return None
         t = len(s.seconds)
-        ml = round((self.settings.get("drink_ml_h") or 600) * self.DRINK_EVERY_S / 3600)
-        due_at = self.drink_log[-1][0] + self.DRINK_EVERY_S if self.drink_log else self.DRINK_FROM_S
-        if self.fuel_later is not None and self.fuel_later > due_at:            # "later": 5 min on
-            due_at = self.fuel_later
-        g_h = self._fuel_g_h(max(t, due_at))
-        grams = round(g_h * self.DRINK_EVERY_S / 3600) if max(t, due_at) >= self.FUEL_FROM_S else 0
-        eaten = sum(x[1] for x in self.fuel_log)
-        drunk = sum(x[1] for x in self.drink_log)
-        return {"due": t >= due_at, "in_s": max(0, due_at - t), "ml": ml, "grams": grams,
-                "drunk": drunk, "eaten": eaten, "plan_g_h": round(g_h),
-                "g_h": round(eaten / (t / 3600)) if t >= 1800 and eaten else None}
+        n = 0 if t < self.DRINK_FROM_S else (t - self.DRINK_FROM_S) // self.DRINK_EVERY_S + 1
+        due = self.DRINK_FROM_S + (n - 1) * self.DRINK_EVERY_S
+        nxt = self.DRINK_FROM_S + n * self.DRINK_EVERY_S
+        eat = lambda at: at >= self.FUEL_FROM_S and self._fuel_g_h(at) > 0
+        return {"n": n, "since_s": t - due if n else None, "fuel": bool(n) and eat(due),
+                "in_s": nxt - t, "next_fuel": eat(nxt)}
 
     AUTOPAUSE_S = 20         # no pedalling this long while recording: paused for you (you mostly pause yourself)
 
@@ -1761,6 +1737,11 @@ def main() -> None:
             # Linux: render with Chromium (Qt WebEngine, pip install PyQt6 PyQt6-WebEngine qtpy), like
             # WebView2 on Windows. WebKitGTK, pywebview's Linux default, draws the canvases on the CPU
             # and stutters (~53 fps with 4-5 long frames a second vs a steady 60 with Qt).
+            # the hydrate chime (web/app.js nudge) must play without a click first
+            for var in ("QTWEBENGINE_CHROMIUM_FLAGS", "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"):
+                flags = os.environ.get(var, "")
+                if "--autoplay-policy" not in flags:
+                    os.environ[var] = (flags + " --autoplay-policy=no-user-gesture-required").strip()
             gui = None
             if sys.platform.startswith("linux"):
                 try:

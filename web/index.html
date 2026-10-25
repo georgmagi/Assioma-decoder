@@ -115,6 +115,7 @@
 
 <div class="screen ride" id="scr-ride" hidden>
 <div class="alert" id="alert" role="alert" hidden></div>
+<div class="nudge" id="nudge" hidden><div class="nudge-card"><b id="nudge-txt">Hydrate</b></div></div>
 <header class="tiles">
   <div class="tile pc" id="t-power">
     <div class="col">
@@ -510,7 +511,7 @@
 <footer class="bar">
   <div class="sensors" id="sensors"></div>
   <div class="ride-ctl">
-    <div class="fuel" id="fuel" hidden><span id="fuel-txt"></span><button class="wbtn" id="fuel-done">Done</button><button class="wbtn" id="fuel-later">Later</button></div>
+    <div class="fuel quiet" id="fuel" hidden><span id="fuel-txt"></span></div>
     <div class="seg layouts" id="layouts" role="group" aria-label="Ride layout" title="What the ride screen shows big. Auto: from the workout.">
       <button data-layout="auto">Auto</button><button data-layout="intervals">Power</button><button data-layout="z2">Heart</button><button data-layout="free">Dynamics</button>
     </div>

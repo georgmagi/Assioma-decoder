@@ -348,12 +348,8 @@ main { min-height: 0; display: grid; grid-template-columns: var(--col1) minmax(0
 .sensor .link { margin-left: 0; }
 .link.ant { border-color: color-mix(in srgb, var(--good) 55%, transparent); color: var(--good); }
 .ride-ctl { margin-left: auto; display: flex; align-items: center; gap: 12px; }
-/* drinking + fuelling (Engine._fuel): a pill in the bar when it's time, quiet otherwise */
-.fuel { display: flex; align-items: center; gap: 8px; padding: 4px 6px 4px 14px; border-radius: 999px;
-        background: color-mix(in srgb, var(--warn) 18%, transparent); box-shadow: inset 0 0 0 1px var(--warn); color: var(--fg); font-size: 13px; }
-.fuel.quiet { background: none; box-shadow: none; color: var(--dim); padding-left: 0; }
-.fuel .wbtn { height: 26px; padding: 0 10px; }
-.fuel.quiet .wbtn { display: none; }
+/* hydrate countdown in the bar (Engine._fuel): quiet text */
+.fuel { display: flex; align-items: center; color: var(--dim); font-size: 13px; }
 .rec {
   display: inline-flex;
   align-items: center;
@@ -1232,6 +1228,20 @@ body.viewer .home-row.three { grid-template-columns: minmax(0, 1fr) minmax(0, 1f
 body.alerting::after { content: ""; position: fixed; inset: 0; pointer-events: none; z-index: 49;
   box-shadow: inset 0 0 0 6px #d92f37; animation: alert-blink 1s steps(2, jump-none) infinite; }
 @keyframes alert-blink { 0% { opacity: 1; } 100% { opacity: 0.25; } }
+
+/* the hydrate nudge (renderFuel/nudge): a glowing edge pulsing 3x + the word in the middle, ~4 s */
+.nudge { --nc: #33c3ff; position: fixed; inset: 0; z-index: 60; pointer-events: none; display: grid; place-items: center; }
+.nudge[hidden] { display: none; }
+.nudge::before { content: ""; position: absolute; inset: 0; opacity: 0;
+  box-shadow: inset 0 0 0 8px var(--nc), inset 0 0 90px 10px color-mix(in srgb, var(--nc) 55%, transparent); }
+.nudge.go::before { animation: nudge-edge 1.3s ease-in-out 3; }
+.nudge-card { padding: 26px 56px; border-radius: 18px; opacity: 0; transform: scale(0.9);
+  background: color-mix(in srgb, #0b0d10 82%, var(--nc)); box-shadow: 0 0 0 2px var(--nc), 0 10px 60px color-mix(in srgb, var(--nc) 45%, transparent); }
+.nudge-card b { font: 800 64px/1 var(--ui); letter-spacing: 0.04em; text-transform: uppercase; color: #fff; }
+.nudge.go .nudge-card { animation: nudge-card 4.2s ease-out forwards; }
+@keyframes nudge-edge { 0%, 100% { opacity: 0; } 45% { opacity: 1; } }
+@keyframes nudge-card { 0% { opacity: 0; transform: scale(0.9); } 8%, 82% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.03); } }
 
 /* the Durability table (progress.js drawDurability): untested cells dim */
 .dur-table td.dim { color: var(--faint); }
