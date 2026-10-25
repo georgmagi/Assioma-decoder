@@ -677,8 +677,12 @@ class Engine(threading.Thread):
             self._plan_changed(msg)
 
     def _save_workout(self, arg: dict) -> None:
-        """The builder: a workout from the shorthand, saved as a Zwift file in the workouts folder."""
+        """The builder: a workout from the shorthand, saved as a Zwift file in the workouts folder.
+        With an id it edits that workout itself: your file in place (same file, so the plan keeps
+        pointing at it), a built-in as a file of its own name that takes its place, a plan day's
+        shorthand in the plan. The version it replaces is kept in workouts/history/ (keep.py)."""
         name = str(arg.get("name") or "").strip()[:60]
+        wid = arg.get("id") if isinstance(arg.get("id"), str) else None
         try:
             steps = wk.parse_text(str(arg.get("text") or ""))
         except ValueError as e:
@@ -689,10 +693,29 @@ class Engine(threading.Thread):
             self.plan_msg = "Workout not saved: it needs a name."
             self.plan_version += 1
             return
-        slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:50] or "workout"
+        lib = self.workouts()
+        old = lib.get(wid) if wid else None
+        if wid and wid.startswith("plan:") and old is not None:          # a day of the plan written as shorthand
+            day = wid[5:]
+            if day in self.plan.get("days", {}):
+                self.plan["days"][day] = {"text": wk.to_text(steps), "name": name}
+                self._plan_changed(f"Saved {name}.")
+                return
+        if old is not None and wid.startswith("zwo:") and "/" not in wid and "\\" not in wid:
+            path = os.path.join(WORKOUT_DIR, wid[4:] + ".zwo")
+        elif old is not None and wid in wk.BUILT_IN:
+            path = os.path.join(WORKOUT_DIR, wid + ".zwo")
+        else:
+            slug = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:50] or "workout"
+            path = os.path.join(WORKOUT_DIR, slug + ".zwo")
         os.makedirs(WORKOUT_DIR, exist_ok=True)
-        with open(os.path.join(WORKOUT_DIR, slug + ".zwo"), "w", encoding="utf-8", newline="\n") as fh:
-            fh.write(wk.to_zwo(name, str(arg.get("description") or ""), steps))
+        if os.path.isfile(path):                                         # the version before: kept, never lost
+            keep.set_aside(path, os.path.join(WORKOUT_DIR, "history"))
+        desc = str(arg.get("description") or (old or {}).get("description") or "")
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(wk.to_zwo(name, desc, steps))
+        os.replace(tmp, path)
         self.plan_msg = f"Saved {name}."
         self.plan_version += 1
 
@@ -1470,9 +1493,10 @@ def make_handler(engine: Engine, app_mode: dict):
                                 "split": pl.zone_split(w)})
                 except ValueError as e:
                     self._json({"error": str(e)})
-            elif u.path == "/api/workout_text":              # a workout as shorthand, to edit a copy
-                w = engine.workouts().get(q.get("id", [""])[0])
-                self._json({"name": w["name"], "text": wk.to_text(w["steps"])} if w else {"error": "no such workout"})
+            elif u.path == "/api/workout_text":              # a workout as shorthand, to edit it
+                wid = q.get("id", [""])[0]
+                w = engine.workouts().get(wid)
+                self._json({"id": wid, "name": w["name"], "text": wk.to_text(w["steps"])} if w else {"error": "no such workout"})
             elif u.path == "/api/morning":
                 self._json(engine.morning_trend())
             elif u.path == "/api/readiness":

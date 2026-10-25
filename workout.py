@@ -103,7 +103,9 @@ def parse_zwo(text: str) -> dict:
 
 
 def library(folder: str) -> dict:
-    """id -> workout: the built-in ones and every .zwo in folder (files that don't parse are left out)."""
+    """id -> workout: the built-in ones and every .zwo in folder (files that don't parse are left out).
+    A file named like a built-in (vt1-steps.zwo) is that built-in as you edited it: it takes its
+    place under the same id, so the plan's days that use it follow."""
     out = dict(BUILT_IN)
     for path in sorted(glob.glob(os.path.join(folder, "*.zwo"))):
         try:
@@ -111,7 +113,11 @@ def library(folder: str) -> dict:
                 w = parse_zwo(fh.read())
         except (OSError, ValueError, ET.ParseError):
             continue
-        out["zwo:" + os.path.basename(path)[:-4]] = {**w, "file": True}
+        base = os.path.basename(path)[:-4]
+        if base in BUILT_IN:
+            out[base] = {**w, "edited": True}
+        else:
+            out["zwo:" + base] = {**w, "file": True}
     return out
 
 

@@ -769,3 +769,21 @@ def test_full_summary_is_cached_and_redone_when_anything_it_depends_on_changes(t
     rs2.save_meta(str(tmp_path), rid, {"temp_c": 22})                       # the ride's meta changed
     c = rs2.summary_cached(str(tmp_path), rid, 210, 190, None)
     assert len(calls) == 3 and c["meta"]["temp_c"] == 22
+
+
+def test_editing_a_workout_changes_it_in_place_and_keeps_the_old_version(tmp_path, monkeypatch):
+    import workout as wk
+    wd = tmp_path / "workouts"
+    monkeypatch.setattr(app, "WORKOUT_DIR", str(wd))
+    e = app.Engine(str(tmp_path), {**app.SETTINGS_DEFAULTS, "ftp": 200}, FakeWorker, str(tmp_path / "settings.json"))
+    wd.mkdir()
+    (wd / "B2-Z2-90min.zwo").write_text(wk.to_zwo("B2-Z2-90min", "Long Z2.", wk.parse_text("90m 68%")), encoding="utf-8")
+    e._do("wo_save", {"id": "zwo:B2-Z2-90min", "name": "B2-Z2-90min", "text": "90m 71%"})
+    w = e.workouts()["zwo:B2-Z2-90min"]                                  # the same id: the plan still points at it
+    assert w["steps"][0]["lo"] == 0.71 and w["description"] == "Long Z2."
+    assert len(list((wd / "history").glob("B2-Z2-90min*.zwo"))) == 1    # the 68 % version kept
+    e._do("wo_save", {"id": "vt1-steps", "name": "Threshold steps", "text": "10m 50%, 5m 60%"})
+    assert e.workouts()["vt1-steps"]["steps"][1]["lo"] == 0.6 and e.workouts()["vt1-steps"].get("edited")
+    assert "zwo:vt1-steps" not in e.workouts()
+    e._do("wo_save", {"name": "Brand new", "text": "30m Z2"})            # no id: a new one, as before
+    assert "zwo:brand-new" in e.workouts()

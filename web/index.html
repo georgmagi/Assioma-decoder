@@ -486,7 +486,7 @@
   <section class="panel wo-detail" id="wo-detail">
     <div class="panel-head">
       <h2 id="wd-name"></h2>
-      <button class="btn" id="wd-edit">Edit a copy</button>
+      <button class="btn" id="wd-edit">Edit</button>
       <button class="btn danger-text" id="wd-del" hidden>Delete</button>
       <button class="btn" id="wd-select">Use for next ride</button>
       <button class="btn primary" id="wd-ride">Ride now</button>
@@ -497,7 +497,7 @@
     <div class="table-wrap"><table class="ride-table wd-steps"><thead><tr><th>#</th><th>Step</th><th class="n">Time</th><th class="n">Power</th><th class="n">% FTP</th></tr></thead><tbody id="wd-steps"></tbody></table></div>
   </section>
   <section class="panel wo-build" id="wo-build" hidden>
-    <div class="panel-head"><h2>Workout builder</h2><button class="btn" id="wb-cancel">Cancel</button><button class="btn primary" id="wb-save">Save</button></div>
+    <div class="panel-head"><h2 id="wb-title">New workout</h2><button class="btn" id="wb-cancel">Cancel</button><button class="btn primary" id="wb-save">Save</button></div>
     <label class="wb-name"><span>Name</span><input id="wb-name" type="text" maxlength="60" placeholder="3x15 threshold"></label>
     <label class="wb-text"><span>Steps</span><textarea id="wb-text" rows="3" spellcheck="false" placeholder="15m 50-70%, 3x(15m 92%, 5m 55%), 10m 50%"></textarea></label>
     <p class="wb-help">Durations <code>90s</code> <code>12m</code> <code>1h30m</code>; power as % of FTP <code>90%</code>, a ramp <code>50-65%</code>, a zone <code>Z2</code> or <code>free</code>; repeats <code>3x(…)</code>; a label in quotes <code>"easy"</code>. Steps apart with commas.</p>

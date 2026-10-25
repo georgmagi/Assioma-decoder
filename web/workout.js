@@ -208,9 +208,10 @@ $("wo-end").addEventListener("click", (e) => {
 });
 
 // ---- the builder: the shorthand (workout.parse_text) with a live preview, saved as a .zwo file
-const WB = { timer: null, open: false };
-function openBuilder(name, text) {
-  WB.open = true;
+const WB = { timer: null, open: false, id: null };
+function openBuilder(name, text, id = null) {
+  WB.open = true; WB.id = id;
+  $("wb-title").textContent = id ? "Edit workout" : "New workout";
   $("wo-detail").hidden = true; $("wo-build").hidden = false;
   $("wb-name").value = name || ""; $("wb-text").value = text || "";
   previewBuilder();
@@ -235,14 +236,14 @@ for (const id of ["wb-text", "wb-name"]) $(id).addEventListener("keydown", (e) =
 $("wo-new").addEventListener("click", (e) => { e.currentTarget.blur(); openBuilder("", ""); });
 $("wb-cancel").addEventListener("click", closeBuilder);
 $("wb-save").addEventListener("click", async () => {
-  await act("wo_save", { name: $("wb-name").value, text: $("wb-text").value });
+  await act("wo_save", { id: WB.id || undefined, name: $("wb-name").value, text: $("wb-text").value });
   if ((S.snap?.plan_msg || "").startsWith("Saved")) { closeBuilder(); loadWorkouts(true); }
   else $("wb-err").textContent = S.snap?.plan_msg || "";
 });
 $("wd-edit").addEventListener("click", async (e) => {
   e.currentTarget.blur();
   const r = await (await fetch("/api/workout_text?id=" + encodeURIComponent(WO.sel))).json();
-  if (!r.error) openBuilder(`${r.name} (copy)`, r.text);
+  if (!r.error) openBuilder(r.name, r.text, r.id);
 });
 $("wd-del").addEventListener("click", (e) => {                     // your own files only, and a second click to confirm
   const b = e.currentTarget;
