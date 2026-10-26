@@ -97,3 +97,26 @@ def test_mornings_look_every_20_minutes_until_the_night_is_in():
     assert gp.next_wait(two_h, {}, utc(9, 30)) == two_h                         # 11:30: the window is over
     w = gp.next_wait(two_h, {}, utc(3, 30))                                     # 05:30: wait only to 06:00
     assert 29 * 60 < w < 32 * 60
+
+
+def test_a_night_garmin_files_under_the_wrong_day_never_replaces_a_good_one():
+    from datetime import date
+    import garmin_pull as gp
+    good = {"resting_hr": 52, "sleep_start": "2026-10-24T20:57:00+00:00", "sleep_end": "2026-10-25T05:08:00+00:00",
+            "sleep_hr": {"low30": 47.5}}
+    wrong = {"resting_hr": 52, "sleep_start": "2026-10-23T19:57:00+00:00", "sleep_end": "2026-10-24T06:00:00+00:00",
+             "sleep_hr": {"low30": 56.3}}
+    assert gp.night_fits(good, date(2026, 10, 25)) and not gp.night_fits(wrong, date(2026, 10, 25))
+
+    class G:
+        def get_heart_rates(self, d): return {}
+        def get_sleep_data(self, d): return {}
+    gp_day = gp.day_record
+    try:
+        gp.day_record = lambda s, a, b=None: dict(wrong)
+        out = gp.pull(G(), {"days": {"2026-10-25": good}}, today=date(2026, 10, 25), log=lambda *a: None)
+        assert out["days"]["2026-10-25"] == good                         # kept
+        out = gp.pull(G(), {"days": {"2026-10-20": good}}, today=date(2026, 10, 25), log=lambda *a: None)
+        assert out["days"]["2026-10-25"] == {"resting_hr": 52, "sleep_mismatch": wrong["sleep_end"]}   # no fake night
+    finally:
+        gp.day_record = gp_day

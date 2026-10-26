@@ -99,6 +99,15 @@ def day_record(sleep: dict, hr_today: dict, hr_before: Optional[dict] = None) ->
     return rec if rhr or pts else None
 
 
+def night_fits(rec: dict, d: date) -> bool:
+    """Does this record's night end on day d (your time)? No sleep times: nothing to contradict."""
+    end = rec.get("sleep_end")
+    if not end:
+        return True
+    from zoneinfo import ZoneInfo
+    return datetime.fromisoformat(end).astimezone(ZoneInfo(LOCAL_TZ)).date() == d
+
+
 def pull(client, known: dict, today: Optional[date] = None, log: Callable = print) -> dict:
     """known: garmin.json as it is. Returns it with the last days pulled again (all of them the
     first time). client: a logged-in garminconnect.Garmin (or anything with its two calls)."""
@@ -119,6 +128,14 @@ def pull(client, known: dict, today: Optional[date] = None, log: Callable = prin
         except Exception as e:                         # one bad day doesn't stop the rest
             log(f"garmin: {d}: {type(e).__name__}: {e}")
             continue
+        if rec and not night_fits(rec, d):
+            # Garmin sometimes hands a day another night's sleep (seen on the clock-change day: the
+            # 25th came back as the night to the 24th). Never let that overwrite a good night.
+            old = days.get(d.isoformat())
+            log(f"garmin: {d}: Garmin gave the night ending {rec.get('sleep_end')}, not this day's; kept what we had")
+            if old and night_fits(old, d):
+                continue
+            rec = {"resting_hr": rec.get("resting_hr"), "sleep_mismatch": rec.get("sleep_end")}
         if rec:
             days[d.isoformat()] = rec
     return {"pulled": datetime.now(timezone.utc).isoformat(timespec="seconds"), "days": dict(sorted(days.items()))}
