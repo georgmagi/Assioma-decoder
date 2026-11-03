@@ -544,7 +544,8 @@ function renderSummary(d) {
   const bal = st.balance_right;
   const dec = st.decoupling_pct;
   $("sum-stats").innerHTML = [
-    stat("Ride time", hms(st.ride_s), "", st.elapsed_s > st.ride_s + 5 ? `elapsed ${hms(st.elapsed_s)}` : ""),
+    stat("Ride time", hms(st.ride_s), "", [st.elapsed_s > st.ride_s + 5 ? `elapsed ${hms(st.elapsed_s)}` : "",
+      st.main_s ? `averages from the main set, ${hms(st.main_s[1] - st.main_s[0])}` : ""].filter(Boolean).join(" · ")),
     stat("Power", fmt(st.avg_power), "W", `NP ${fmt(st.np)} · max ${fmt(st.max_power)}`),
     stat("Load", st.tss == null ? "--" : fmt(st.tss), "TSS", st.if == null ? "set your FTP for IF and TSS" : `IF ${st.if.toFixed(2)} · FTP ${fmt(st.ftp)}`),
     stat("Heart rate", fmt(st.avg_hr), "bpm", `max ${fmt(st.max_hr)}`),

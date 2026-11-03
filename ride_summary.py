@@ -35,7 +35,7 @@ ZONES = [(0.55, "Z1"), (0.75, "Z2"), (0.90, "Z3"), (1.05, "Z4"), (1.20, "Z5"), (
 # Z5 above 90 %
 HR_ZONES = [(0.60, "Z1"), (0.70, "Z2"), (0.80, "Z3"), (0.90, "Z4"), (float("inf"), "Z5")]
 TEXT = {"time", "rider_position", "rr_ms"}
-SUMMARY_VERSION = 14                    # bump when the cached short summary changes
+SUMMARY_VERSION = 15                    # bump when the cached short summary changes
 
 
 def load(path: str) -> list[dict]:
@@ -157,6 +157,37 @@ def _workout_steps(rows: list, meta: dict) -> Optional[list]:
     return out or None
 
 
+WORK_FRAC = 0.60                        # a workout step at or above this (both ends) is part of the main set
+
+
+def main_span(meta: Optional[dict], n: int) -> Optional[tuple[int, int]]:
+    """The ride's main set as (from_s, to_s): from the start of the workout's first work step to the end of
+    its last one, so the warm-up and the cool-down don't drag the averages down. A step is work when its
+    target stays at or above WORK_FRAC of FTP the whole step, or it has no target (all-out). None for free
+    rides, workouts without such steps, or a main set that is the whole ride or under 5 minutes."""
+    wo = (meta or {}).get("workout") or {}
+    steps, log = wo.get("steps") or [], sorted(wo.get("log") or [], key=lambda e: e[0])
+    if not steps or not log:
+        return None
+
+    def work(idx):
+        if not 0 <= idx < len(steps):
+            return False
+        lo, hi = steps[idx][1], steps[idx][2]
+        return lo is None or min(lo, hi if hi is not None else lo) >= WORK_FRAC
+
+    first = next((k for k, e in enumerate(log) if work(e[1])), None)
+    if first is None:
+        return None
+    last = max(k for k, e in enumerate(log) if work(e[1]))
+    a = max(0, int(log[first][0]))
+    b = log[last + 1][0] if last + 1 < len(log) else log[last][0] + steps[log[last][1]][0]
+    b = min(n, int(b))
+    if b - a < 300 or (a <= 0 and b >= n):
+        return None
+    return a, b
+
+
 def summarize(rows: list[dict], ftp: Optional[float] = None, max_hr: Optional[float] = None,
               meta: Optional[dict] = None, w_prime: Optional[float] = None, ecg_path: Optional[str] = None) -> dict:
     if not rows:
@@ -172,7 +203,7 @@ def summarize(rows: list[dict], ftp: Optional[float] = None, max_hr: Optional[fl
     np_ = (sum(x ** 4 for x in p30) / len(p30)) ** 0.25 if p30 else None
     avg_p = _mean(power)
     if_ = np_ / ftp if np_ and ftp else None
-    tss = n * np_ * if_ / (ftp * 3600) * 100 if if_ else None
+    tss = n * np_ * if_ / (ftp * 3600) * 100 if if_ else None   # load: always the whole ride
 
     # the beats, judged for artifacts the same way as live (alpha 1 itself is already in the CSV)
     tracker = hrv.HrvTracker()
@@ -221,15 +252,31 @@ def summarize(rows: list[dict], ftp: Optional[float] = None, max_hr: Optional[fl
             odd = ecg and ecg_beats.check(beats, [(b.time - t0).total_seconds() for b in beats], ecg)
         except (OSError, ValueError, IndexError):
             odd = None
+    whole = {"avg_power": avg_p, "np": np_, "avg_hr": _mean(hr), "avg_cadence": _mean(at("cadence_rpm")),
+             "balance_right": _mean(at("balance_right_pct")), "avg_a1": _mean(a1_known)}
+    span = main_span(meta, n)
+    if span:                        # the averages from the main set only (warm-up and cool-down left out)
+        a, b = span
+        mp = power[a:b]
+        mp30 = _rolling(mp, 30)
+        main_ped = [i for i in pedalling if a <= i < b]
+        mat = lambda k: [rows[i].get(k) for i in main_ped]
+        avgs = {"avg_power": _mean(mp), "np": (sum(x ** 4 for x in mp30) / len(mp30)) ** 0.25 if mp30 else None,
+                "avg_hr": _mean(hr[a:b]), "avg_cadence": _mean(mat("cadence_rpm")),
+                "balance_right": _mean(mat("balance_right_pct")),
+                "avg_a1": _mean([v for v in a1[a:b] if v is not None])}
+    else:
+        avgs = whole
     return {
         "start_utc": t0.replace(tzinfo=timezone.utc).isoformat(),
         "stats": {
             "ride_s": n, "elapsed_s": ts[-1] + 1,
-            "avg_power": avg_p, "np": np_, "max_power": max((p for p in power if p is not None), default=None),
+            "avg_power": avgs["avg_power"], "np": avgs["np"], "max_power": max((p for p in power if p is not None), default=None),
             "if": if_, "tss": tss, "work_kj": sum(p or 0 for p in power) / 1000, "ftp": ftp, "zone_max_hr": max_hr,
-            "avg_hr": _mean(hr), "max_hr": max((h for h in hr if h), default=None),
-            "avg_cadence": _mean(at("cadence_rpm")), "balance_right": _mean(at("balance_right_pct")),
-            "avg_a1": _mean(a1_known), "rmssd": hrv.rmssd(clean) if len(clean) > 2 else None,
+            "avg_hr": avgs["avg_hr"], "max_hr": max((h for h in hr if h), default=None),
+            "avg_cadence": avgs["avg_cadence"], "balance_right": avgs["balance_right"],
+            "main_s": list(span) if span else None, "whole": whole if span else None,
+            "avg_a1": avgs["avg_a1"], "rmssd": hrv.rmssd(clean) if len(clean) > 2 else None,
             "beats": len(beats), "artifact_pct": 100 * (len(beats) - len(clean)) / len(beats) if beats else None,
             "standing_pct": 100 * standing / len(positions) if positions else None,
             **_decoupling(power, hr),
@@ -326,7 +373,7 @@ def short(s: dict) -> dict:
     st, v, v2 = s["stats"], s.get("vt1") or {}, s.get("vt2") or {}
     brief = lambda e: e and {k: e[k] for k in ("kind", "value", "value2", "lo", "hi", "ok") if k in e}
     return {"v": SUMMARY_VERSION, "start_utc": s["start_utc"], **{k: st[k] for k in
-            ("ride_s", "elapsed_s", "avg_power", "np", "avg_hr", "avg_a1", "tss", "if", "ftp", "work_kj",
+            ("ride_s", "elapsed_s", "avg_power", "np", "avg_hr", "avg_a1", "tss", "if", "ftp", "work_kj", "main_s",
              "decoupling_pct", "ef_z2", "ef_z2_power", "ef_z2_min")}, "vt1_hr": brief(v.get("hr")), "vt1_power": brief(v.get("power")),
             "vt1_beats_pct": v.get("beats_pct"), "zones": s["zones"], "mmp": s["mmp"],
             "vt2_hr": brief(v2.get("hr")), "vt2_power": brief(v2.get("power")),
@@ -482,7 +529,7 @@ def _write_json(path: str, obj, gz: bool = False) -> None:
             pass
 
 
-FULL_V = 1                                    # bump when the full summary changes (with SUMMARY_VERSION)
+FULL_V = 2                                    # bump when the full summary changes (with SUMMARY_VERSION)
 
 
 def summary_cached(folder: str, ride_id: str, ftp=None, max_hr=None, w_prime=None) -> Optional[dict]:

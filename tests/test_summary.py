@@ -30,6 +30,37 @@ def test_steady_ride_headline_numbers(tmp_path):
     assert s["best"]["1200"] == 150 and s["best"]["5"] == 150
 
 
+def test_averages_come_from_the_main_set_but_load_from_the_whole_ride(tmp_path):
+    # 10 min warm-up ramp at 100 W, 40 min at 200 W (with an easy 55 % recovery inside), 10 min cool-down at 100 W
+    def row(i):
+        return {"power_w": 100 if i < 600 or i >= 3000 else 200, "heart_rate_bpm": 120 if i < 600 or i >= 3000 else 150,
+                "cadence_rpm": 90}
+    path = _ride(tmp_path, 3600, row)
+    meta = {"workout": {"ftp": 250, "steps": [[600, 0.40, 0.70, ""], [1200, 0.80, 0.80, ""], [0, 0.55, 0.55, ""],
+                                              [1200, 0.80, 0.80, ""], [600, 0.60, 0.40, ""]],
+                        "log": [[0, 0, 1.0], [600, 1, 1.0], [1800, 3, 1.0], [3000, 4, 1.0]]}}
+    st = rs.summarize(rs.load(path), ftp=250, meta=meta)["stats"]
+    assert st["main_s"] == [600, 3000]
+    assert st["avg_power"] == 200 and st["avg_hr"] == 150 and abs(st["np"] - 200) < 1e-9
+    assert abs(st["whole"]["avg_power"] - 500 / 3) < 1e-9 and st["whole"]["avg_hr"] == 140
+    whole_np = rs.summarize(rs.load(path), ftp=250)["stats"]["np"]
+    assert abs(st["tss"] - 3600 * whole_np ** 2 / (250 ** 2 * 3600) * 100) < 1e-6   # load still counts every second
+    assert st["work_kj"] == 600
+
+
+def test_free_rides_and_all_work_workouts_keep_whole_ride_averages():
+    assert rs.main_span(None, 3600) is None
+    assert rs.main_span({"workout": {"steps": [[3600, 0.7, 0.7, ""]], "log": [[0, 0, 1.0]]}}, 3600) is None
+    easy = {"workout": {"steps": [[1800, 0.5, 0.5, ""], [1800, 0.55, 0.55, ""]], "log": [[0, 0, 1.0], [1800, 1, 1.0]]}}
+    assert rs.main_span(easy, 3600) is None                                   # no work steps at all
+    allout = {"workout": {"steps": [[600, 0.4, 0.6, ""], [300, None, None, "5 min all out"], [600, 0.5, 0.5, ""]],
+                          "log": [[0, 0, 1.0], [600, 1, 1.0], [900, 2, 1.0]]}}
+    assert rs.main_span(allout, 1500) == (600, 900)                          # a free all-out step is work
+    cut = {"workout": {"steps": [[300, 0.45, 0.71, ""], [4800, 0.71, 0.71, ""], [300, 0.6, 0.4, ""]],
+                       "log": [[0, 0, 1.0], [300, 1, 1.0]]}}
+    assert rs.main_span(cut, 2000) == (300, 2000)                            # ended mid main set: up to the end
+
+
 def test_best_powers_and_zones_see_an_effort(tmp_path):
     path = _ride(tmp_path, 900, lambda i: {"power_w": 300 if 100 <= i < 400 else 100})
     s = rs.summarize(rs.load(path), ftp=250)
