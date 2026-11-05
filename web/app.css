@@ -557,6 +557,8 @@ body:has(#topnav:not([hidden])) { grid-template-rows: auto minmax(0, 1fr) auto; 
   font: inherit; color: var(--fg); text-align: left; cursor: pointer;
 }
 .dev:hover { border-color: var(--faint); }
+.dev.dev-static { cursor: default; }
+.dev.dev-static:hover { border-color: var(--grid); }
 .dev:focus-visible { outline: 2px solid var(--power); outline-offset: 1px; }
 .dev .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--faint); }
 .dev.st-connected .dot { background: var(--good); }

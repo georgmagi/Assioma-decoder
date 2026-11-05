@@ -77,7 +77,8 @@ SETTINGS_DEFAULTS = {"ftp": None, "max_hr": None, "vt1_hr": None, "room_temp": N
                      "ftp_history": None,     # [[from_day, ftp], ...]: each FTP change, so past rides keep theirs
                      "weight_kg": None, "weight_history": None,    # [[from_day, kg], ...]: W/kg on each day
                      "goal_wkg": 4.0, "goal_date": None,           # the goal (training.goal)
-                     "power_match": True, "power_match_k": None}   # ERG by the pedals (Engine._power_match)
+                     "power_match": True, "power_match_k": None,   # ERG by the pedals (Engine._power_match)
+                     "room_sensor": None}     # the Bluetooth thermometer's address (room.py), learnt when first found
 PREFS = {"theme": ("dark", "lcd"), "layout": ("auto", "intervals", "z2", "free"), "span": (300, 1800, 0), "power3s": (True, False)}
 
 
@@ -118,6 +119,9 @@ class Engine(threading.Thread):
         self._active = time.monotonic()      # last time something needed the sensors
         self._pedal_was = False              # the pedals were connected at the last tick
         self.worker = self._new_worker()
+        self.room = None                     # the room thermometer (room.RoomSensor), set by main() on real runs
+        self.room_log: list = []             # this ride's room readings: [ride s, °C, % RH]
+        self._room_at = None                 # time of the last reading logged
         self.session: Optional[Session] = None
         self.screen = "home"                 # a page (PAGES) | ride | summary
         self.back_to = "home"                # the page the summary's back button goes to
@@ -844,6 +848,10 @@ class Engine(threading.Thread):
     def _meta(self, s: Session) -> None:
         """The ride's sidecar (ride_summary.META): room conditions and the workout as ridden."""
         m = {"temp_c": self.settings.get("room_temp"), "rh_pct": self.settings.get("room_rh")}
+        if self.room_log:                                          # measured: the ride's mean, and every reading
+            m["temp_c"] = round(sum(x[1] for x in self.room_log) / len(self.room_log), 1)
+            m["rh_pct"] = round(sum(x[2] for x in self.room_log) / len(self.room_log))
+            m["room"] = self.room_log
         view = getattr(self.worker, "view", None)                  # which strap, and how: HRV trusts some more than others
         if view:
             status, link = view("hr")
@@ -879,6 +887,7 @@ class Engine(threading.Thread):
         self._a1_low_since = None
         self.step_log, self._wo_meta = [], None
         self.trainer_log, self._pm, self._pm_tgt = [], [], None
+        self.room_log, self._room_at = [], None
         self.cap, self._cap_t = 1.0, 0.0                 # (the ceiling toggle itself stays as you left it)
         self.player, self.workout_done, self.erg = None, False, True
         w = self.workouts().get(self.workout_id) if self.workout_id else None
@@ -910,7 +919,14 @@ class Engine(threading.Thread):
     def _save(self) -> None:
         s = self.session
         self._drain()
+        self._room_tick(force=True)
         self._meta(s)                                    # with the workout's step log
+        if self.room_log:                                # the room as last measured: the default for typed-in rides
+            last = self.room_log[-1]
+            if (self.settings.get("room_temp"), self.settings.get("room_rh")) != (last[1], last[2]):
+                self.settings["room_temp"], self.settings["room_rh"] = last[1], last[2]
+                if self.settings_path:
+                    save_settings(self.settings_path, self.settings)
         result = s.finish()
         if not result:                             # nothing recorded: its meta goes aside with its logs
             keep.set_aside(rs.meta_path(self.out_dir, os.path.basename(s.base)), os.path.join(self.out_dir, s.DISCARDED))
@@ -1175,6 +1191,32 @@ class Engine(threading.Thread):
             self.morning_version += 1
             self.worker.log(f"morning check: {res}")
 
+    ROOM_RIDE_S, ROOM_IDLE_S, ROOM_ASLEEP_S = 120, 600, 1800   # room thermometer: on a ride / sensors awake / else
+
+    def _room_tick(self, force: bool = False) -> None:
+        """Ask the thermometer for readings (often on a ride, now and then while the sensors are awake)
+        and log each new one into the ride; keep the address it found."""
+        r = self.room
+        if r is None:
+            return
+        riding = self.session is not None and self.session.state == "recording"
+        r.want(self.ROOM_RIDE_S if self.session is not None else self.ROOM_IDLE_S if self.awake else self.ROOM_ASLEEP_S)
+        if r.address and r.address != self.settings.get("room_sensor"):
+            self.settings["room_sensor"] = r.address
+            if self.settings_path:
+                save_settings(self.settings_path, self.settings)
+        x = r.latest
+        if not (riding or force) or x is None or self.session is None:
+            return
+        if time.time() - x["at"] > 15 * 60:                     # stale: not this ride's room
+            return
+        if x["at"] == self._room_at:                             # already logged
+            return
+        self._room_at = x["at"]
+        self.room_log.append([len(self.session.seconds), x["temp_c"], x["rh_pct"]])
+        if len(self.room_log) == 1 or not force:
+            self._meta(self.session)
+
     def _tick(self) -> None:
         now = utcnow()
         lock = getattr(self.worker, "hr_lock", None)
@@ -1184,6 +1226,7 @@ class Engine(threading.Thread):
                 save_settings(self.settings_path, self.settings)
         self._morning_tick(now)
         self._sensor_tick(now)
+        self._room_tick()
         if self.keep_awake is not None:              # a ride or a morning check: the computer stays awake
             (self.keep_awake.hold if self.session is not None or self.mcheck is not None else self.keep_awake.release)()
         self._sync_poke()
@@ -1366,6 +1409,7 @@ class Engine(threading.Thread):
                 "beats": sum(len(x[1]) for x in self.mcheck.rr), "hr": self._home_value("hr", utcnow())},
             "config": {"ftp": self.settings.get("ftp"), "plan_min": self.settings.get("plan_min")},
             "sync": self._sync_view(),
+            "room": self.room.view() if self.room is not None else None,
         }
         s = self.session
         if s is None:
@@ -1706,6 +1750,9 @@ def main() -> None:
     if not args.replay:
         import keepawake
         engine.keep_awake = keepawake.KeepAwake(engine.worker.log)
+        import room
+        engine.room = room.RoomSensor(engine.worker.log, settings.get("room_sensor"))
+        engine.room.start()
     engine.start()
     if not args.replay:                             # a ride the app closed in the middle of: finished now
         threading.Thread(target=lambda: (engine.recover_rides(), engine.warm_summaries()), daemon=True).start()

@@ -417,6 +417,47 @@ def test_leaving_a_ride_never_leaves_erg_on_and_no_ftp_no_workout(tmp_path):
     assert e2.workout_id == "vo2-5x4" or e2.workout_id is None
 
 
+class FakeRoom:
+    """room.RoomSensor without Bluetooth: readings are set by the test."""
+    def __init__(self):
+        self.every_s, self.latest, self.address = None, None, "A4:C1:38:00:00:01"
+
+    def want(self, every_s):
+        self.every_s = every_s
+
+    def view(self):
+        return self.latest and {"state": "ok", **self.latest}
+
+
+def test_the_room_thermometer_is_logged_into_the_ride(tmp_path):
+    import time as _t
+    e = _engine(tmp_path, room_temp=19.0, room_rh=50)
+    e.settings_path = str(tmp_path / "settings.json")
+    e.room = FakeRoom()
+    e._room_tick()
+    assert e.room.every_s == e.ROOM_ASLEEP_S and e.settings["room_sensor"] == "A4:C1:38:00:00:01"
+    s = _ride(e, 0)
+    e._room_tick()
+    assert e.room.every_s == e.ROOM_RIDE_S                         # often while riding
+    for i, (temp, rh) in enumerate(((20.4, 46), (21.0, 48), (21.6, 50))):
+        for k in range(120):
+            s._second({"time": s.started + timedelta(seconds=120 * i + k), "power_w": 150, "heart_rate_bpm": 130})
+        e.room.latest = {"temp_c": temp, "rh_pct": rh, "at": _t.time() + i}
+        e._room_tick(); e._room_tick()                              # the same reading isn't logged twice
+    assert [x[1:] for x in e.room_log] == [[20.4, 46], [21.0, 48], [21.6, 50]]
+    _stop_and_save(e)
+    m = rs.load_meta(str(tmp_path), os.path.basename(s.base))
+    assert m["temp_c"] == 21.0 and m["rh_pct"] == 48 and len(m["room"]) == 3   # the ride's mean, and each reading
+    assert e.settings["room_temp"] == 21.6 and e.settings["room_rh"] == 50     # the latest: the default for next time
+
+
+def test_room_reading_parse():
+    import room
+    assert room.parse(bytes.fromhex("200837ea0c")) == {"temp_c": 20.8, "rh_pct": 55, "volt": 3.306}
+    assert room.parse(bytes.fromhex("1cff32ea0c"))["temp_c"] == -2.28          # below zero: signed
+    assert room.parse(b"\x00\x00\x00") is None and room.parse(b"\x01") is None  # 0 % humidity, too short
+
+
 def test_rides_keep_the_room_and_the_workout_steps(tmp_path):
     e = _engine(tmp_path)
     e._do("settings", {"room_temp": 21.5, "room_rh": 48, "ftp": 200})

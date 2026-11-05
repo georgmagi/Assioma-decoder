@@ -631,6 +631,14 @@ for (const b of $("views").querySelectorAll("button")) {
 }
 
 // --------------------------------------------------------------------------- bottom bar
+// the room thermometer (room.py): "20.8 °C · 46 %", or what it's doing when there's no reading
+function roomText(r) {
+  if (!r) return null;
+  if (r.temp_c == null) return r.state === "failed" ? { st: "bad", text: "thermometer not found" } : { st: "wait", text: "looking…" };
+  const text = `${r.temp_c.toFixed(1)} °C · ${fmt(r.rh_pct)} %`;
+  return r.state === "ok" ? { st: "ok", text } : { st: "wait", text: `${text} · ${Math.round(r.age_s / 60)} min ago` };
+}
+
 function renderBar(s) {
   const box = $("sensors");
   box.hidden = s.screen !== "ride" && !s.error && !s.notice;     // the pages have the Connections pane on Home
@@ -647,6 +655,8 @@ function renderBar(s) {
       const ok = status.startsWith("connected");
       return { label, st: ok ? "ok" : "wait", text: ok && status.includes(": ") ? status.split(": ")[1] : status, link };
     });
+  const rm = roomText(s.room);
+  if (rm) items.push({ label: "Room", st: rm.st, text: rm.text, link: "" });
   box.replaceChildren(...items.map(({ label, st, text, link }) => {
     const el = document.createElement("span");
     el.className = `sensor s-${st}`;
