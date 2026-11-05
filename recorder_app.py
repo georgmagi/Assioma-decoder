@@ -43,6 +43,7 @@ import morning as mo
 import polar_pmd as pmd
 import plan as pl
 import ride_summary as rs
+import room as room_mod
 import workout as wk
 import checks
 import readiness as rd
@@ -122,6 +123,7 @@ class Engine(threading.Thread):
         self.room = None                     # the room thermometer (room.RoomSensor), set by main() on real runs
         self.room_log: list = []             # this ride's room readings: [ride s, °C, % RH]
         self._room_at = None                 # time of the last reading logged
+        self._room_hist_at = None            # time of the last reading written to the room's history
         self.session: Optional[Session] = None
         self.screen = "home"                 # a page (PAGES) | ride | summary
         self.back_to = "home"                # the page the summary's back button goes to
@@ -1189,7 +1191,7 @@ class Engine(threading.Thread):
             self.morning_version += 1
             self.worker.log(f"morning check: {res}")
 
-    ROOM_RIDE_S, ROOM_IDLE_S, ROOM_ASLEEP_S = 120, 600, 1800   # room thermometer: on a ride / sensors awake / else
+    ROOM_RIDE_S, ROOM_IDLE_S, ROOM_ASLEEP_S = 120, 600, 900    # room thermometer: on a ride / sensors awake / else
 
     def _room_tick(self, force: bool = False) -> None:
         """Ask the thermometer for readings (often on a ride, now and then while the sensors are awake)
@@ -1204,6 +1206,12 @@ class Engine(threading.Thread):
             if self.settings_path:
                 save_settings(self.settings_path, self.settings)
         x = r.latest
+        if x is not None and x["at"] != self._room_hist_at:        # every reading into the room's history
+            self._room_hist_at = x["at"]
+            try:
+                room_mod.log_reading(self.out_dir, x["at"], x["temp_c"], x["rh_pct"])
+            except OSError as e:
+                self.worker.log(f"room history: {e}")
         if not (riding or force) or x is None or self.session is None:
             return
         if time.time() - x["at"] > 15 * 60:                     # stale: not this ride's room
@@ -1537,6 +1545,8 @@ def make_handler(engine: Engine, app_mode: dict):
                 self._json({"id": wid, "name": w["name"], "text": wk.to_text(w["steps"])} if w else {"error": "no such workout"})
             elif u.path == "/api/morning":
                 self._json(engine.morning_trend())
+            elif u.path == "/api/room":                       # the room thermometer's last 48 h
+                self._json({"points": room_mod.history(engine.out_dir, 48)})
             elif u.path == "/api/readiness":
                 rides = engine.rides()
                 self._json(today_readiness(engine, rides, training.pmc(rides)))
@@ -1746,8 +1756,7 @@ def main() -> None:
     if not args.replay:
         import keepawake
         engine.keep_awake = keepawake.KeepAwake(engine.worker.log)
-        import room
-        engine.room = room.RoomSensor(engine.worker.log, settings.get("room_sensor"))
+        engine.room = room_mod.RoomSensor(engine.worker.log, settings.get("room_sensor"))
         engine.room.start()
     engine.start()
     if not args.replay:                             # a ride the app closed in the middle of: finished now

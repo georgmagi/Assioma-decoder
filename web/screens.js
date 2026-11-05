@@ -78,11 +78,70 @@ function renderConnections(s) {
   }
 }
 
+// the room's last 48 h (room.py's history): temperature over humidity, gaps where the app was closed
+const ROOM = { key: null, pts: null };
+async function loadRoom(s) {
+  const r = s.room;
+  const key = r && r.temp_c != null ? `${r.temp_c}|${r.rh_pct}|${Math.floor(Date.now() / 300e3)}` : null;
+  if (key === ROOM.key) return;
+  ROOM.key = key;
+  if (!key) { $("room-hist").hidden = true; return; }
+  try { ROOM.pts = (await (await fetch("/api/room")).json()).points; } catch { return; }
+  drawRoom();
+}
+function drawRoom() {
+  const pts = ROOM.pts || [], box = $("room-hist");
+  box.hidden = pts.length < 2;
+  if (box.hidden) return;
+  const cv = $("room-chart"), dpr = devicePixelRatio || 1, wd = cv.parentElement.clientWidth, ht = 170;
+  if (!wd) return;
+  cv.style.width = wd + "px"; cv.style.height = ht + "px";
+  cv.width = Math.round(wd * dpr); cv.height = Math.round(ht * dpr);
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, wd, ht);
+  const t1 = Date.now(), t0 = t1 - 48 * 3600e3, ml = 34, mr = 6, mt = 6, mb = 20, gap = 16, W = wd - ml - mr;
+  const X = (t) => ml + ((t - t0) / (t1 - t0)) * W;
+  const lane = (vals, top, h, step, pad) => {
+    const lo = Math.floor((Math.min(...vals) - pad) / step) * step, hi = Math.ceil((Math.max(...vals) + pad) / step) * step;
+    const Y = (v) => top + h - ((v - lo) / (hi - lo)) * h;
+    ctx.strokeStyle = C.grid; ctx.fillStyle = C.dim; ctx.lineWidth = 1; ctx.textAlign = "right";
+    for (let v = lo; v <= hi + 1e-9; v += step) {
+      ctx.beginPath(); ctx.moveTo(ml, Y(v)); ctx.lineTo(ml + W, Y(v)); ctx.stroke();
+      ctx.fillText(`${Math.round(v)}`, ml - 6, Y(v) + 4);
+    }
+    return Y;
+  };
+  ctx.font = "11px 'Barlow Semi Condensed', 'IBM Plex Sans', sans-serif";
+  const hT = (ht - mt - mb - gap) * 0.6, hR = ht - mt - mb - gap - hT;
+  const YT = lane(pts.map((p) => p[1]), mt, hT, 1, 0.3), YR = lane(pts.map((p) => p[2]), mt + hT + gap, hR, 10, 2);
+  ctx.textAlign = "left"; ctx.fillStyle = C.dim;
+  ctx.fillText("°C", ml + 4, mt + 11); ctx.fillText("% RH", ml + 4, mt + hT + gap + 11);
+  ctx.textAlign = "center";                                        // midnight and noon
+  for (let t = Math.ceil(t0 / 3600e3) * 3600e3; t <= t1; t += 3600e3) {
+    const h = new Date(t).getHours();
+    if (h % 12) continue;
+    ctx.strokeStyle = C.grid; ctx.beginPath(); ctx.moveTo(X(t), mt); ctx.lineTo(X(t), ht - mb); ctx.stroke();
+    ctx.fillStyle = C.dim; ctx.fillText(h ? "12:00" : SHORT_DAY.format(new Date(t)), X(t), ht - 5);
+  }
+  const line = (Y, k, colour, width) => {                         // broken where readings stopped (app closed)
+    ctx.strokeStyle = colour; ctx.lineWidth = width; ctx.beginPath();
+    pts.forEach((p, i) => (i && p[0] - pts[i - 1][0] < 45 * 60e3 ? ctx.lineTo(X(p[0]), Y(p[k])) : ctx.moveTo(X(p[0]), Y(p[k]))));
+    ctx.stroke();
+  };
+  line(YT, 1, C.fg, 2); line(YR, 2, C.dim, 1.5);
+  const MK = marksOf(cv);
+  let lastX = -9;
+  for (const p of pts) if (X(p[0]) - lastX >= 3 && (lastX = X(p[0]))) MK.push({ x: X(p[0]), y: YT(p[1]), html: tipHtml(`${DAY.format(new Date(p[0]))}, ${TIME.format(new Date(p[0]))}`,
+    [["temperature", p[1].toFixed(1), "°C", C.fg], ["humidity", fmt(p[2]), "%", C.dim]]) });
+}
+window.addEventListener("resize", () => { if (!$("scr-home").hidden && ROOM.pts) drawRoom(); });
+
 // --------------------------------------------------------------------------- home
 // Top to bottom: how training is going (the last weeks and form), the last ride beside the next
 // one, then the connections and your numbers.
 function renderHome(s) {
   renderConnections(s);
+  loadRoom(s);
   renderSettings(s);
   if (HOME.mcFor !== s.morning_version || S.prevScreen !== "home") {
     if (HOME.mcFor !== undefined && HOME.mcFor !== s.morning_version) loadReadiness();   // a new check: a new answer

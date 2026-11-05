@@ -451,6 +451,17 @@ def test_the_room_thermometer_is_logged_into_the_ride(tmp_path):
     assert e.settings["room_temp"] == 21.6 and e.settings["room_rh"] == 50     # the latest: the default for next time
 
 
+def test_room_history_keeps_every_reading_by_month(tmp_path):
+    import room, calendar
+    t = calendar.timegm((2026, 10, 31, 23, 0, 0))                   # across a month boundary
+    for k in range(6):
+        room.log_reading(str(tmp_path), t + k * 1800, 20 + k / 10, 45 + k)
+    assert sorted(os.listdir(tmp_path / "room")) == ["room_2026-10.csv", "room_2026-11.csv"]
+    h = room.history(str(tmp_path), 2, now=t + 5 * 1800)
+    assert [p[1:] for p in h] == [[20.1, 46.0], [20.2, 47.0], [20.3, 48.0], [20.4, 49.0], [20.5, 50.0]]
+    assert h[0][0] == (t + 1800) * 1000
+
+
 def test_room_reading_parse():
     import room
     assert room.parse(bytes.fromhex("200837ea0c")) == {"temp_c": 20.8, "rh_pct": 55, "volt": 3.306}

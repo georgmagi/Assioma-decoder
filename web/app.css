@@ -558,6 +558,11 @@ body:has(#topnav:not([hidden])) { grid-template-rows: auto minmax(0, 1fr) auto; 
 }
 .dev:hover { border-color: var(--faint); }
 .dev.dev-static { cursor: default; }
+.room-hist { margin-top: 14px; display: grid; gap: 6px; }
+.room-hist[hidden] { display: none; }
+.room-head { display: flex; gap: 8px; align-items: baseline; font-size: 13px; }
+.room-head span { color: var(--dim); }
+.room-wrap { position: relative; }
 .dev.dev-static:hover { border-color: var(--grid); }
 .dev:focus-visible { outline: 2px solid var(--power); outline-offset: 1px; }
 .dev .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--faint); }

@@ -12,6 +12,8 @@ Engine says how often it wants a reading (every 2 min on a ride, every 10 min ot
 newest reading is in .latest. The first time it finds a thermometer by name it remembers the
 address (.address, kept in settings by the Engine)."""
 import asyncio
+import calendar
+import os
 import threading
 import time
 from typing import Callable, Optional
@@ -19,6 +21,43 @@ from typing import Callable, Optional
 DATA_UUID = "ebe0ccc1-7a0a-4b0c-8a1a-6ff2997da3a6"
 NAMES = ("MJWSD06MMC", "MJWSD05MMC", "LYWSD03MMC", "MHO-C401", "MHO-C122", "LYWSDCGQ")
 FRESH_S = 35 * 60                 # older than this, a reading no longer describes the room
+
+
+def log_path(folder: str, at: float) -> str:
+    return os.path.join(folder, "room", time.strftime("room_%Y-%m.csv", time.gmtime(at)))
+
+
+def log_reading(folder: str, at: float, temp_c: float, rh_pct: float) -> None:
+    """Every reading, kept by month: rides/room/room_YYYY-MM.csv (utc, °C, % RH). Only appended to."""
+    path = log_path(folder, at)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    new = not os.path.exists(path)
+    with open(path, "a") as fh:
+        if new:
+            fh.write("utc,temp_c,rh_pct\n")
+        fh.write(f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(at))},{temp_c:.2f},{rh_pct:.0f}\n")
+
+
+def history(folder: str, hours: float = 48, now: Optional[float] = None) -> list:
+    """The readings of the last `hours`: [[epoch ms, °C, % RH], ...], oldest first."""
+    now = time.time() if now is None else now
+    since = now - hours * 3600
+    out = []
+    for path in sorted({log_path(folder, since), log_path(folder, now)}):
+        try:
+            with open(path) as fh:
+                next(fh, None)
+                for line in fh:
+                    try:
+                        u, t, rh = line.strip().split(",")
+                        at = calendar.timegm(time.strptime(u, "%Y-%m-%dT%H:%M:%SZ"))
+                    except ValueError:
+                        continue
+                    if since <= at <= now:
+                        out.append([at * 1000, float(t), float(rh)])
+        except OSError:
+            pass
+    return sorted(out)
 
 
 def parse(data: bytes) -> Optional[dict]:
