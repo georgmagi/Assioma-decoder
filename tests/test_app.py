@@ -422,8 +422,8 @@ class FakeRoom:
     def __init__(self):
         self.every_s, self.latest, self.address = None, None, "A4:C1:38:00:00:01"
 
-    def want(self, every_s):
-        self.every_s = every_s
+    def want(self, every_s, sync_ok=True):
+        self.every_s, self.sync_ok = every_s, sync_ok
 
     def view(self):
         return self.latest and {"state": "ok", **self.latest}
@@ -462,11 +462,30 @@ def test_room_history_keeps_every_reading_by_month(tmp_path):
     assert h[0][0] == (t + 1800) * 1000
 
 
-def test_room_reading_parse():
+def test_room_broadcast_and_history_records_decode():
     import room
-    assert room.parse(bytes.fromhex("200837ea0c")) == {"temp_c": 20.8, "rh_pct": 55, "volt": 3.306}
-    assert room.parse(bytes.fromhex("1cff32ea0c"))["temp_c"] == -2.28          # below zero: signed
-    assert room.parse(b"\x00\x00\x00") is None and room.parse(b"\x01") is None  # 0 % humidity, too short
+    # what the flashed thermometer really sent (BTHome v2): packet 3, battery 75 %, 21.49 °C, 61.13 %
+    assert room.parse_bthome(bytes.fromhex("400003014b02650803e117")) == {
+        "batt_pct": 75, "temp_c": 21.49, "rh_pct": 61.13}
+    assert room.parse_bthome(bytes.fromhex("40000a0c860c")) is None              # voltage only: no temperature
+    assert room.parse_bthome(bytes.fromhex("41000302650803e117")) is None       # encrypted
+    assert room.parse_bthome(bytes.fromhex("4002a6fe03e117"))["temp_c"] == -3.46   # below zero: signed
+    rec = bytes([0x35, 1, 0]) + (1793900000).to_bytes(4, "little") + (1765).to_bytes(2, "little", signed=True) \
+        + (5812).to_bytes(2, "little") + (3005).to_bytes(2, "little")
+    assert room.parse_memo(rec) == [1793900000, 17.65, 58.12]
+    assert room.parse_memo(b"\x35\x00\x00") is None                             # the end
+
+
+def test_room_history_download_appends_only_new_records(tmp_path):
+    import room
+    t = 1793900000
+    assert room.last_saved(str(tmp_path), now=t) is None
+    recs = [[t - k * 300, 18 + k / 10, 50.0] for k in range(4)] + [[3862, 21.6, 85.0]]  # newest first; one pre-clock
+    assert room.store(str(tmp_path), recs, None) == 4
+    assert room.last_saved(str(tmp_path), now=t) == t
+    assert room.store(str(tmp_path), [[t + 300, 17.9, 51.0]] + recs, t) == 1   # the overlap isn't kept twice
+    h = room.history(str(tmp_path), 1, now=t + 300)
+    assert [p[0] // 1000 for p in h] == [t - 900, t - 600, t - 300, t, t + 300]
 
 
 def test_rides_keep_the_room_and_the_workout_steps(tmp_path):

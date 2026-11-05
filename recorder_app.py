@@ -123,7 +123,6 @@ class Engine(threading.Thread):
         self.room = None                     # the room thermometer (room.RoomSensor), set by main() on real runs
         self.room_log: list = []             # this ride's room readings: [ride s, °C, % RH]
         self._room_at = None                 # time of the last reading logged
-        self._room_hist_at = None            # time of the last reading written to the room's history
         self.session: Optional[Session] = None
         self.screen = "home"                 # a page (PAGES) | ride | summary
         self.back_to = "home"                # the page the summary's back button goes to
@@ -1200,18 +1199,13 @@ class Engine(threading.Thread):
         if r is None:
             return
         riding = self.session is not None and self.session.state == "recording"
-        r.want(self.ROOM_RIDE_S if self.session is not None else self.ROOM_IDLE_S if self.awake else self.ROOM_ASLEEP_S)
+        r.want(self.ROOM_RIDE_S if self.session is not None else self.ROOM_IDLE_S if self.awake else self.ROOM_ASLEEP_S,
+               sync_ok=self.session is None)                     # the history download waits until after a ride
         if r.address and r.address != self.settings.get("room_sensor"):
             self.settings["room_sensor"] = r.address
             if self.settings_path:
                 save_settings(self.settings_path, self.settings)
         x = r.latest
-        if x is not None and x["at"] != self._room_hist_at:        # every reading into the room's history
-            self._room_hist_at = x["at"]
-            try:
-                room_mod.log_reading(self.out_dir, x["at"], x["temp_c"], x["rh_pct"])
-            except OSError as e:
-                self.worker.log(f"room history: {e}")
         if not (riding or force) or x is None or self.session is None:
             return
         if time.time() - x["at"] > 15 * 60:                     # stale: not this ride's room
@@ -1756,7 +1750,7 @@ def main() -> None:
     if not args.replay:
         import keepawake
         engine.keep_awake = keepawake.KeepAwake(engine.worker.log)
-        engine.room = room_mod.RoomSensor(engine.worker.log, settings.get("room_sensor"))
+        engine.room = room_mod.RoomSensor(engine.worker.log, settings.get("room_sensor"), engine.out_dir)
         engine.room.start()
     engine.start()
     if not args.replay:                             # a ride the app closed in the middle of: finished now

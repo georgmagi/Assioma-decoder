@@ -57,7 +57,7 @@ function renderConnections(s) {
       `<span class="dev-what">${d.key === "hr" && lock ? `only your ${esc(lock.name || "strap")} · <u class="forget" data-forget="1">use another strap</u>` : d.what}</span>` +
       `</span><span class="val">${st === "connected" ? d.value(h) : ""}</span></button>`;
   }).join("") + (rm ? `<div class="dev dev-static st-${rm.st === "ok" ? "connected" : rm.st === "bad" ? "failed" : "searching"}"><i class="dot"></i>` +
-      `<span class="dev-main"><b>Room thermometer</b><span class="dev-st">${rm.st === "ok" ? "Read every 2 min on a ride, logged with it" : esc(rm.text)}</span>` +
+      `<span class="dev-main"><b>Room thermometer</b><span class="dev-st">${rm.st === "ok" ? "Logged with every ride; keeps its own 5-min history" : esc(rm.text)}</span>` +
       `<span class="dev-what">temperature and humidity, so heat shows up in your heart rate data</span></span>` +
       `<span class="val">${rm.st === "bad" ? "" : esc(rm.text.split(" · ").slice(0, 2).join(" · "))}</span></div>` : "");
   for (const u of $("dev-list").querySelectorAll("[data-forget]")) {
