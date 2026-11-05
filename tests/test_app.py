@@ -117,12 +117,12 @@ def test_settings_are_checked_saved_and_the_strap_switch_reconnects(tmp_path):
     path = str(tmp_path / "settings.json")
     e = app.Engine(str(tmp_path), dict(app.SETTINGS_DEFAULTS), FakeWorker, path)
     before = FakeWorker.made
-    e._do("settings", {"ftp": 210, "plan_min": 75, "hr": False})
+    e._do("settings", {"ftp": 210, "hr": False})
     saved = app.load_settings(path)
-    assert (saved["ftp"], saved["plan_min"], saved["hr"]) == (210, 75, False)
+    assert (saved["ftp"], saved["hr"]) == (210, False) and "plan_min" not in saved
     assert FakeWorker.made == before + 1 and not e.worker.want_hr
-    e._do("settings", {"ftp": 5000, "plan_min": -1})                          # nonsense is ignored
-    assert e.settings["ftp"] == 210 and e.settings["plan_min"] == 75
+    e._do("settings", {"ftp": 5000})                                          # nonsense is ignored
+    assert e.settings["ftp"] == 210
 
 
 def test_spinning_on_after_a_ride_does_not_start_the_next(tmp_path):

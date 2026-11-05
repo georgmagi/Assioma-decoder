@@ -94,11 +94,6 @@
           <label><span>Power<small id="set-goal-w"></small></span><input id="set-goal" type="number" min="1.5" max="7" step="0.1" inputmode="decimal"><span class="u">W/kg</span></label>
           <label><span>By</span><input id="set-goal-date" type="date"><span class="u"></span></label>
         </div>
-        <div class="set-group">
-          <h3>Next ride</h3>
-          <label><span>Planned</span><input id="set-plan" type="number" min="10" max="600" step="5" inputmode="numeric"><span class="u">min</span></label>
-          <label class="two" title="Saved with each ride: heat raises heart rate at the same power. Update from your hygrometer before you ride."><span>Room</span><input id="set-temp" type="number" min="5" max="40" step="0.5" inputmode="decimal"><span class="u">°C</span><input id="set-rh" type="number" min="5" max="100" step="1" inputmode="numeric"><span class="u">%</span></label>
-        </div>
       </form>
       <div class="sync-row">
         <span class="sync-lab">Hydrate alert</span><span class="sync-state">flash + chime 10 min in, then every 15 min</span>
@@ -254,11 +249,7 @@
     <button class="btn" id="sum-home">Home</button>
     <h1 id="sum-title"></h1>
     <button class="btn" id="sum-file">Show FIT file</button>
-    <form class="sum-env settings" id="sum-env" onsubmit="return false" title="The room during this ride: change it if it wasn't right">
-      <span class="sum-env-lab">Room</span>
-      <label><input id="sum-temp" type="number" min="5" max="40" step="0.5" inputmode="decimal" placeholder="--"><span class="u">°C</span></label>
-      <label><input id="sum-rh" type="number" min="5" max="100" step="1" inputmode="numeric" placeholder="--"><span class="u">%</span></label>
-    </form>
+    <span class="sum-env" id="sum-env" hidden title="Measured by the room thermometer during the ride"></span>
     <button class="btn danger-text" id="sum-delete">Delete ride</button>
   </div>
   <dl class="panel sum-stats" id="sum-stats"></dl>

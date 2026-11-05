@@ -367,7 +367,7 @@ if (!VIEWS.includes(S.span)) S.span = 300;
 const DELAY = 2;
 function xRange() {
   const now = serverNow() ?? 0;
-  if (!S.span) return [0, Math.max(now, (S.snap?.config.plan_min || 60) * 60)];
+  if (!S.span) return [0, Math.max(now, S.snap?.workout?.total || 0, 60)];   // the whole ride: the workout's length
   return [now - DELAY - S.span, now - DELAY];
 }
 let lastScroll = 0;

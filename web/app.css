@@ -1092,10 +1092,8 @@ body:has(#topnav:not([hidden])) { grid-template-rows: auto minmax(0, 1fr) auto; 
 [data-theme="lcd"] .ctip { background: var(--lcd); border-color: var(--fg); box-shadow: none; color: var(--fg); }
 .ov-vt1 .readout .tkey { margin-right: 10px; }
 /* the summary's room conditions, in its header */
-.sum-env { display: flex; gap: 10px; margin-left: auto; }
-.sum-env label { display: flex; align-items: center; gap: 4px; }
-.sum-env input[type="number"] { width: 4.2em; padding: 5px 8px; font-size: 14px; }
-.sum-env .u { width: auto; color: var(--dim); }
+.sum-env { display: flex; gap: 8px; margin-left: auto; font-variant-numeric: tabular-nums; }
+.sum-env[hidden] { display: none; }
 .sum-cards #card-wsteps, .sum-cards #card-wbal, .sum-cards #card-knee, .sum-cards #card-breath { grid-column: span 2; }
 @media (max-width: 760px) { .sum-cards #card-wsteps, .sum-cards #card-wbal, .sum-cards #card-knee, .sum-cards #card-breath { grid-column: auto; } }
 .sum-cards #card-pc { grid-column: 1 / -1; }            /* the beat-to-beat plot: a row of its own */
@@ -1109,8 +1107,7 @@ body:has(#topnav:not([hidden])) { grid-template-rows: auto minmax(0, 1fr) auto; 
 .wb-bar[hidden] { display: none; }
 .sum-env { align-items: center; }
 .sum-env-lab { font-size: 12px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--dim); }
-[data-theme="lcd"] .sum-env-lab, [data-theme="lcd"] .sum-env .u { color: #a3a7ac; }
-[data-theme="lcd"] .sum-env input[type="number"] { background: #2c2f32; border-color: #5d6166; color: #e2e4e6; }
+[data-theme="lcd"] .sum-env-lab { color: #a3a7ac; }
 
 /* =========================================================================================
    Plan: the block's calendar and its forecast; the workout builder

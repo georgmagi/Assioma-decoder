@@ -4,7 +4,7 @@ Assioma Recorder as a desktop app. The window is a web page (web/) in a native w
 (pywebview, the Edge WebView2 engine that ships with Windows); Python does the sensors, decoding,
 HRV and FIT (Session and BleWorker from assioma_recorder, ANT+ heart rate from ant_hr).
 
-    python recorder_app.py                             start (FTP, plan and strap are set in the app)
+    python recorder_app.py                             start (FTP and strap are set in the app)
     python recorder_app.py --replay rides/ride_..._raw.csv --skip 20
                                                         test the window with a recorded ride
     python recorder_app.py --browser                   use the default browser instead of a window
@@ -69,10 +69,10 @@ def hms(n: int) -> str:
 
 
 PAGES = ("home", "plan", "workouts", "stats")   # the app's pages (top bar); plus "ride" and "summary"
-# ftp, plan and strap are set on the home screen; theme, graph span and the power tile's 3 s mode are
+# ftp and strap are set on the home screen; theme, graph span and the power tile's 3 s mode are
 # remembered from the page (its own browser storage is lost: the port changes every run)
 SETTINGS_DEFAULTS = {"ftp": None, "max_hr": None, "vt1_hr": None, "room_temp": None, "room_rh": None,
-                     "plan_min": 60, "hr": True, "trainer": False, "theme": "dark", "span": 300,
+                     "hr": True, "trainer": False, "theme": "dark", "span": 300,
                      "power3s": False, "hr_lock": None, "autopause": True, "layout": "auto",
                      "ftp_history": None,     # [[from_day, ftp], ...]: each FTP change, so past rides keep theirs
                      "weight_kg": None, "weight_history": None,    # [[from_day, kg], ...]: W/kg on each day
@@ -969,7 +969,7 @@ class Engine(threading.Thread):
             subprocess.Popen(["explorer", "/select,", os.path.normpath(path)])
 
     def _settings(self, new: dict) -> None:
-        ftp, plan, hr = new.get("ftp", self.settings.get("ftp")), new.get("plan_min"), new.get("hr")
+        ftp, hr = new.get("ftp", self.settings.get("ftp")), new.get("hr")
         max_hr = new.get("max_hr", self.settings.get("max_hr"))
         vt1_hr = new.get("vt1_hr", self.settings.get("vt1_hr"))     # None: from your rides (vt1.py)
         if vt1_hr is None or (isinstance(vt1_hr, (int, float)) and 90 <= vt1_hr <= 210):
@@ -999,11 +999,9 @@ class Engine(threading.Thread):
                 self.settings["goal_date"] = date.fromisoformat(new["goal_date"]).isoformat() if new["goal_date"] else None
             except (TypeError, ValueError):
                 pass
-        for key, lo, hi in (("room_temp", 5, 40), ("room_rh", 5, 100)):     # the room, from your hygrometer
+        for key, lo, hi in (("room_temp", 5, 40), ("room_rh", 5, 100)):     # the room (normally the thermometer's)
             if key in new and (new[key] is None or (isinstance(new[key], (int, float)) and lo <= new[key] <= hi)):
                 self.settings[key] = new[key]
-        if isinstance(plan, (int, float)) and 10 <= plan <= 600:
-            self.settings["plan_min"] = plan
         trainer = new.get("trainer")
         reconnect = isinstance(trainer, bool) and trainer != self.settings.get("trainer")
         if reconnect:
@@ -1407,7 +1405,7 @@ class Engine(threading.Thread):
             "morning": None if self.mcheck is None else {
                 "phase": self.mcheck.phase(utcnow()), "left": self.mcheck.left_s(utcnow()),
                 "beats": sum(len(x[1]) for x in self.mcheck.rr), "hr": self._home_value("hr", utcnow())},
-            "config": {"ftp": self.settings.get("ftp"), "plan_min": self.settings.get("plan_min")},
+            "config": {"ftp": self.settings.get("ftp")},
             "sync": self._sync_view(),
             "room": self.room.view() if self.room is not None else None,
         }
@@ -1706,7 +1704,6 @@ def main() -> None:
     ap.add_argument("--hr-name", default="", help="only use a HR strap whose name contains this")
     ap.add_argument("--out", default=os.path.join(HERE, "rides"), help="folder for recordings")
     ap.add_argument("--ftp", type=float, default=None, help="your FTP in W (also a setting in the app)")
-    ap.add_argument("--plan", type=float, default=None, help="planned ride length in minutes (also a setting)")
     ap.add_argument("--replay", metavar="LOG", help="test: replay a recorder raw log (or an nRF log with --date)")
     ap.add_argument("--date", help="date of an nRF log (YYYY-MM-DD)")
     ap.add_argument("--speed", type=float, default=1.0, help="replay speed")
@@ -1720,9 +1717,8 @@ def main() -> None:
     # settings live in settings.json next to the app; a replay (a test) never changes them
     settings_path = None if args.replay else SETTINGS_FILE
     settings = load_settings(SETTINGS_FILE)
-    for key, value in (("ftp", args.ftp), ("plan_min", args.plan)):
-        if value is not None:
-            settings[key] = value
+    if args.ftp is not None:
+        settings["ftp"] = args.ftp
     if args.hr:
         settings["hr"] = True
 

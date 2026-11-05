@@ -421,9 +421,6 @@ function renderSettings(s) {
     $("set-ftp").value = s.settings.ftp ?? "";
     $("set-maxhr").value = s.settings.max_hr ?? "";
     $("set-vt1").value = s.settings.vt1_hr ?? "";
-    $("set-plan").value = s.settings.plan_min ?? "";
-    $("set-temp").value = s.settings.room_temp ?? "";
-    $("set-rh").value = s.settings.room_rh ?? "";
     $("set-kg").value = s.settings.weight_kg ?? "";
     $("set-goal").value = s.settings.goal_wkg != null ? Number(s.settings.goal_wkg).toFixed(1) : "";
     $("set-goal-date").value = s.settings.goal_date ?? "";
@@ -440,9 +437,7 @@ function renderSettings(s) {
 }
 function sendSettings() {
   const num = (id) => { const v = parseFloat($(id).value); return Number.isFinite(v) ? v : null; };
-  const plan = num("set-plan");
-  act("settings", { ftp: num("set-ftp"), max_hr: num("set-maxhr"), vt1_hr: num("set-vt1"), plan_min: plan ?? undefined,
-                    room_temp: num("set-temp"), room_rh: num("set-rh"), weight_kg: num("set-kg") ?? undefined,
+  act("settings", { ftp: num("set-ftp"), max_hr: num("set-maxhr"), vt1_hr: num("set-vt1"), weight_kg: num("set-kg") ?? undefined,
                     goal_wkg: num("set-goal") ?? undefined, goal_date: $("set-goal-date").value || null });
 }
 // ---- sync with your server (cloud_sync.py): the state, and pasting the code once per device
@@ -473,7 +468,7 @@ $("sync-save").addEventListener("click", () => {
 });
 $("sync-code").addEventListener("keydown", (e) => { if (e.key === "Enter") $("sync-save").click(); e.stopPropagation(); });
 
-for (const id of ["set-ftp", "set-maxhr", "set-vt1", "set-plan", "set-temp", "set-rh", "set-kg", "set-goal", "set-goal-date"]) {
+for (const id of ["set-ftp", "set-maxhr", "set-vt1", "set-kg", "set-goal", "set-goal-date"]) {
   $(id).addEventListener("change", sendSettings);
   $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") e.target.blur(); e.stopPropagation(); });
 }
@@ -1162,18 +1157,10 @@ function drawEftp(prog, s) {
 
 // --------------------------------------------------------------------------- summary: conditions,
 // durability, the Fitness check and the workout's targets (checks.py, ride_summary._workout_steps)
-function renderEnv(d) {
-  const e = d.env || {};
-  if (document.activeElement?.closest?.("#sum-env")) return;
-  $("sum-temp").value = e.temp_c ?? "";
-  $("sum-rh").value = e.rh_pct ?? "";
-}
-for (const id of ["sum-temp", "sum-rh"]) {
-  $(id).addEventListener("change", () => {
-    const v = (x) => { const n = parseFloat($(x).value); return Number.isFinite(n) ? n : null; };
-    act("ride_meta", { temp_c: v("sum-temp"), rh_pct: v("sum-rh") });
-  });
-  $(id).addEventListener("keydown", (e) => { if (e.key === "Enter") e.target.blur(); e.stopPropagation(); });
+function renderEnv(d) {                          // the room, only when the thermometer measured it
+  const e = d.env || {}, el = $("sum-env");
+  el.hidden = !(e.measured && e.temp_c != null);
+  el.innerHTML = el.hidden ? "" : `<span class="sum-env-lab">Room</span> ${e.temp_c.toFixed(1)} °C${e.rh_pct != null ? ` · ${fmt(e.rh_pct)} %` : ""}`;
 }
 function renderDurability(d) {
   const x = d.durability;

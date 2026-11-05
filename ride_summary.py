@@ -284,7 +284,8 @@ def summarize(rows: list[dict], ftp: Optional[float] = None, max_hr: Optional[fl
         },
         "best": {str(s): _best(power, s) for s in (5, 60, 300, 1200)},
         "mmp": eftp.mmp(power),
-        "env": {"temp_c": (meta or {}).get("temp_c"), "rh_pct": (meta or {}).get("rh_pct")},
+        "env": {"temp_c": (meta or {}).get("temp_c"), "rh_pct": (meta or {}).get("rh_pct"),
+                "measured": bool((meta or {}).get("room"))},
         "durability": checks.durability(rows),
         "warmup": checks.warmup(rows),                         # heart rate at 125 W early on (checks.py)
         "hr_model": checks.hr_model(rows),                     # HR at 150 W, its time constant (checks.py)
@@ -529,7 +530,7 @@ def _write_json(path: str, obj, gz: bool = False) -> None:
             pass
 
 
-FULL_V = 2                                    # bump when the full summary changes (with SUMMARY_VERSION)
+FULL_V = 3                                    # bump when the full summary changes (with SUMMARY_VERSION)
 
 
 def summary_cached(folder: str, ride_id: str, ftp=None, max_hr=None, w_prime=None) -> Optional[dict]:
