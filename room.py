@@ -255,13 +255,20 @@ class RoomSensor(threading.Thread):
         async with BleakClient(dev, timeout=20) as c:
             await c.start_notify(CMD_UUID, lambda _h, b: q.put_nowait(bytes(b)))
 
-            async def ask(cmd: bytes, kind: int, wait: float = 5) -> bytes:
-                await c.write_gatt_char(CMD_UUID, cmd, response=True)
-                end = time.time() + wait
-                while True:
-                    b = await asyncio.wait_for(q.get(), max(0.1, end - time.time()))
-                    if b and b[0] == kind:
-                        return b
+            async def ask(cmd: bytes, kind: int, wait: float = 4) -> bytes:
+                for _ in range(3):                           # right after connecting it may not answer yet
+                    await c.write_gatt_char(CMD_UUID, cmd, response=True)
+                    end = time.time() + wait
+                    try:
+                        while True:
+                            b = await asyncio.wait_for(q.get(), max(0.1, end - time.time()))
+                            if b and b[0] == kind:
+                                return b
+                    except asyncio.TimeoutError:
+                        continue
+                raise TimeoutError(f"no answer to command {cmd[0]:#04x}")
+
+            await asyncio.sleep(1.5)                         # let it settle (it sends its status first)
 
             clock = await ask(b"\x23", 0x23)
             dev_now = int.from_bytes(clock[1:5], "little")
