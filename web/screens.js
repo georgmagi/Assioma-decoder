@@ -87,6 +87,8 @@ async function loadRoom(s) {
   ROOM.key = key;
   if (!key) { $("room-hist").hidden = true; return; }
   try { ROOM.pts = (await (await fetch("/api/room")).json()).points; } catch { return; }
+  const at = Date.now() - (r.age_s || 0) * 1000;                // the live reading carries the line up to now
+  if (r.state === "ok" && (!ROOM.pts.length || at - ROOM.pts[ROOM.pts.length - 1][0] > 60e3)) ROOM.pts.push([at, r.temp_c, r.rh_pct]);
   drawRoom();
 }
 function drawRoom() {

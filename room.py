@@ -181,7 +181,7 @@ class RoomSensor(threading.Thread):
             self.log(f"room sensor: stopped: {type(e).__name__}: {e}")
 
     async def _main(self) -> None:
-        last, last_sync_try = 0.0, 0.0
+        last, last_sync_try, started = 0.0, 0.0, time.time()
         while not self._stop.is_set():
             every = self.every_s
             if every is not None and time.time() - last >= every:
@@ -194,8 +194,9 @@ class RoomSensor(threading.Thread):
                     self._fails += 1
                     last -= every - min(every, 30 * self._fails)
             due = self.synced_at is None or time.time() - self.synced_at >= SYNC_S
-            retry = time.time() - last_sync_try >= min(SYNC_S, 120 * 2 ** self._sync_fails)
-            if (every is not None and self.sync_ok and self.address and self.folder and due and retry):
+            retry = time.time() - last_sync_try >= min(SYNC_S, 30 * 2 ** self._sync_fails)   # 30 s, 1, 2, 4, 8 min
+            settled = time.time() - started >= 20                    # not while the app's start-up scans run
+            if (every is not None and self.sync_ok and self.address and self.folder and due and retry and settled):
                 last_sync_try = time.time()
                 try:
                     await asyncio.wait_for(self._sync(), 240)
