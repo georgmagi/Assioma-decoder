@@ -1005,15 +1005,32 @@ function apply(s) {
   }
   if (s.closed) { $("offline").textContent = "Recorder closed. You can close this tab."; $("offline").hidden = false; }
 }
+// errors in the window go to the app log (at most one every 30 s), so a frozen screen leaves a trace
+let _lastReport = 0;
+function reportError(where, e) {
+  const now = Date.now();
+  if (now - _lastReport < 30e3) return;
+  _lastReport = now;
+  const msg = `${where}: ${e && e.stack ? String(e.stack).split("\n").slice(0, 4).join(" | ") : String(e)}`;
+  fetch("/api/action", { method: "POST", headers: { "Content-Type": "application/json" },
+                         body: JSON.stringify({ name: "jslog", arg: msg.slice(0, 600) }) }).catch(() => {});
+}
+window.addEventListener("error", (e) => reportError("error", e.error || e.message));
+window.addEventListener("unhandledrejection", (e) => reportError("promise", e.reason));
+
 async function poll() {
+  let got = false;
   try {
     const r = await fetch(`/api/state?p=${S.p}&h=${S.h}&a=${S.a}&b=${S.b}&e=${SD.e}&x=${SD.x}&g=${S.g || 0}`);
     if (r.status === 401) { location.href = "/login"; return; }      // the web view: signed out
-    apply(await r.json());
+    const st = await r.json();
+    got = true;
+    apply(st);
     S.fails = 0;
     if (!S.snap.closed) $("offline").hidden = true;
-  } catch {
-    if (++S.fails >= 3 && !S.snap?.closed) $("offline").hidden = false;
+  } catch (e) {
+    if (got) reportError("drawing the screen", e);                 // the app answered; our drawing failed
+    else if (++S.fails >= 3 && !S.snap?.closed) $("offline").hidden = false;
   }
   if (!S.snap?.closed) setTimeout(poll, S.snap?.viewer ? 1000 : POLL_MS);
 }

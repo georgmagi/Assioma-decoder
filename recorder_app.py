@@ -1594,6 +1594,8 @@ def make_handler(engine: Engine, app_mode: dict):
             name = body.get("name", "")
             if name == "fullscreen" and app_mode.get("window") is not None:
                 app_mode["window"].toggle_fullscreen()
+            elif name == "jslog":                       # an error in the window (web/app.js reportError)
+                engine.worker.log(f"window: {str(body.get('arg'))[:600]}")
             else:
                 engine.command(name, body.get("arg"))
             self._json(engine.snap)
