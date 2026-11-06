@@ -1200,7 +1200,7 @@ class Engine(threading.Thread):
             return
         riding = self.session is not None and self.session.state == "recording"
         r.want(self.ROOM_RIDE_S if self.session is not None else self.ROOM_IDLE_S if self.awake else self.ROOM_ASLEEP_S,
-               sync_ok=self.session is None)                     # the history download waits until after a ride
+               sync_ok=self.session is None)                     # not on a ride; btshare keeps it off the worker's scans
         if r.address and r.address != self.settings.get("room_sensor"):
             self.settings["room_sensor"] = r.address
             if self.settings_path:

@@ -562,6 +562,9 @@ body:has(#topnav:not([hidden])) { grid-template-rows: auto minmax(0, 1fr) auto; 
 .room-hist[hidden] { display: none; }
 .room-head { display: flex; gap: 8px; align-items: baseline; font-size: 13px; }
 .room-head span { color: var(--dim); }
+.room-head .room-key { margin-left: auto; display: flex; gap: 10px; }
+.room-key i { font-style: normal; }
+.room-key .k-t { color: var(--fg); }
 .room-wrap { position: relative; }
 .dev.dev-static:hover { border-color: var(--grid); }
 .dev:focus-visible { outline: 2px solid var(--power); outline-offset: 1px; }

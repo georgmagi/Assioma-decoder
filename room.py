@@ -25,6 +25,8 @@ import threading
 import time
 from typing import Callable, Optional
 
+import btshare
+
 CMD_UUID = "00001f1f-0000-1000-8000-00805f9b34fb"
 BTHOME = "0000fcd2-0000-1000-8000-00805f9b34fb"
 NAMES = ("MJ6_", "ATC_", "MHO_", "CGG_", "CGDK2_")    # pvvx firmware's names
@@ -226,8 +228,8 @@ class RoomSensor(threading.Thread):
             if r is not None and "rh_pct" in r:
                 got.set_result((d, r))
         try:
-            async with BleakScanner(seen):
-                d, r = await asyncio.wait_for(got, 20)
+            async with btshare.held(), BleakScanner(seen):      # one scan at a time with the sensors' worker
+                d, r = await asyncio.wait_for(got, 12)
         except asyncio.TimeoutError:
             self.error = "thermometer not found"
             return False
@@ -249,10 +251,19 @@ class RoomSensor(threading.Thread):
         after = last_saved(self.folder)
         now = time.time()
         want = FIRST_SYNC if after is None else min(FIRST_SYNC * 3, math.ceil((now - after) / MEMO_S) + 3)
-        dev = await BleakScanner.find_device_by_address(self.address, timeout=20)
-        if dev is None:
-            raise RuntimeError("not in range")
         q: asyncio.Queue = asyncio.Queue()
+        async with btshare.held():                               # no scan or connect of the worker meanwhile
+            dev = await BleakScanner.find_device_by_address(self.address, timeout=15)
+            if dev is None:
+                raise RuntimeError("not in range")
+            records = await self._download(dev, q, after, want)
+        n = store(self.folder, records, after)
+        self.synced_at = time.time()
+        if n:
+            self.log(f"room sensor: {n} history records downloaded")
+
+    async def _download(self, dev, q: asyncio.Queue, after: Optional[float], want: int) -> list:
+        from bleak import BleakClient
         async with BleakClient(dev, timeout=20) as c:
             await c.start_notify(CMD_UUID, lambda _h, b: q.put_nowait(bytes(b)))
 
@@ -289,7 +300,4 @@ class RoomSensor(threading.Thread):
                     await c.write_gatt_char(CMD_UUID, b"\x35\x00\x00", response=True)   # enough
                     break
                 records.append(r)
-        n = store(self.folder, records, after)
-        self.synced_at = time.time()
-        if n:
-            self.log(f"room sensor: {n} history records downloaded")
+        return records

@@ -886,3 +886,21 @@ def test_editing_a_workout_changes_it_in_place_and_keeps_the_old_version(tmp_pat
     assert "zwo:vt1-steps" not in e.workouts()
     e._do("wo_save", {"name": "Brand new", "text": "30m Z2"})            # no id: a new one, as before
     assert "zwo:brand-new" in e.workouts()
+
+
+def test_a_busy_bluetooth_scan_costs_one_round_not_the_thread(monkeypatch):
+    """BlueZ 'InProgress' (the room thermometer scanning at the same moment) once ended the sensors'
+    Bluetooth thread. A failed scan must just come back empty; scans share btshare's lock."""
+    import asyncio, queue, bleak, btshare, assioma_recorder as ar
+    async def busy(*a, **k):
+        raise RuntimeError("[org.bluez.Error.InProgress] Operation already in progress")
+    monkeypatch.setattr(bleak.BleakScanner, "discover", staticmethod(busy))
+    w = ar.BleWorker(queue.Queue(), False, "assioma", "polar")
+    logged = []
+    w.log = logged.append
+
+    async def go():
+        w._scan_lock, w._scan_err_at = asyncio.Lock(), 0.0
+        return await w._discover()
+    assert asyncio.run(go()) == {}
+    assert logged and "InProgress" in logged[0] and not btshare.LOCK.locked()

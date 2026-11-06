@@ -30,6 +30,7 @@ from collections import deque
 from typing import Optional
 
 import assioma_decoder as dec
+import btshare
 import fit_writer
 import keep
 import ftms
@@ -542,9 +543,25 @@ class BleWorker(threading.Thread):
     async def _main(self) -> None:
         import bleak  # noqa: F401  (fail early with a clear message)
         self._scan_lock = asyncio.Lock()
+        self._scan_err_at = 0.0
         jobs = [self._keep_connected("pedal", self._pick_pedal, [CPM_UUID, PRIVATE_UUID]),
                 self._keep_connected("hr", self._pick_hr, [HR_UUID]), self._keep_trainer()]
         await asyncio.gather(*jobs)
+
+    async def _discover(self) -> dict:
+        """A 5-s scan, shared fairly with the room thermometer (btshare). A failed scan (e.g. BlueZ busy)
+        costs one round, never the Bluetooth thread."""
+        from bleak import BleakScanner
+        async with self._scan_lock, btshare.held():
+            try:
+                return await BleakScanner.discover(timeout=5.0, return_adv=True)
+            except Exception as e:
+                now = time.time()
+                if now - self._scan_err_at > 60:
+                    self._scan_err_at = now
+                    self.log(f"bluetooth scan failed, retrying: {type(e).__name__}: {e}")
+        await asyncio.sleep(2)
+        return {}
 
     def _pick_trainer(self, found: dict):
         c = [(d, a) for d, a in found.values()
@@ -563,8 +580,7 @@ class BleWorker(threading.Thread):
                 await asyncio.sleep(0.3)
                 continue
             self._waiting("trainer", "trainer")
-            async with self._scan_lock:
-                found = await BleakScanner.discover(timeout=5.0, return_adv=True)
+            found = await self._discover()
             if not self.want["trainer"]:
                 continue
             hit = self._pick_trainer(found)
@@ -776,8 +792,7 @@ class BleWorker(threading.Thread):
             if kind == "hr":
                 self.link[kind] = "Bluetooth"
             self._waiting(kind, "pedals" if kind == "pedal" else "strap")
-            async with self._scan_lock:
-                found = await BleakScanner.discover(timeout=5.0, return_adv=True)
+            found = await self._discover()
             if not self.want[kind]:
                 continue
             hit = pick(found)
