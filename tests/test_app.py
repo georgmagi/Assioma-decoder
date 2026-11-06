@@ -904,3 +904,24 @@ def test_a_busy_bluetooth_scan_costs_one_round_not_the_thread(monkeypatch):
         return await w._discover()
     assert asyncio.run(go()) == {}
     assert logged and "InProgress" in logged[0] and not btshare.LOCK.locked()
+
+
+def test_the_thermometer_gets_its_turn_between_back_to_back_worker_scans():
+    import asyncio, btshare
+    order = []
+
+    async def worker(n):
+        for _ in range(n):
+            async with btshare.held():
+                order.append("w")
+                await asyncio.sleep(0.02)
+
+    async def room():
+        await asyncio.sleep(0.005)
+        async with btshare.held(priority=True):
+            order.append("R")
+
+    async def go():
+        await asyncio.gather(worker(20), worker(20), room())
+    asyncio.run(go())
+    assert order.index("R") <= 2 and not btshare.LOCK.locked()     # next in line, not after 40 scans

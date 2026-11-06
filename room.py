@@ -228,7 +228,7 @@ class RoomSensor(threading.Thread):
             if r is not None and "rh_pct" in r:
                 got.set_result((d, r))
         try:
-            async with btshare.held(), BleakScanner(seen):      # one scan at a time with the sensors' worker
+            async with btshare.held(priority=True), BleakScanner(seen):      # one scan at a time with the sensors' worker
                 d, r = await asyncio.wait_for(got, 12)
         except asyncio.TimeoutError:
             self.error = "thermometer not found"
@@ -252,7 +252,7 @@ class RoomSensor(threading.Thread):
         now = time.time()
         want = FIRST_SYNC if after is None else min(FIRST_SYNC * 3, math.ceil((now - after) / MEMO_S) + 3)
         q: asyncio.Queue = asyncio.Queue()
-        async with btshare.held():                               # no scan or connect of the worker meanwhile
+        async with btshare.held(priority=True):                               # no scan or connect of the worker meanwhile
             dev = await BleakScanner.find_device_by_address(self.address, timeout=15)
             if dev is None:
                 raise RuntimeError("not in range")
