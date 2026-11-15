@@ -32,6 +32,9 @@ from datetime import datetime, timezone
 from typing import Callable, Optional
 
 STATE_FILES = ("settings.json", "plan.json", "morning.json")
+# Top-level files every device keeps a copy of. garmin.json is written by the server (garmin_pull); a
+# device must list it too, or after downloading it the next round sees "gone here" and deletes it there.
+TOP_FILES = STATE_FILES + ("garmin.json",)
 # The format the synced files are in. Bumped whenever a change would let an older copy of the app
 # damage them (e.g. drop a settings key it doesn't know when it saves). The server refuses a device
 # on an older format (426): that device says "update the app" and syncs nothing until it is.
@@ -166,7 +169,7 @@ class Syncer:
         """rel -> (sha, mtime) of this device's files, skipping the ride being recorded and files
         written in the last 30 s."""
         out, now, busy = {}, time.time(), self.busy()
-        found = [(r, os.path.join(self.app_dir, r)) for r in STATE_FILES]
+        found = [(r, os.path.join(self.app_dir, r)) for r in TOP_FILES]
         for sub, folder in (("mornings", os.path.join(self.app_dir, "mornings")),
                             ("workouts", os.path.join(self.app_dir, "workouts")), ("rides", self.rides_dir)):
             try:

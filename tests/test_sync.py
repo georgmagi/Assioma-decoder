@@ -221,3 +221,28 @@ def test_sync_code_from_the_home_screen(tmp_path):
     assert "sync.json" not in json.dumps(e.settings) and KEY not in json.dumps(e._snapshot()["settings"])
     e._do("sync_code", "")
     assert not (folder / "sync.json").exists() and e._sync_view()["on"] is False
+
+
+def test_the_servers_garmin_json_survives_a_device_syncing_it_down(tmp_path, server):
+    """The server writes garmin.json itself; a device that downloaded it must not delete it on the
+    next round because its scan doesn't list the file (it used to: lost a few minutes after each pull)."""
+    a, sa = device(tmp_path, "a", server["url"])
+    store = server["store"]
+    store.put("garmin.json", json.dumps({"pulled": "x", "days": {}}).encode(), "", time.time() - 100)
+    assert sa.sync_once()["down"] == 1 and (a / "garmin.json").exists()
+    os.utime(a / "garmin.json", (time.time() - 100, time.time() - 100))
+    for _ in range(3):
+        assert sa.sync_once()["state"] == "ok"
+    assert (server["data"] / "garmin.json").exists() and "garmin.json" in store.files
+    # a newer pull still comes down
+    store.put("garmin.json", json.dumps({"pulled": "y", "days": {}}).encode(), store.files["garmin.json"]["sha256"],
+              time.time() - 50)
+    assert sa.sync_once()["down"] == 1 and json.loads((a / "garmin.json").read_text())["pulled"] == "y"
+    assert (server["data"] / "garmin.json").exists()
+
+
+def test_devices_cannot_delete_files_the_server_produces(tmp_path, server):
+    store = server["store"]
+    store.put("garmin.json", b"{}", "", time.time())
+    assert store.delete("garmin.json", store.files["garmin.json"]["sha256"]) == 409
+    assert (server["data"] / "garmin.json").exists()

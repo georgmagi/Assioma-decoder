@@ -61,6 +61,9 @@ def check_password(pw: str, stored: str) -> bool:
         return False
 
 
+# Files the server itself produces (start_garmin); devices only ever download them.
+SERVER_FILES = {"garmin.json"}
+
 class Store:
     """The synced files on disk and their manifest (sha-256, size, mtime), with history."""
 
@@ -143,6 +146,8 @@ class Store:
             cur = self.files.get(rel)
             if cur is None:
                 return 404
+            if rel in SERVER_FILES:                  # the server writes these; no device may remove them
+                return 409
             if cur["sha256"] != base:
                 return 409
             self._to_history(rel)
