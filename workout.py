@@ -27,14 +27,14 @@ def _repeat(n, on_dur, on, off_dur, off):
 
 # Built in. The threshold steps give vt1.py what it needs for both HRV thresholds in watts: steady
 # 5-min blocks climbing through the top of Z2 (alpha 1 crosses 0.75: VT1) to FTP (0.5: VT2, near
-# FTP), without going all-out. Best with the ANT+ strap (every beat).
+# FTP; the steps go to 105 % so α1 reaches 0.5 even when FTP is set low), without going all-out. Best with the ANT+ strap (every beat).
 BUILT_IN = {
     "endurance-60": {"name": "Endurance 60", "description": "Steady Z2 for an hour.",
                      "steps": [_step(600, 0.50, 0.65, "warm up"), _step(2700, 0.68, label="Z2"), _step(300, 0.65, 0.45, "cool down")]},
-    "vt1-steps": {"name": "Threshold steps", "description": "The weekly check: 5-min steps from 60 to 95 % FTP, then 3 min easy. Heart rate, α1 and recovery at the same watts each week, plus VT1 and VT2 (near FTP) from α1, with no all-out effort. Same breakfast, coffee and fan each week; set the room temperature first.",
+    "vt1-steps": {"name": "Threshold steps", "description": "The weekly check: 5-min steps from 60 to 105 % FTP (end early once a step feels like threshold and α1 is under 0.5), then 3 min easy. Heart rate, α1 and recovery at the same watts each week, plus VT1 and VT2 (near FTP) from α1, with no all-out effort. Same breakfast, coffee and fan each week; set the room temperature first.",
                   # every step 5 min: heart rate settles in the first 2-3 min, leaving whole settled 2-min
                   # alpha 1 windows (vt1.py) at every step, also above 80 % where VT1 and VT2 lie
-                  "steps": [_step(600, 0.45, 0.60, "warm up")] + [_step(300, p / 100, label=f"{p}%") for p in range(60, 96, 5)]
+                  "steps": [_step(600, 0.45, 0.60, "warm up")] + [_step(300, p / 100, label=f"{p}%") for p in range(60, 106, 5)]
                   + [_step(180, 0.40, label="recovery"), _step(420, 0.50, 0.40, "cool down")]},
     # a ramp test: 1-min steps of +10 % FTP (about +20 W a minute at 200 W, like the usual protocol)
     # until you can't hold one: stop pedalling and the trainer goes flat (recorder_app). eftp.py
