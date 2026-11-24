@@ -47,6 +47,12 @@ BUILT_IN = {
     "durability-test": {"name": "Durability test", "description": "About 1000 kJ of steady Z2 (1 h 50 min), then 5 min as hard as you can hold, with the trainer free, then easy. Your 5 min after 1000 kJ against your fresh best: the Durability panel on Statistics. A hard day: 48 h after it like any other.",
                         "steps": [_step(600, 0.50, 0.68, "warm up"), _step(6000, 0.68, label="Z2"), _step(120, 0.55, label="easy"),
                                   _step(300, None, label="5 min all out"), _step(600, 0.45, label="cool down")]},
+    # the 20-min FTP test: openers, then 20 min from 100 % FTP that you pace yourself with - / +
+    # (pacing.py guides it live: the step must keep the label pacing.TEST_LABEL); FTP = 95 % of it
+    "ftp-20": {"name": "20-min FTP test", "description": "10 min warm-up, two 1-min openers, then 20 min starting at 100 % FTP: the screen tells you when to hold, press + or ease off, and the last 2 min are everything. FTP = 95 % of the 20-min average. Fan on your face, window open, small ring or a middle gear.",
+               "steps": [_step(600, 0.50, 0.75, "warm up"), _step(60, 1.05, label="opener"), _step(120, 0.55, label="easy"),
+                         _step(60, 1.05, label="opener"), _step(300, 0.55, label="easy"), _step(1200, 1.00, label="20-min test"),
+                         _step(600, 0.45, label="cool down")]},
     "sweet-spot-3x12": {"name": "Sweet spot 3×12", "description": "3 × 12 min at 90 % with 4 min easy.",
                         "steps": [_step(600, 0.50, 0.70, "warm up")] + _repeat(3, 720, 0.90, 240, 0.55)[:-1]
                         + [_step(600, 0.60, 0.45, "cool down")]},

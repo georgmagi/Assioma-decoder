@@ -212,6 +212,17 @@
       <div class="pco-key"><span><i class="now"></i>now</span><span><i class="range"></i>ride range, middle 80 %</span></div>
     </div>
   </section>
+  <section class="panel pace" id="pace" hidden>
+    <div class="panel-head"><h2>20-min test</h2><span class="pace-left" id="pace-left"></span></div>
+    <div class="pace-body">
+      <div class="pace-cue" id="pace-cue"><b id="pace-word"></b><span id="pace-sub"></span></div>
+      <dl class="pace-stats" id="pace-stats"></dl>
+      <div class="pace-chart">
+        <div class="cap"><span class="key"><i></i>power 10 s, W</span><span class="key" id="pace-key-hr"><i class="hr"></i>heart rate, bpm</span><span class="key"><i class="band"></i>your range</span><span class="key"><i class="tg"></i>target</span></div>
+        <canvas id="pace-cv"></canvas>
+      </div>
+    </div>
+  </section>
   <section class="panel graph">
     <div class="panel-head">
       <h2>Power, heart rate &amp; HRV</h2>

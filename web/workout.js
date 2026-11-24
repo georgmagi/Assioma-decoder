@@ -252,3 +252,95 @@ $("wd-del").addEventListener("click", (e) => {                     // your own f
   b.classList.add("confirm"); b.textContent = "Click again to delete";
   setTimeout(() => { b.classList.remove("confirm"); b.textContent = "Delete"; }, 3000);
 });
+
+// ---- the 20-min test (pacing.py): what to do now in big type, the numbers that matter, and the
+// test so far on one plot (power left, heart rate right, the heart-rate range a sustainable 20 min
+// runs in shaded). You press - / + yourself; a new "+2 %" / "ease" / "everything" flashes once.
+const PACE = { kind: null };
+function mmss(s) { s = Math.max(0, Math.round(s)); return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`; }
+function renderPace(g) {
+  const el = $("pace");
+  el.hidden = !g;
+  if (!g) { PACE.kind = null; return; }
+  el.querySelector(".pace-body").toggleAttribute("data-pre", g.pre != null);
+  if (g.pre != null) {
+    $("pace-left").textContent = `starts in ${mmss(g.pre)}`;
+    setCue({ kind: "pre", text: `Test in ${mmss(g.pre)}`, sub: "Fan on your face, a drink, settle your breathing. Start at the target and hold it for 3 minutes." });
+    $("pace-stats").innerHTML = ""; drawPace(null);
+    return;
+  }
+  $("pace-left").textContent = `${mmss(g.left)} left`;
+  setCue(g.cue);
+  const st = (k, v, u, sub) => `<div><dt>${k}</dt><dd><span class="num">${v ?? "--"}</span><span class="unit">${u}</span></dd>${sub ? `<dd class="s">${sub}</dd>` : ""}</div>`;
+  const tr = g.trend == null ? "" : `${g.trend > 0 ? "+" : g.trend < 0 ? "−" : ""}${Math.abs(g.trend).toFixed(1)} /min`;
+  $("pace-stats").innerHTML = st("Average so far", g.avg, "W") + st("Projected 20 min", g.proj, "W", g.target ? `at ${g.target} W from here` : "") +
+    st("FTP", g.ftp, "W", "95 % of the projection") +
+    st("Heart rate", g.hr, "bpm", [g.band ? `range ${Math.round(g.band[0])}–${Math.round(g.band[1])}` : "", tr].filter(Boolean).join(" · "));
+  drawPace(g);
+}
+function setCue(c) {
+  const box = $("pace-cue");
+  if ($("pace-word").textContent !== c.text) $("pace-word").textContent = c.text;
+  if ($("pace-sub").textContent !== c.sub) $("pace-sub").textContent = c.sub;
+  box.dataset.kind = c.kind;
+  const key = `${c.kind}|${c.text}`;
+  if (PACE.kind !== null && key !== PACE.kind && ["up", "down", "go"].includes(c.kind)) {
+    box.classList.remove("flash"); void box.offsetWidth; box.classList.add("flash");
+  }
+  PACE.kind = key;
+}
+function drawPace(g) {
+  const cv = $("pace-cv"), dpr = devicePixelRatio || 1, wd = cv.parentElement.clientWidth, ht = Math.max(120, cv.parentElement.clientHeight - 22);
+  if (!wd) return;
+  cv.style.width = wd + "px"; cv.style.height = ht + "px";
+  cv.width = Math.round(wd * dpr); cv.height = Math.round(ht * dpr);
+  const ctx = cv.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, wd, ht);
+  const MK = marksOf(cv);
+  if (!g) return;
+  const dur = g.dur, pts = g.chart, ml = 34, mr = 34, mt = 6, mb = 18, W = wd - ml - mr, H = ht - mt - mb;
+  const X = (s) => ml + (s / dur) * W;
+  const ps = pts.map((p) => p[1]).filter((v) => v != null), hs = pts.map((p) => p[2]).filter((v) => v != null);
+  const tg = g.target || g.avg || 250;
+  const pLo = Math.floor(Math.min(tg * 0.8, ...ps) / 20) * 20, pHi = Math.ceil(Math.max(tg * 1.15, ...ps) / 20) * 20;
+  const hLo = Math.floor(Math.min(g.lt - 25, ...hs) / 10) * 10, hHi = Math.ceil(Math.max(g.lt + 30, ...hs) / 10) * 10;
+  const P = (v) => mt + H - ((v - pLo) / (pHi - pLo)) * H, Hy = (v) => mt + H - ((v - hLo) / (hHi - hLo)) * H;
+  const lcd = THEME === "lcd", hrCol = lcd ? C.fg : C.hr, pwCol = lcd ? C.fg : C.power;
+  ctx.font = "11px 'Barlow Semi Condensed', 'IBM Plex Sans', sans-serif"; ctx.lineWidth = 1;
+  ctx.textAlign = "right";
+  for (let v = pLo; v <= pHi; v += 20) {
+    ctx.strokeStyle = C.grid; ctx.beginPath(); ctx.moveTo(ml, P(v)); ctx.lineTo(ml + W, P(v)); ctx.stroke();
+    ctx.fillStyle = C.dim; ctx.fillText(`${v}`, ml - 5, P(v) + 4);
+  }
+  ctx.textAlign = "left"; ctx.fillStyle = hrCol;
+  for (let v = hLo; v <= hHi; v += 10) ctx.fillText(`${v}`, ml + W + 5, Hy(v) + 4);
+  ctx.textAlign = "center"; ctx.fillStyle = C.dim;
+  for (let m = 0; m <= dur / 60; m += 5) ctx.fillText(`${m}`, X(m * 60), ht - 4);
+  // the heart-rate range a sustainable 20 min runs in, from 3 min
+  const b = g.bands;
+  if (b.length > 1) {
+    ctx.fillStyle = lcd ? "rgba(27,30,25,0.10)" : blend(C.hr, C.panel, 0.86);
+    ctx.beginPath(); b.forEach((r, i) => (i ? ctx.lineTo(X(r[0]), Hy(r[2])) : ctx.moveTo(X(r[0]), Hy(r[2]))));
+    for (let i = b.length - 1; i >= 0; i--) ctx.lineTo(X(b[i][0]), Hy(b[i][1]));
+    ctx.closePath(); ctx.fill();
+  }
+  if (g.target) {                                                   // the target from here
+    ctx.strokeStyle = blend(C.fg, C.panel, 0.25); ctx.lineWidth = 1.5; ctx.setLineDash([4, 4]); ctx.beginPath();
+    ctx.moveTo(X(g.t), P(g.target)); ctx.lineTo(ml + W, P(g.target)); ctx.stroke(); ctx.setLineDash([]);
+  }
+  const line = (k, Y, colour, width, dash) => {
+    ctx.strokeStyle = colour; ctx.lineWidth = width; ctx.setLineDash(dash ? [5, 4] : []); ctx.beginPath();
+    let on = false;
+    for (const p of pts) { if (p[k] == null) { on = false; continue; } on ? ctx.lineTo(X(p[0]), Y(p[k])) : ctx.moveTo(X(p[0]), Y(p[k])); on = true; }
+    ctx.stroke(); ctx.setLineDash([]);
+  };
+  line(2, Hy, hrCol, 1.75, lcd); line(1, P, pwCol, 2.25, false);
+  $("pace-key-hr").style.color = "";
+  for (const p of pts) {
+    const r = b.find((x) => x[0] >= p[0]);
+    MK.push({ x: X(p[0]), y: p[1] != null ? P(p[1]) : Hy(p[2] || hLo), html: tipHtml(mmss(p[0]), [
+      ["power", p[1] ?? "--", "W", pwCol], ["heart rate", p[2] ?? "--", "bpm", hrCol],
+      p[0] >= 180 && r && ["range", `${Math.round(r[1])}–${Math.round(r[2])}`, "bpm"]]) });
+  }
+}
+window.addEventListener("resize", () => { if (!$("pace").hidden && S.snap) drawPace(S.snap.pacing && S.snap.pacing.pre == null ? S.snap.pacing : null); });

@@ -40,6 +40,7 @@ import assioma_decoder as dec
 import cloud_sync as cs
 import keep
 import morning as mo
+import pacing
 import polar_pmd as pmd
 import plan as pl
 import ride_summary as rs
@@ -137,6 +138,7 @@ class Engine(threading.Thread):
         self._warm_auto: Optional[dict] = None  # your normal warm-up heart rate (checks.warmup_normal)
         self._warm: Optional[tuple] = None   # live warm-up readiness: (session, seconds when computed, result)
         self._a1_low_since = None            # when alpha 1 went under 0.75 (the Z2 guard)
+        self._pace_int, self._pace, self._pace_st = None, None, {}   # the 20-min test: (intensity, since); last guide; shown cue
         # workouts (workout.py) on the smart trainer (ftms.py via the worker)
         self.workout_id: Optional[str] = None   # picked on the home screen; None = free ride
         self.player: Optional[wk.Player] = None
@@ -510,6 +512,33 @@ class Engine(threading.Thread):
             self._warm = (s, n, checks.warmup(s.seconds))
         w, normal = self._warm[2], self._warm_auto
         return w and {**w, "normal": normal and normal["hr"], "normal_a1": normal and normal["a1"]}
+
+    def _pacing(self, s: Session) -> Optional[dict]:
+        """The 20-min test's live guide (pacing.py) while its step runs; {"pre": s} the step before."""
+        p = self.player
+        if p is None or s is None or s.state == "finished":
+            return None
+        n = len(s.seconds)
+        a = p.at(n)
+        if a.get("done"):
+            return None
+        if a["step"].get("label") != pacing.TEST_LABEL:
+            nxt = a.get("next")
+            return {"pre": round(a["left"])} if nxt and nxt.get("label") == pacing.TEST_LABEL else None
+        into = int(a["in_step"])
+        if self._pace_int is None:
+            self._pace_int = (p.intensity, None)            # the intensity you start the test with
+        elif self._pace_int[0] != p.intensity:
+            self._pace_int = (p.intensity, n)               # you changed it: wait before the next verdict
+        key = (n, p.intensity)
+        if self._pace and self._pace[0] == key:
+            return self._pace[1]
+        rows = s.seconds[max(0, n - into):n]
+        g = pacing.guide([r.get("power_w") for r in rows], [r.get("heart_rate_bpm") for r in rows],
+                         a["step"]["dur"], a["target_w"], self.settings.get("max_hr"),
+                         None if self._pace_int[1] is None else n - self._pace_int[1], self._pace_st)
+        self._pace = (key, g)
+        return g
 
     def _wbal_live(self, s: Session) -> Optional[dict]:
         """The reserve now: W'bal over the recorded seconds so far, counted on as they come."""
@@ -887,6 +916,7 @@ class Engine(threading.Thread):
         self._autopaused, self._still_since = False, None
         self._a1_low_since = None
         self.step_log, self._wo_meta = [], None
+        self._pace_int, self._pace, self._pace_st = None, None, {}
         self.trainer_log, self._pm, self._pm_tgt = [], [], None
         self.room_log, self._room_at = [], None
         self.cap, self._cap_t = 1.0, 0.0                 # (the ceiling toggle itself stays as you left it)
@@ -1454,6 +1484,7 @@ class Engine(threading.Thread):
             "wbal": self._wbal_live(s),
             "warmup": self._warmup_live(s),
             "workout": self._workout_view(s),
+            "pacing": self._pacing(s),
             "beats": [[round((b.time - t0).total_seconds(), 3), b.artifact] for b in beats[-60:]
                       if (now - b.time).total_seconds() < 5.5] if t0 else [],      # the HR tile's strip
             "battery": s.battery,

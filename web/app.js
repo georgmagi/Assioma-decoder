@@ -970,7 +970,7 @@ function renderAlert(list) {
 }
 
 function applyLayout(s) {
-  const kind = S.layout && S.layout !== "auto" ? S.layout : layoutKind(s.workout);
+  const kind = s.pacing ? "test" : S.layout && S.layout !== "auto" ? S.layout : layoutKind(s.workout);
   if ($("scr-ride").dataset.kind !== kind) $("scr-ride").dataset.kind = kind;
   $("dyn-row").hidden = kind === "free";
 }
@@ -1006,6 +1006,7 @@ function apply(s) {
   if (s.screen === "ride" && s.ride) {
     renderTiles(s);
     renderWorkout(s);
+    renderPace(s.pacing);
     applyLayout(s);
     renderDyn(s);
     $("z2-key").hidden = !s.config.ftp || !!s.workout;

@@ -1370,3 +1370,37 @@ body.page .bar .ride-ctl { display: none; }
 .ctip .tr b { text-align: right; font: 600 13px var(--num); color: var(--fg); }
 .ctip .tr em { font-style: normal; color: var(--dim); min-width: 2.2em; }
 [data-theme="lcd"] .ctip .tr i { background: var(--fg) !important; }
+
+/* ---- the 20-min test (renderPace): the cue large, the numbers under it, the test on one plot */
+#scr-ride[data-kind="test"] main { grid-template-columns: minmax(0, 0.85fr) minmax(0, 1fr); }
+#scr-ride[data-kind="test"] #dyn { display: none; }
+#scr-ride[data-kind="test"] .chart { grid-template-rows: 1.6fr 1fr; }
+#scr-ride[data-kind="test"] .chart:has(#c-strap:not([hidden])) { grid-template-rows: 1.6fr 1fr 0.7fr; }
+.pace-left { margin-left: auto; font: 22px var(--num); font-variant-numeric: tabular-nums; }
+.panel.pace { grid-template-columns: minmax(0, 1fr); }
+.pace-body { min-height: 0; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr); gap: 14px; }
+.pace-body[data-pre] .pace-stats, .pace-body[data-pre] .pace-chart { visibility: hidden; }
+#scr-ride[data-kind="test"] #dyn-row { display: none; }
+#scr-ride[data-kind="test"] .panel.graph { grid-template-rows: auto minmax(0, 1fr); }
+.pace-cue { display: grid; gap: 6px; padding: 14px 16px; border-radius: var(--rp); border: 1px solid var(--grid); background: color-mix(in srgb, var(--fg) 4%, var(--panel)); }
+.pace-cue b { font: 500 44px/1 var(--num); letter-spacing: 0; }
+.pace-cue span { font-size: 15px; color: var(--dim); max-width: 40em; }
+.pace-cue[data-kind="up"] b { color: var(--good); }
+.pace-cue[data-kind="down"] b { color: var(--warn); }
+.pace-cue[data-kind="go"] b { color: var(--fg); }
+.pace-cue[data-kind="go"] { border-color: var(--fg); }
+.pace-cue.flash { animation: pace-flash 300ms steps(1) 1; }
+@keyframes pace-flash { 0% { background: var(--fg); } 50% { background: color-mix(in srgb, var(--fg) 4%, var(--panel)); } }
+.pace-cue.flash b, .pace-cue.flash span { animation: pace-flash-t 300ms steps(1) 1; }
+@keyframes pace-flash-t { 0% { color: var(--panel); } 50% { color: inherit; } }
+.pace-stats { margin: 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+.pace-stats dt { font: 600 11px var(--ui); letter-spacing: 0.08em; text-transform: uppercase; color: var(--dim); }
+.pace-stats dd { margin: 4px 0 0; }
+.pace-stats .num { font: 30px var(--num); font-variant-numeric: tabular-nums; }
+.pace-stats .unit { margin-left: 3px; color: var(--dim); font-size: 13px; }
+.pace-stats .s { margin-top: 2px; font-size: 12px; color: var(--dim); font-variant-numeric: tabular-nums; }
+.pace-chart { min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr); }
+.pace-chart canvas { display: block; }
+.pace-chart .key i.band { background: color-mix(in srgb, var(--hr) 22%, transparent); height: 8px; }
+[data-theme="lcd"] .pace-chart .key i.band { background: rgba(27, 30, 25, 0.16) !important; }
+[data-theme="lcd"] .pace-chart .key i.hr { height: 0; border-top: 1.5px dashed var(--fg); background: none !important; }
