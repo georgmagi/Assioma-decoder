@@ -44,7 +44,7 @@ function drawPlanChart(d) {
   $("pl-readout").innerHTML = end ? `end of ${d.blocks && d.blocks.length > 1 ? "the plan" : "block"} (${SHORT_DAY.format(dayOf(end.day))}): fitness <b>${fmt(end.ctl)}</b> · fatigue <b>${fmt(end.atl)}</b> · form <b>${end.tsb > 0 ? "+" : ""}${fmt(end.tsb)}</b>` : "";
   const today = A.days.length ? A.ctl[A.ctl.length - 1] : 0;
   $("pl-note").textContent = end ? `Fitness ${end.ctl >= today ? "+" : ""}${fmt(end.ctl - today)} by then. ${formWord(end.tsb)[0].toUpperCase() + formWord(end.tsb).slice(1)} at the end. ` +
-    "Solid: what happened; dashed: the plan, if ridden as written (each workout's TSS at your current FTP)." : "Plan some days to see the forecast.";
+    "Solid lines and filled bars: what happened; dashed lines and outlined bars: the plan, if ridden as written (each workout's TSS at your current FTP)." : "Plan some days to see the forecast.";
   const [y0, y1] = niceRange(all("ctl").concat(all("atl")), 10, 3);
   const [f0, f1] = niceRange(all("tsb").concat([0]), 10, 3);
   const t0 = dayOf(days[0]).getTime(), t1 = dayOf(days[days.length - 1]).getTime();
@@ -78,14 +78,16 @@ function drawPlanChart(d) {
   const joinV = (k) => (A.days.length ? [A[k][A[k].length - 1]].concat(fc[k]) : fc[k]);
   const cCtl = lcd ? C.fg : C.power, cAtl = lcd ? C.fg : C.hr, cTsb = lcd ? C.fg : C.good;
   line(L1, A.days, A.ctl, cCtl, 2.5); line(L1, A.days, A.atl, cAtl, 1.5);
-  line(L2, A.days, A.tsb, cTsb, 2);
   line(L1, join(), joinV("ctl"), cCtl, 2.5, [6, 4]); line(L1, join(), joinV("atl"), cAtl, 1.5, [6, 4]);
-  line(L2, join(), joinV("tsb"), cTsb, 2, [6, 4]);
+  // form: one bar per day, filled for what happened, outlined for the plan
+  const dayW = days.length > 1 ? (x(days[days.length - 1]) - x(days[0])) / (days.length - 1) : 12;
+  formBars(ctx, A.days.map((dd, i) => ({ x: x(dd), v: A.tsb[i] })).concat(fc.days.map((dd, i) => ({ x: x(dd), v: fc.tsb[i], soft: true }))),
+    L2.Y, Math.min(12, Math.max(2, dayW * 0.7)));
   PLC.marks = days.map((dd, i) => {
     const ctl = all("ctl")[i], atl = all("atl")[i], tsb = all("tsb")[i], planned = i >= A.days.length;
     const pd = planned ? d.days.find((y) => y.day === dd) : null;
     return { x: x(dd), y: L1.Y(ctl), html: tipHtml(`${SHORT_DAY.format(dayOf(dd))}${planned ? ' <span class="dim">· plan</span>' : ""}`, [
-      ["fitness", fmt(ctl), "", cCtl], ["fatigue", fmt(atl), "", cAtl], ["form", `${tsb > 0 ? "+" : ""}${fmt(tsb)}`, "", cTsb],
+      ["fitness", fmt(ctl), "", cCtl], ["fatigue", fmt(atl), "", cAtl], ["form", `${tsb > 0 ? "+" : ""}${fmt(tsb)}`, "", lcd ? C.fg : tsb >= 0 ? C.good : C.warn],
       planned && ["planned", pd && pd.name ? esc(pd.name) : fc.tss[i - A.days.length] ? "" : "rest", ""],
       planned && fc.tss[i - A.days.length] > 0 && ["", fmt(fc.tss[i - A.days.length]), "TSS"]]) };
   });

@@ -493,6 +493,26 @@ function dither(u) {                            // LCD fill: a 50 % checkerboard
   }
   return u._dither;
 }
+// form (TSB) as one bar per day around a zero line, the way the Statistics page shows it: fresh days
+// in the good colour, tired days in the warn colour (LCD: dithered / grey). bars: [{x, v, soft}] in
+// CSS px; soft = a planned day (outlined, not filled). The newest real day can be drawn at full strength.
+function formBars(ctx, bars, Y, w, strong) {
+  const lcd = THEME === "lcd", y0 = Y(0), half = Math.max(1, w / 2);
+  const ditherFill = lcd ? dither({ ctx }) : null;
+  bars.forEach((b, i) => {
+    if (b.v == null) return;
+    const y = Y(b.v), top = Math.min(y, y0), h = Math.max(1, Math.abs(y - y0)), fresh = b.v >= 0;
+    const base = lcd ? C.fg : fresh ? C.good : C.warn;
+    if (b.soft) {
+      ctx.strokeStyle = lcd ? blend(C.fg, C.panel, 0.35) : blend(base, C.panel, 0.25); ctx.lineWidth = 1;
+      ctx.strokeRect(Math.round(b.x - half) + 0.5, Math.round(top) + 0.5, Math.max(1, Math.round(2 * half) - 1), Math.max(1, Math.round(h) - 1));
+      return;
+    }
+    ctx.fillStyle = lcd ? (fresh ? ditherFill : blend(C.fg, C.panel, 0.55))
+      : blend(base, C.panel, strong && i === strong ? 0 : 0.45);
+    ctx.fillRect(Math.round(b.x - half), Math.round(top), Math.max(1, Math.round(2 * half)), Math.round(h));
+  });
+}
 function makeCharts() {
   const lcd = THEME === "lcd";
   const axisFont = "12px 'Barlow Semi Condensed', 'IBM Plex Sans', sans-serif";

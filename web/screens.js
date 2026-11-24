@@ -447,13 +447,10 @@ function drawForm(prog, ramp = 0) {
   const X = (i) => (i / Math.max(1, v.length - 1)) * (wd - 6) + 3, Y = (t) => ht / 2 - (t / lim) * (ht / 2 - 3);
   ctx.strokeStyle = C.grid; ctx.lineWidth = 1;
   ctx.beginPath(); ctx.moveTo(0, Y(0)); ctx.lineTo(wd, Y(0)); ctx.stroke();
-  ctx.strokeStyle = lcd ? C.fg : tsb >= 0 ? C.good : C.warn; ctx.lineWidth = 2;
-  ctx.beginPath(); v.forEach((t, i) => (i ? ctx.lineTo(X(i), Y(t)) : ctx.moveTo(X(i), Y(t)))); ctx.stroke();
+  formBars(ctx, v.map((t, i) => ({ x: X(i), v: t })), Y, Math.min(12, Math.max(2, ((wd - 6) / Math.max(1, v.length)) * 0.7)), v.length - 1);
   const MK = marksOf(cv), days = p.days.slice(-42), ctl = p.ctl.slice(-42), atl = p.atl.slice(-42);
   v.forEach((t, i) => MK.push({ x: X(i), y: Y(t), html: tipHtml(SHORT_DAY.format(dayOf(days[i])), [
     ["form", `${t > 0 ? "+" : ""}${fmt(t)}`, "", t >= 0 ? C.good : C.warn], ["fitness", fmt(ctl[i]), "", C.power], ["fatigue", fmt(atl[i]), "", C.hr]]) }));
-  ctx.fillStyle = ctx.strokeStyle;
-  ctx.beginPath(); ctx.arc(X(v.length - 1), Y(v[v.length - 1]), 3.5, 0, 2 * Math.PI); ctx.fill();
 }
 window.addEventListener("resize", () => { if (!$("scr-home").hidden) drawHero(); });
 $("b-start").addEventListener("click", (e) => { act("start"); e.currentTarget.blur(); });
