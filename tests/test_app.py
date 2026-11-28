@@ -925,3 +925,15 @@ def test_the_thermometer_gets_its_turn_between_back_to_back_worker_scans():
         await asyncio.gather(worker(20), worker(20), room())
     asyncio.run(go())
     assert order.index("R") <= 2 and not btshare.LOCK.locked()     # next in line, not after 40 scans
+
+
+def test_watch_reminder_shows_at_the_start_until_done(tmp_path):
+    e = _engine(tmp_path)
+    assert e._snapshot().get("ride") is None or not e._snapshot()["ride"].get("watch")
+    _ride(e, 5)
+    assert e._snapshot()["ride"]["watch"] is True
+    e._do("watch_done")
+    assert e._snapshot()["ride"]["watch"] is False
+    e._do("stop"); e._do("save"); e._do("home")
+    _ride(e, 5)                                     # the next ride asks again
+    assert e._snapshot()["ride"]["watch"] is True

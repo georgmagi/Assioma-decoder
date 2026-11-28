@@ -1261,6 +1261,12 @@ body.alerting::after { content: ""; position: fixed; inset: 0; pointer-events: n
 .nudge-card b { font: 600 36px/1.05 var(--ui); letter-spacing: -0.01em; margin-top: 4px; }
 .nudge-card span { font: 400 15px/1.3 var(--ui); color: color-mix(in srgb, currentColor 60%, transparent); }
 
+/* "start your watch" at the start of every ride (Engine.watch_todo): stays until Done */
+.watchrem { position: fixed; inset: 0; z-index: 59; display: grid; place-items: center; background: rgba(0, 0, 0, 0.45); }
+.watchrem[hidden] { display: none; }
+.watchrem .nudge-card { visibility: visible; }
+.watchrem .btn { justify-self: end; margin-top: 10px; min-width: 120px; }
+
 /* the Durability table (progress.js drawDurability): untested cells dim */
 .dur-table td.dim { color: var(--faint); }
 .dur-table small { color: var(--dim); font-size: 11px; }

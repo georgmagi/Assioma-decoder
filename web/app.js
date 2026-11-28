@@ -949,6 +949,7 @@ function chimeInto(ac, out, t0) {
   return t0 + 1.15 + 0.14 + 1.7;
 }
 $("nudge-test").addEventListener("click", (e) => { e.currentTarget.blur(); nudge(true); });
+$("watch-done").addEventListener("click", (e) => { e.currentTarget.blur(); $("watchrem").hidden = true; act("watch_done"); });
 // browsers may hold audio until a click: any click or key unlocks it for the rest of the session
 for (const ev of ["pointerdown", "keydown"])
   addEventListener(ev, () => { try { (S.ac || (S.ac = new AudioContext())).resume(); } catch (e) {} }, { once: true });
@@ -1001,6 +1002,7 @@ function apply(s) {
   renderMorningRun(s);
   if (!$("topnav").hidden) renderNavStart(s);
   renderFuel(s.screen === "ride" && s.ride ? s.ride.fuel : null);
+  $("watchrem").hidden = !(s.screen === "ride" && s.ride && s.ride.watch) || !!s.viewer;
   $("layouts").hidden = s.screen !== "ride";
   renderAlert(s.screen === "ride" && s.ride ? s.alerts || [] : []);
   if (s.screen === "ride" && s.ride) {

@@ -129,6 +129,7 @@ class Engine(threading.Thread):
         self.back_to = "home"                # the page the summary's back button goes to
         self.summary_id: Optional[str] = None
         self.dialog = None                   # ride: None | "finish" | "discard"; home/summary: None | "delete"
+        self.watch_todo = False              # "start the activity on your watch" card, until he presses Done
         self.delete_id: Optional[str] = None # the ride the delete dialog is about
         self.rides_version = 0               # bumped when rides are saved or deleted: the page reloads its list
         self._vt1_auto: Optional[dict] = None   # your latest VT1 crossing (vt1.py), found in the background
@@ -320,6 +321,8 @@ class Engine(threading.Thread):
                 self._leave_ride("home")
             elif name == "save":
                 self._save()
+            elif name == "watch_done":
+                self.watch_todo = False
             elif name == "wo_match":                     # power match on/off, kept for the next ride too
                 self.settings["power_match"] = not self.settings.get("power_match", True)
                 self._pm, self._pm_tgt = [], None
@@ -921,6 +924,7 @@ class Engine(threading.Thread):
         self.room_log, self._room_at = [], None
         self.cap, self._cap_t = 1.0, 0.0                 # (the ceiling toggle itself stays as you left it)
         self.player, self.workout_done, self.erg = None, False, True
+        self.watch_todo = True                         # he double-logs every ride on the watch
         w = self.workouts().get(self.workout_id) if self.workout_id else None
         if w is not None:
             if self.settings.get("ftp"):
@@ -1467,7 +1471,7 @@ class Engine(threading.Thread):
             strap = {"warn": f"no data {quiet:.0f} s" if quiet > 3 else f"no beats {no_beat:.0f} s" if no_beat > 4 else ""}
         t0 = s.t0
         ride = {"state": s.state, "clock": hms(len(s.seconds)), "elapsed": None, "autopaused": self._autopaused,
-                "fuel": self._fuel()}
+                "fuel": self._fuel(), "watch": self.watch_todo}
         if s.started is not None:
             ride["elapsed"] = hms(int((now - s.started).total_seconds()))
         return {
